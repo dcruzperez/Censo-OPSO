@@ -1,0 +1,18 @@
+# =========================================================================
+# Dependencias de OPSO (backend)
+# Instalación:  pip install -r requirements.txt
+# Se fijan las versiones ("pinning") para que el proyecto se comporte igual
+# en el equipo de desarrollo, en el del profesor corrector y en producción.
+# =========================================================================
+
+# Framework web
+Django==6.0.7
+
+# Controlador de PostgreSQL para Python (versión 3, con binarios incluidos)
+psycopg[binary]==3.3.4
+
+# Lectura de la configuración desde el archivo .env
+python-decouple==3.8
+
+# Algoritmo de hash Argon2id para las contraseñas
+argon2-cffi==25.1.0

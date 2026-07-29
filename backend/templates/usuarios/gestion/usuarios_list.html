@@ -1,0 +1,243 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   LISTADO DE USUARIOS — /usuarios/
+
+   Es la pantalla principal del módulo. Reúne los cuatro elementos que hacen
+   usable una tabla de administración:
+     1. BUSCADOR    -> encontrar una persona concreta entre cientos.
+     2. FILTROS     -> responder preguntas de gestión ("¿qué censistas están
+                       inactivos?") sin recorrer la tabla a ojo.
+     3. PAGINACIÓN  -> páginas de 10 filas: la consulta a PostgreSQL trae solo
+                       esas 10 (LIMIT/OFFSET), no las 2.000 de la tabla.
+     4. ACCIONES    -> el siguiente paso siempre está a un clic de distancia.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Administración de usuarios{% endblock %}
+
+{% block contenido %}
+
+<div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+      Administración de usuarios
+    </h1>
+    <p class="text-secondary mb-0">
+      Crear cuentas, editar datos, asignar roles y habilitar o deshabilitar el acceso.
+    </p>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{% url 'usuarios:auditoria' %}" class="btn btn-outline-secondary btn-sm">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="16" height="16" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      Auditoría
+    </a>
+    <a href="{% url 'usuarios:crear' %}" class="btn btn-opso btn-sm">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="16" height="16" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+      </svg>
+      Crear usuario
+    </a>
+  </div>
+</div>
+
+{# ---------- Contadores ---------- #}
+<div class="row g-3 mb-3">
+  <div class="col-12 col-md-4">
+    <div class="card-opso p-3">
+      <div class="kpi-valor">{{ total_usuarios }}</div>
+      <div class="kpi-etiqueta">Usuarios registrados</div>
+    </div>
+  </div>
+  <div class="col-12 col-md-4">
+    <div class="card-opso p-3">
+      <div class="kpi-valor text-success">{{ total_activos }}</div>
+      <div class="kpi-etiqueta">Con acceso habilitado</div>
+    </div>
+  </div>
+  <div class="col-12 col-md-4">
+    <div class="card-opso p-3">
+      <div class="kpi-valor text-secondary">{{ total_inactivos }}</div>
+      <div class="kpi-etiqueta">Deshabilitados (datos conservados)</div>
+    </div>
+  </div>
+</div>
+
+{# ---------- Buscador y filtros ---------- #}
+{% comment %} El formulario usa method="get" y NO lleva {% csrf_token %}.
+   ¿Por qué? Porque una búsqueda solo LEE datos: no modifica nada, así que no
+   necesita protección CSRF (un ataque que solo consulta no hace daño). Además,
+   con GET los filtros quedan en la barra de direcciones y el administrador
+   puede guardar el enlace o compartirlo. Todo lo que MODIFICA en este módulo
+   va por POST con token. {% endcomment %}
+<form method="get" class="card-opso p-3 mb-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-lg-5">
+      <label for="{{ filtro.q.id_for_label }}" class="form-label small fw-semibold mb-1">
+        {{ filtro.q.label }}
+      </label>
+      {{ filtro.q }}
+    </div>
+    <div class="col-12 col-sm-6 col-lg-3">
+      <label for="{{ filtro.rol.id_for_label }}" class="form-label small fw-semibold mb-1">
+        {{ filtro.rol.label }}
+      </label>
+      {{ filtro.rol }}
+    </div>
+    <div class="col-12 col-sm-6 col-lg-2">
+      <label for="{{ filtro.estado.id_for_label }}" class="form-label small fw-semibold mb-1">
+        {{ filtro.estado.label }}
+      </label>
+      {{ filtro.estado }}
+    </div>
+    <div class="col-12 col-lg-2 d-flex gap-2">
+      <button type="submit" class="btn btn-opso btn-sm w-100">Buscar</button>
+      {% if parametros %}
+        <a href="{% url 'usuarios:lista' %}" class="btn btn-outline-secondary btn-sm"
+           title="Quitar todos los filtros">Limpiar</a>
+      {% endif %}
+    </div>
+  </div>
+</form>
+
+{# ---------- Tabla ---------- #}
+<div class="card-opso p-0 overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th scope="col">Nombre</th>
+          <th scope="col">Usuario</th>
+          <th scope="col">Correo</th>
+          <th scope="col">Rol</th>
+          <th scope="col">Estado</th>
+          <th scope="col">Último acceso</th>
+          <th scope="col" class="text-end">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for usuario in usuarios %}
+          <tr>
+            <td>
+              <a href="{% url 'usuarios:detalle' usuario.pk %}" class="fw-semibold text-decoration-none">
+                {{ usuario.get_full_name|default:"(sin nombre)" }}
+              </a>
+              {% if usuario.pk == request.user.pk %}
+                <span class="badge text-bg-light border ms-1">tú</span>
+              {% endif %}
+              {% if usuario.is_superuser %}
+                <span class="badge text-bg-dark ms-1" title="Cuenta técnica con acceso total">super</span>
+              {% endif %}
+            </td>
+            <td class="small text-secondary">{{ usuario.usuario_visible }}</td>
+            <td class="small">{{ usuario.email }}</td>
+            <td>
+              {% if usuario.rol %}
+                <span class="badge text-bg-light border">{{ usuario.rol.nombre }}</span>
+                {% if not usuario.rol.activo %}
+                  <span class="badge text-bg-warning" title="El rol está desactivado: no podrá iniciar sesión">rol inactivo</span>
+                {% endif %}
+              {% else %}
+                <span class="text-secondary small">— sin rol —</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if usuario.is_active %}
+                <span class="badge text-bg-success">Activo</span>
+              {% else %}
+                <span class="badge text-bg-secondary">Inactivo</span>
+              {% endif %}
+            </td>
+            <td class="small text-secondary">
+              {{ usuario.last_login|date:"d-m-Y H:i"|default:"Nunca ha ingresado" }}
+            </td>
+            <td class="text-end">
+              <div class="d-inline-flex gap-1">
+                <a href="{% url 'usuarios:detalle' usuario.pk %}"
+                   class="btn btn-sm btn-outline-secondary" title="Ver ficha">Ver</a>
+                <a href="{% url 'usuarios:editar' usuario.pk %}"
+                   class="btn btn-sm btn-outline-primary" title="Editar datos">Editar</a>
+                {% comment %} Los botones que MODIFICAN llevan a una pantalla de
+                   confirmación (GET) y desde ahí se ejecuta con POST. Nunca se
+                   deshabilita a nadie con un solo clic ni con un enlace. {% endcomment %}
+                {% if usuario.is_active %}
+                  <a href="{% url 'usuarios:deshabilitar' usuario.pk %}"
+                     class="btn btn-sm btn-outline-danger" title="Quitar el acceso sin borrar datos">Deshabilitar</a>
+                {% else %}
+                  <a href="{% url 'usuarios:habilitar' usuario.pk %}"
+                     class="btn btn-sm btn-outline-success" title="Devolver el acceso">Habilitar</a>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="7" class="text-center text-secondary py-5">
+              {% if parametros %}
+                No hay usuarios que coincidan con la búsqueda.
+                <a href="{% url 'usuarios:lista' %}">Quitar los filtros</a>.
+              {% else %}
+                Todavía no hay usuarios registrados.
+                <a href="{% url 'usuarios:crear' %}">Crear el primero</a>.
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# ---------- Paginación ---------- #}
+  {% if is_paginated %}
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 p-3 border-top">
+      <span class="text-secondary small">
+        Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}
+        · {{ page_obj.paginator.count }} usuario{{ page_obj.paginator.count|pluralize }} encontrado{{ page_obj.paginator.count|pluralize }}
+      </span>
+
+      {% comment %} Cada enlace arrastra "parametros" (los filtros vigentes sin el
+         número de página). Sin eso, al pasar a la página 2 se perdería la
+         búsqueda y el administrador vería otra lista distinta. {% endcomment %}
+      <nav aria-label="Paginación del listado">
+        <ul class="pagination pagination-sm mb-0">
+          {% if page_obj.has_previous %}
+            <li class="page-item">
+              <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if parametros %}&{{ parametros }}{% endif %}">Anterior</a>
+            </li>
+          {% else %}
+            <li class="page-item disabled"><span class="page-link">Anterior</span></li>
+          {% endif %}
+
+          {% for numero in page_obj.paginator.page_range %}
+            {% if numero == page_obj.number %}
+              <li class="page-item active" aria-current="page">
+                <span class="page-link">{{ numero }}</span>
+              </li>
+            {% elif numero > page_obj.number|add:"-3" and numero < page_obj.number|add:"3" %}
+              <li class="page-item">
+                <a class="page-link" href="?page={{ numero }}{% if parametros %}&{{ parametros }}{% endif %}">{{ numero }}</a>
+              </li>
+            {% endif %}
+          {% endfor %}
+
+          {% if page_obj.has_next %}
+            <li class="page-item">
+              <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if parametros %}&{{ parametros }}{% endif %}">Siguiente</a>
+            </li>
+          {% else %}
+            <li class="page-item disabled"><span class="page-link">Siguiente</span></li>
+          {% endif %}
+        </ul>
+      </nav>
+    </div>
+  {% endif %}
+</div>
+
+<p class="text-secondary small mt-3 mb-0">
+  <strong>Nota:</strong> deshabilitar no borra nada. La cuenta conserva sus datos,
+  su historial de accesos y su vínculo con las fichas del censo que levantó; solo
+  pierde la posibilidad de iniciar sesión.
+</p>
+
+{% endblock %}

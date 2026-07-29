@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+
+{% block titulo %}Panel del Censista{% endblock %}
+
+{% block contenido %}
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">Panel del Censista</h1>
+  <p class="text-secondary mb-0">
+    Registro en terreno de la información de las familias.
+  </p>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-12 col-md-6">
+    <div class="card-opso p-4 h-100">
+      <div class="kpi-valor">—</div>
+      <div class="kpi-etiqueta">Fichas registradas por ti</div>
+    </div>
+  </div>
+  <div class="col-12 col-md-6">
+    <div class="card-opso p-4 h-100">
+      <div class="kpi-valor">—</div>
+      <div class="kpi-etiqueta">Fichas pendientes de completar</div>
+    </div>
+  </div>
+</div>
+
+<div class="card-opso p-4">
+  <h2 class="h6 fw-semibold">Alcance de este rol</h2>
+  <ul class="text-secondary small mb-0 ps-3">
+    <li>Registrar nuevas fichas de familias durante el operativo.</li>
+    <li>Editar únicamente las fichas que él mismo levantó.</li>
+    <li>Sin acceso a la gestión de usuarios ni a los reportes globales.</li>
+  </ul>
+</div>
+{% endblock %}

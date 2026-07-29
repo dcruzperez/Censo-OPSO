@@ -1,0 +1,40 @@
+{% autoescape off %}Hola {{ usuario.get_short_name|default:usuario.email }}:
+
+Te informamos que la contraseña de tu cuenta en {{ nombre_sistema }} fue
+actualizada correctamente.
+
+Detalle del cambio:
+  Cuenta : {{ usuario.email }}
+  Fecha  : {{ fecha|date:"d/m/Y" }} a las {{ fecha|time:"H:i" }} h
+  Origen : {{ ip|default:"no registrado" }}
+
+Todas las sesiones que tenías abiertas en otros dispositivos fueron cerradas.
+Deberás iniciar sesión nuevamente con tu contraseña nueva.
+
+------------------------------------------------------------------
+¿NO FUISTE TÚ?
+
+Si no realizaste este cambio, alguien podría tener acceso a tu correo
+electrónico. Comunícate de inmediato con el administrador del sistema
+escribiendo a {{ correo_soporte }}.
+------------------------------------------------------------------
+
+Saludos cordiales,
+
+Equipo {{ nombre_sistema }} - Operativo Social
+
+Este es un mensaje automático. Por favor no respondas a esta dirección.
+{% endautoescape %}
+{% comment %} ==========================================================================
+   AVISO POSTERIOR AL CAMBIO DE CONTRASEÑA.
+
+   ¿Por qué se envía este segundo correo?
+   Es un control de DETECCIÓN, no de prevención. Si un atacante logró acceder
+   al correo de la víctima y restableció la contraseña, la víctima se entera
+   de inmediato y puede pedir ayuda. Sin este aviso, el acceso indebido podría
+   pasar inadvertido durante semanas.
+
+   Nótese que NO se incluye la contraseña nueva: el sistema no la conoce
+   (solo guarda su hash) y enviarla sería exactamente el error que toda esta
+   funcionalidad busca evitar.
+   ========================================================================= {% endcomment %}

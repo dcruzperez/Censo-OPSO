@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   EDITAR USUARIO — /usuarios/<pk>/editar/
+
+   Comparte con "crear" los mismos campos (fragmento _datos_personales.html),
+   pero NO muestra ningún campo de contraseña. Motivo: en la base de datos no
+   hay una contraseña que editar, solo un hash irreversible. Cambiarla es otra
+   operación distinta, con su propio flujo por correo, y se lanza desde la ficha
+   del usuario.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Editar {{ usuario.get_full_name|default:usuario.email }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ruta de navegación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'usuarios:lista' %}">Usuarios</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'usuarios:detalle' usuario.pk %}">{{ usuario.get_full_name|default:usuario.email }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Editar</li>
+  </ol>
+</nav>
+
+<h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">Editar usuario</h1>
+<p class="text-secondary mb-4">
+  Cada campo que cambies quedará registrado en la bitácora de auditoría, con tu
+  nombre, la fecha y el valor anterior.
+</p>
+
+{% if es_su_propia_cuenta %}
+  <div class="alert alert-info small d-flex gap-2" role="alert">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="18" height="18" class="flex-shrink-0" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+    </svg>
+    <span>
+      Estás editando tu propia cuenta. Por seguridad, <strong>tu rol y tu estado
+      aparecen bloqueados</strong>: nadie debe poder quitarse a sí mismo los
+      permisos ni el acceso por error. Si necesitas cambiarlos, debe hacerlo
+      otro administrador.
+    </span>
+  </div>
+{% endif %}
+
+{% if usuario.is_superuser %}
+  <div class="alert alert-warning small" role="alert">
+    Esta es una <strong>cuenta de superusuario</strong> (acceso técnico total,
+    incluido el panel <code>/admin/</code>). Sus permisos técnicos
+    (<code>is_staff</code>, <code>is_superuser</code>) no se administran desde
+    aquí: solo desde <code>/admin/</code> y solo por otro superusuario.
+  </div>
+{% endif %}
+
+{% if form.non_field_errors %}
+  <div class="alert alert-danger small" role="alert" aria-live="assertive">
+    {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+  </div>
+{% endif %}
+
+<div class="row g-4">
+  <div class="col-12 col-xl-8">
+    <form method="post" novalidate>
+      {% csrf_token %}
+
+      {% include "usuarios/gestion/_datos_personales.html" %}
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-opso">Guardar cambios</button>
+        <a href="{% url 'usuarios:detalle' usuario.pk %}" class="btn btn-outline-secondary">Cancelar</a>
+      </div>
+    </form>
+  </div>
+
+  <div class="col-12 col-xl-4">
+    <div class="card-opso p-4 mb-3">
+      <h2 class="h6 fw-semibold mb-3">Datos que no se editan aquí</h2>
+      <ul class="small text-secondary mb-0 ps-3">
+        <li><strong>Contraseña:</strong> es un hash irreversible. Se cambia con un
+          enlace enviado al correo de la persona.</li>
+        <li><strong>Fechas del sistema</strong> (creación, última modificación,
+          último acceso): son hechos registrados automáticamente. Si se pudieran
+          editar, la auditoría dejaría de ser confiable.</li>
+        <li><strong>Permisos técnicos</strong> (<code>is_staff</code>,
+          <code>is_superuser</code>): pertenecen a la administración de Django,
+          no a los roles del negocio.</li>
+      </ul>
+    </div>
+
+    <div class="card-opso p-4">
+      <h2 class="h6 fw-semibold mb-3">Registro del sistema</h2>
+      <dl class="row small mb-0">
+        <dt class="col-6 text-secondary fw-normal">Creado</dt>
+        <dd class="col-6">{{ usuario.creado_en|date:"d-m-Y H:i" }}</dd>
+        <dt class="col-6 text-secondary fw-normal">Última modificación</dt>
+        <dd class="col-6">{{ usuario.actualizado_en|date:"d-m-Y H:i" }}</dd>
+        <dt class="col-6 text-secondary fw-normal">Último acceso</dt>
+        <dd class="col-6">{{ usuario.last_login|date:"d-m-Y H:i"|default:"Nunca" }}</dd>
+      </dl>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,141 @@
+{% comment %} ==========================================================================
+   CUERPO EN HTML del correo de activación / reenvío de enlace (HU-03).
+
+   Sigue las mismas reglas de maquetación que recuperacion.html:
+     1. TABLAS para la estructura (Outlook renderiza con el motor de Word).
+     2. Estilos EN LÍNEA (Gmail elimina <style> y las hojas externas).
+     3. Ancho máximo 600 px.
+     4. Sin JavaScript ni imágenes externas: los clientes los bloquean y pueden
+        marcar el mensaje como sospechoso.
+     5. El enlace también en texto visible, para quien prefiere copiar y pegar.
+
+   Aquí NO se desactiva el autoescape: si un nombre contuviera caracteres de
+   HTML, deben escaparse para no romper la maqueta ni permitir inyección.
+   ========================================================================= {% endcomment %}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+       style="background-color:#f4f6fb; padding:24px 12px; font-family:'Segoe UI',Arial,Helvetica,sans-serif;">
+  <tr>
+    <td align="center">
+
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600"
+             style="max-width:600px; width:100%; background-color:#ffffff; border-radius:16px; overflow:hidden; border:1px solid #dde3ee;">
+
+        <!-- Encabezado institucional -->
+        <tr>
+          <td style="background-color:#1a4d8f; padding:28px 32px; text-align:center;">
+            <div style="font-size:26px; font-weight:bold; color:#ffffff; letter-spacing:4px;">
+              {{ nombre_sistema }}
+            </div>
+            <div style="font-size:13px; color:#bfdbfe; margin-top:4px;">
+              Operativo Social
+            </div>
+          </td>
+        </tr>
+
+        <!-- Contenido -->
+        <tr>
+          <td style="padding:32px;">
+
+            <h1 style="margin:0 0 16px; font-size:20px; color:#0f2f5a;">
+              {% if es_nueva_cuenta %}Activa tu cuenta{% else %}Crea una contraseña nueva{% endif %}
+            </h1>
+
+            <p style="margin:0 0 16px; font-size:15px; line-height:1.6; color:#1c2b3a;">
+              Hola <strong>{{ usuario.get_short_name|default:usuario.email }}</strong>:
+            </p>
+
+            {% if es_nueva_cuenta %}
+              <p style="margin:0 0 16px; font-size:15px; line-height:1.6; color:#1c2b3a;">
+                El administrador de {{ nombre_sistema }} creó una cuenta para ti en el
+                sistema de levantamiento de información de familias.
+              </p>
+
+              <!-- Resumen de la cuenta -->
+              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+                     style="background-color:#f4f6fb; border:1px solid #dde3ee; border-radius:12px; margin:0 0 20px;">
+                <tr>
+                  <td style="padding:16px 20px; font-size:14px; color:#1c2b3a; line-height:1.8;">
+                    <strong style="color:#6b7a90;">Inicias sesión con:</strong> {{ usuario.email }}<br>
+                    <strong style="color:#6b7a90;">Nombre de usuario:</strong> {{ usuario.nombre_usuario|default:"(no asignado)" }}<br>
+                    <strong style="color:#6b7a90;">Rol asignado:</strong> {{ usuario.rol.nombre|default:"pendiente de asignar" }}
+                  </td>
+                </tr>
+              </table>
+
+              <p style="margin:0 0 24px; font-size:15px; line-height:1.6; color:#1c2b3a;">
+                Para activar tu cuenta solo falta que definas tu propia contraseña:
+              </p>
+            {% else %}
+              <p style="margin:0 0 24px; font-size:15px; line-height:1.6; color:#1c2b3a;">
+                Un administrador de {{ nombre_sistema }} solicitó el envío de un enlace
+                para que crees una contraseña nueva para tu cuenta
+                (<strong>{{ usuario.email }}</strong>).
+              </p>
+            {% endif %}
+
+            <!-- Botón principal -->
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto 24px;">
+              <tr>
+                <td align="center" style="background-color:#1a4d8f; border-radius:10px;">
+                  <a href="{{ protocol }}://{{ domain }}{% url 'usuarios:password_reset_confirm' uidb64=uid token=token %}"
+                     style="display:inline-block; padding:14px 32px; font-size:15px; font-weight:bold; color:#ffffff; text-decoration:none;">
+                    {% if es_nueva_cuenta %}Crear mi contraseña{% else %}Definir contraseña nueva{% endif %}
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+            <p style="margin:0 0 8px; font-size:13px; color:#6b7a90;">
+              Si el botón no funciona, copia y pega esta dirección en tu navegador:
+            </p>
+            <p style="margin:0 0 24px; font-size:12px; word-break:break-all;">
+              <a href="{{ protocol }}://{{ domain }}{% url 'usuarios:password_reset_confirm' uidb64=uid token=token %}"
+                 style="color:#2e6cc7;">{{ protocol }}://{{ domain }}{% url 'usuarios:password_reset_confirm' uidb64=uid token=token %}</a>
+            </p>
+
+            <!-- Vigencia -->
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+                   style="background-color:#fff8e1; border:1px solid #ffe08a; border-radius:12px; margin:0 0 20px;">
+              <tr>
+                <td style="padding:14px 18px; font-size:13px; color:#7a5b00; line-height:1.6;">
+                  Este enlace es <strong>personal</strong>, sirve <strong>una sola vez</strong>
+                  y caduca en <strong>{{ minutos_validez }} minutos</strong>. Si se vence,
+                  pídele al administrador que te lo envíe de nuevo.
+                </td>
+              </tr>
+            </table>
+
+            <!-- Aviso de seguridad -->
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+                   style="border-top:1px solid #dde3ee; margin-top:8px;">
+              <tr>
+                <td style="padding:18px 0 0; font-size:13px; color:#6b7a90; line-height:1.7;">
+                  <strong style="color:#1c2b3a;">Aviso de seguridad</strong><br>
+                  La contraseña que definas la conocerás <strong>solo tú</strong>: ni el
+                  administrador ni el equipo de soporte pueden verla, porque el sistema
+                  no almacena contraseñas, sino un cálculo irreversible a partir de ellas.<br><br>
+                  Nunca compartas este enlace. El equipo de {{ nombre_sistema }} jamás te
+                  pedirá tu contraseña por correo, teléfono ni mensajería.<br><br>
+                  Si no esperabas este mensaje, avisa a
+                  <a href="mailto:{{ correo_soporte }}" style="color:#2e6cc7;">{{ correo_soporte }}</a>
+                  y no abras el enlace.
+                </td>
+              </tr>
+            </table>
+
+          </td>
+        </tr>
+
+        <!-- Pie -->
+        <tr>
+          <td style="background-color:#f4f6fb; padding:20px 32px; text-align:center; font-size:12px; color:#6b7a90; border-top:1px solid #dde3ee;">
+            {{ nombre_sistema }} · Operativo Social<br>
+            Soporte: <a href="mailto:{{ correo_soporte }}" style="color:#2e6cc7;">{{ correo_soporte }}</a><br>
+            <span style="color:#9aa8bd;">Mensaje automático. Por favor no respondas a esta dirección.</span>
+          </td>
+        </tr>
+
+      </table>
+    </td>
+  </tr>
+</table>

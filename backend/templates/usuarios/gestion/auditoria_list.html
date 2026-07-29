@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   BITÁCORA DE AUDITORÍA — /usuarios/auditoria/
+
+   Muestra la tabla usuarios_registro_auditoria. Es de SOLO LECTURA: no hay
+   botones de editar ni de borrar, ni vistas que lo permitan. Una bitácora que
+   se puede modificar no sirve como evidencia de nada.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Auditoría de usuarios{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ruta de navegación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'usuarios:lista' %}">Usuarios</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Auditoría</li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+      Auditoría de la administración de usuarios
+    </h1>
+    <p class="text-secondary mb-0">
+      {{ total_registros }} acción{{ total_registros|pluralize:"es" }} registrada{{ total_registros|pluralize }}.
+      Responde <em>quién</em> hizo <em>qué</em>, <em>cuándo</em> y <em>a quién</em>.
+    </p>
+  </div>
+  <a href="{% url 'usuarios:lista' %}" class="btn btn-outline-secondary btn-sm">
+    Volver al listado
+  </a>
+</div>
+
+<div class="card-opso p-0 overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th scope="col">Fecha y hora</th>
+          <th scope="col">Administrador</th>
+          <th scope="col">Acción</th>
+          <th scope="col">Usuario afectado</th>
+          <th scope="col">Detalle</th>
+          <th scope="col">IP</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for registro in registros %}
+          <tr>
+            <td class="small text-nowrap">{{ registro.ocurrido_en|date:"d-m-Y H:i:s" }}</td>
+            <td class="small">
+              {% comment %} Se muestra la copia de texto del correo y no
+                 registro.administrador.email: si esa cuenta se hubiera
+                 eliminado, la clave foránea sería NULL pero el texto sigue
+                 ahí. La bitácora nunca queda ilegible. {% endcomment %}
+              {{ registro.administrador_email|default:"(cuenta eliminada)" }}
+            </td>
+            <td class="small">
+              {% if registro.accion == "DESHABILITAR" %}
+                <span class="badge text-bg-danger">{{ registro.get_accion_display }}</span>
+              {% elif registro.accion == "HABILITAR" %}
+                <span class="badge text-bg-success">{{ registro.get_accion_display }}</span>
+              {% elif registro.accion == "CREAR" %}
+                <span class="badge text-bg-primary">{{ registro.get_accion_display }}</span>
+              {% elif registro.accion == "CAMBIAR_ROL" %}
+                <span class="badge text-bg-warning">{{ registro.get_accion_display }}</span>
+              {% else %}
+                <span class="badge text-bg-light border">{{ registro.get_accion_display }}</span>
+              {% endif %}
+            </td>
+            <td class="small">
+              {% if registro.usuario_afectado %}
+                <a href="{% url 'usuarios:detalle' registro.usuario_afectado.pk %}"
+                   class="text-decoration-none">{{ registro.usuario_afectado_email }}</a>
+              {% else %}
+                {{ registro.usuario_afectado_email }}
+              {% endif %}
+            </td>
+            <td class="small text-secondary">{{ registro.detalle|default:"—" }}</td>
+            <td class="small text-secondary">{{ registro.ip|default:"—" }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6" class="text-center text-secondary py-5">
+              Aún no se ha registrado ninguna acción administrativa.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if is_paginated %}
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 p-3 border-top">
+      <span class="text-secondary small">
+        Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}
+      </span>
+      <nav aria-label="Paginación de la auditoría">
+        <ul class="pagination pagination-sm mb-0">
+          {% if page_obj.has_previous %}
+            <li class="page-item">
+              <a class="page-link" href="?page={{ page_obj.previous_page_number }}">Anterior</a>
+            </li>
+          {% else %}
+            <li class="page-item disabled"><span class="page-link">Anterior</span></li>
+          {% endif %}
+          {% if page_obj.has_next %}
+            <li class="page-item">
+              <a class="page-link" href="?page={{ page_obj.next_page_number }}">Siguiente</a>
+            </li>
+          {% else %}
+            <li class="page-item disabled"><span class="page-link">Siguiente</span></li>
+          {% endif %}
+        </ul>
+      </nav>
+    </div>
+  {% endif %}
+</div>
+
+<p class="text-secondary small mt-3 mb-0">
+  Los registros no se pueden editar ni eliminar desde la aplicación, y en el panel
+  <code>/admin/</code> están bloqueados en modo solo lectura. Es un requisito de
+  toda auditoría: la evidencia que el sospechoso puede borrar no es evidencia.
+</p>
+
+{% endblock %}

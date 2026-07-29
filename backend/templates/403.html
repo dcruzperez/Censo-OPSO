@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block titulo %}Acceso denegado{% endblock %}
+
+{% block contenido %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-6">
+    <div class="card-opso p-5 text-center">
+      <div class="display-4 fw-bold text-danger mb-2">403</div>
+      <h1 class="h4 fw-bold mb-2">Acceso denegado</h1>
+      <p class="text-secondary mb-4">
+        {{ exception|default:"Tu rol no tiene permisos para ver esta sección." }}
+      </p>
+      <a href="{% url 'dashboards:redirigir' %}" class="btn btn-opso">Volver a mi panel</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

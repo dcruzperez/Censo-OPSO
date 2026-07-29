@@ -1,0 +1,87 @@
+{% load static %}<!DOCTYPE html>
+{% comment %} ==========================================================================
+   Plantilla base de las pantallas PÚBLICAS (sin sesión iniciada).
+
+   ¿Por qué no reutilizar base.html?
+   Porque base.html incluye la barra de navegación con el nombre del usuario,
+   su rol y el botón de salir. Quien está recuperando su contraseña no tiene
+   sesión: mostrarle ese menú sería incoherente y además fallaría al intentar
+   leer datos de un usuario anónimo.
+
+   Las cuatro pantallas de recuperación extienden este archivo, así que la
+   estructura (encabezado, tarjeta centrada, pie) se escribe UNA sola vez.
+   ========================================================================= {% endcomment %}
+<html lang="es-CL">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block titulo %}{{ titulo_pagina|default:"OPSO" }}{% endblock %} · OPSO</title>
+  {# noindex: ninguna pantalla de autenticación debe indexarse en buscadores #}
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231A4D8F'/><path d='M16 25s-7-4.2-7-9.4A4.6 4.6 0 0 1 16 12a4.6 4.6 0 0 1 7 3.6C23 20.8 16 25 16 25z' fill='white'/></svg>">
+  <link rel="stylesheet" href="{% static 'vendor/bootstrap/bootstrap.min.css' %}">
+  <link rel="stylesheet" href="{% static 'css/opso.css' %}">
+</head>
+<body class="pagina-publica">
+
+<main class="container py-4 py-md-5">
+  <div class="row justify-content-center">
+    <div class="col-12 col-sm-10 col-md-8 col-lg-6 col-xl-5">
+
+      <!-- Identidad institucional -->
+      <div class="text-center mb-4">
+        <a href="{% url 'usuarios:login' %}" class="d-inline-flex align-items-center gap-2 text-decoration-none">
+          <span class="logo-publico">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
+            </svg>
+          </span>
+          <span class="fw-bold fs-3" style="color: var(--opso-primary-dark); letter-spacing:.12em;">OPSO</span>
+        </a>
+        <p class="text-secondary small mb-0 mt-1">Operativo Social</p>
+      </div>
+
+      <!-- Tarjeta con el contenido de cada paso -->
+      <div class="card-opso p-4 p-md-5">
+
+        {% comment %} Indicador de progreso: cada pantalla define su número de paso.
+           Es una ayuda de usabilidad: la persona sabe en qué parte del
+           proceso está y cuánto le falta. {% endcomment %}
+        {% if paso %}
+          <div class="pasos-recuperacion mb-4" role="group"
+               aria-label="Paso {{ paso }} de 4 del proceso de recuperación">
+            <span class="paso {% if paso == 1 %}paso-actual{% elif paso > 1 %}paso-hecho{% endif %}"></span>
+            <span class="paso {% if paso == 2 %}paso-actual{% elif paso > 2 %}paso-hecho{% endif %}"></span>
+            <span class="paso {% if paso == 3 %}paso-actual{% elif paso > 3 %}paso-hecho{% endif %}"></span>
+            <span class="paso {% if paso == 4 %}paso-actual{% endif %}"></span>
+          </div>
+        {% endif %}
+
+        {# Mensajes del sistema (django.contrib.messages) #}
+        {% if messages %}
+          {% for mensaje in messages %}
+            <div class="alert alert-{{ mensaje.tags|default:'info' }} alert-dismissible fade show py-2 small" role="alert">
+              {{ mensaje }}
+              <button type="button" class="btn-close btn-sm" data-bs-dismiss="alert" aria-label="Cerrar"></button>
+            </div>
+          {% endfor %}
+        {% endif %}
+
+        {% block contenido %}{% endblock %}
+      </div>
+
+      <!-- Pie -->
+      <p class="text-center text-secondary small mt-4 mb-0">
+        {% block pie %}
+          <a href="{% url 'usuarios:login' %}" class="text-decoration-none">Volver al inicio de sesión</a>
+        {% endblock %}
+      </p>
+
+    </div>
+  </div>
+</main>
+
+<script src="{% static 'vendor/bootstrap/bootstrap.bundle.min.js' %}"></script>
+{% block js_extra %}{% endblock %}
+</body>
+</html>

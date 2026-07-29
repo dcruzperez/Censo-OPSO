@@ -1,0 +1,283 @@
+{% load static %}<!DOCTYPE html>
+{% comment %} ==========================================================================
+   Plantilla de inicio de sesión de OPSO.
+
+   Es una página completa e independiente (no extiende base.html) porque su
+   diseño ocupa toda la pantalla y no lleva la barra de navegación del
+   sistema: quien la ve todavía no está autenticado.
+   ========================================================================= {% endcomment %}
+<html lang="es-CL">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OPSO – Iniciar sesión</title>
+  <meta name="description" content="Acceso al sistema OPSO (Operativo Social) para el levantamiento de información de familias.">
+  {# noindex: esta página no debe aparecer en buscadores #}
+  <meta name="robots" content="noindex, nofollow">
+
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231A4D8F'/><path d='M16 25s-7-4.2-7-9.4A4.6 4.6 0 0 1 16 12a4.6 4.6 0 0 1 7 3.6C23 20.8 16 25 16 25z' fill='white'/></svg>">
+
+  {% comment %} Bootstrap servido desde el propio proyecto: la aplicación funciona sin
+     internet, algo importante para la presentación y para el uso en terreno. {% endcomment %}
+  <link rel="stylesheet" href="{% static 'vendor/bootstrap/bootstrap.min.css' %}">
+  <link rel="stylesheet" href="{% static 'css/opso.css' %}">
+</head>
+<body>
+
+<main class="container-fluid login-page">
+  <div class="row g-0 min-vh-100">
+
+    {% comment %} ==================================================================
+       COLUMNA IZQUIERDA: identidad institucional
+       d-none d-lg-flex = oculta en móvil, visible desde 992px.
+       ================================================================== {% endcomment %}
+    <section class="col-lg-6 login-hero d-none d-lg-flex align-items-center p-5"
+             aria-label="Información del sistema OPSO">
+      <div class="login-hero-content mx-auto" style="max-width: 460px;">
+
+        <div class="login-logo mb-4">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z" />
+          </svg>
+        </div>
+
+        <div class="login-brand-name mb-2">OPSO</div>
+        <p class="login-brand-tagline mb-4">
+          Operativo Social<br>
+          Sistema de levantamiento de información de familias
+        </p>
+
+        <div class="d-flex flex-wrap gap-2 mb-5">
+          <span class="login-chip">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+            </svg>
+            Familias y hogares
+          </span>
+          <span class="login-chip">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Fichas digitales
+          </span>
+          <span class="login-chip">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+            </svg>
+            Trabajo en terreno
+          </span>
+        </div>
+
+        <div class="row text-center border-top border-light border-opacity-25 pt-4">
+          <div class="col-4">
+            <span class="login-stat-value">3</span>
+            <span class="login-stat-label">Perfiles de acceso</span>
+          </div>
+          <div class="col-4">
+            <span class="login-stat-value">100%</span>
+            <span class="login-stat-label">Datos cifrados en tránsito</span>
+          </div>
+          <div class="col-4">
+            <span class="login-stat-value">24/7</span>
+            <span class="login-stat-label">Disponibilidad</span>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    {% comment %} ==================================================================
+       COLUMNA DERECHA: formulario
+       ================================================================== {% endcomment %}
+    <section class="col-12 col-lg-6 login-form-panel p-4 p-md-5"
+             aria-label="Formulario de inicio de sesión">
+      <div class="login-form-container">
+
+        {# Marca visible solo en móvil, donde la columna izquierda está oculta #}
+        <div class="d-lg-none text-center mb-4">
+          <span class="fw-bold fs-3" style="color: var(--opso-primary-dark); letter-spacing:.1em;">OPSO</span>
+          <p class="small text-secondary mb-0">Operativo Social</p>
+        </div>
+
+        <header class="mb-4">
+          <h1 class="login-form-title">Iniciar sesión</h1>
+          <p class="login-form-subtitle mb-0">
+            Ingresa tu correo institucional y tu contraseña para acceder al sistema.
+          </p>
+        </header>
+
+        {% comment %} ---------------------------------------------------------------
+           MENSAJES DEL SISTEMA (django.contrib.messages)
+           Aparecen aquí los avisos de "sesión cerrada por inactividad",
+           "cerraste sesión correctamente", "te quedan N intentos", etc.
+           --------------------------------------------------------------- {% endcomment %}
+        {% if messages %}
+          {% for mensaje in messages %}
+            <div class="alert alert-{{ mensaje.tags|default:'info' }} alert-dismissible fade show py-2 small" role="alert">
+              {{ mensaje }}
+              <button type="button" class="btn-close btn-sm" data-bs-dismiss="alert" aria-label="Cerrar"></button>
+            </div>
+          {% endfor %}
+        {% endif %}
+
+        {% comment %} ---------------------------------------------------------------
+           ERRORES GENERALES DEL FORMULARIO (non_field_errors)
+           Son los que no pertenecen a un campo puntual: credenciales
+           inválidas, cuenta desactivada, cuenta bloqueada.
+           --------------------------------------------------------------- {% endcomment %}
+        {% if form.non_field_errors %}
+          <div class="alert alert-danger d-flex gap-2 align-items-start" role="alert" aria-live="assertive">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="20" height="20" class="flex-shrink-0 mt-1" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+            </svg>
+            <div class="small">
+              {% for error in form.non_field_errors %}
+                <div>{{ error }}</div>
+              {% endfor %}
+            </div>
+          </div>
+        {% endif %}
+
+        {% comment %} ---------------------------------------------------------------
+           EL FORMULARIO
+
+           method="post": las credenciales van en el CUERPO de la petición,
+           nunca en la URL (con GET quedarían en el historial del navegador
+           y en los registros del servidor).
+           --------------------------------------------------------------- {% endcomment %}
+        <form method="post" action="{% url 'usuarios:login' %}" novalidate>
+
+          {% comment %} TOKEN CSRF: obligatorio. Genera un <input type="hidden"> con un
+             valor secreto que Django compara al recibir el POST. Sin él,
+             CsrfViewMiddleware rechaza la petición con un error 403. {% endcomment %}
+          {% csrf_token %}
+
+          {% comment %} Campo oculto que conserva la página que el usuario quería abrir,
+             para volver allí después de autenticarse. {% endcomment %}
+          {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+
+          <!-- Correo electrónico -->
+          <div class="mb-3">
+            <label for="{{ form.username.id_for_label }}" class="form-label fw-semibold small">
+              {{ form.username.label }} <span class="text-danger">*</span>
+            </label>
+            <div class="input-icono">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 01-2.25 2.25h-15a2.25 2.25 0 01-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0019.5 4.5h-15a2.25 2.25 0 00-2.25 2.25m19.5 0v.243a2.25 2.25 0 01-1.07 1.916l-7.5 4.615a2.25 2.25 0 01-2.36 0L3.32 8.91a2.25 2.25 0 01-1.07-1.916V6.75" />
+              </svg>
+              {{ form.username }}
+            </div>
+            {% for error in form.username.errors %}
+              <div class="text-danger small mt-1">{{ error }}</div>
+            {% endfor %}
+          </div>
+
+          <!-- Contraseña -->
+          <div class="mb-3">
+            <label for="{{ form.password.id_for_label }}" class="form-label fw-semibold small">
+              {{ form.password.label }} <span class="text-danger">*</span>
+            </label>
+            <div class="input-icono">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+              </svg>
+              {{ form.password }}
+              <button type="button" class="btn-ver-clave" id="btn-ver-clave"
+                      aria-label="Mostrar contraseña" aria-pressed="false"
+                      aria-controls="{{ form.password.id_for_label }}">
+                <svg id="icono-ojo" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              </button>
+            </div>
+            {% for error in form.password.errors %}
+              <div class="text-danger small mt-1">{{ error }}</div>
+            {% endfor %}
+          </div>
+
+          <!-- Recordarme -->
+          <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
+            <div class="form-check mb-0">
+              {{ form.recordarme }}
+              <label class="form-check-label small" for="{{ form.recordarme.id_for_label }}">
+                {{ form.recordarme.label }}
+              </label>
+            </div>
+            <a href="{% url 'usuarios:password_reset' %}" class="small text-decoration-none fw-semibold">
+              ¿Olvidaste tu contraseña?
+            </a>
+          </div>
+
+          <!-- Botón de envío -->
+          <button type="submit" class="btn btn-opso w-100 d-flex align-items-center justify-content-center gap-2" id="btn-ingresar">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="18" height="18" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0013.5 3h-6a2.25 2.25 0 00-2.25 2.25v13.5A2.25 2.25 0 007.5 21h6a2.25 2.25 0 002.25-2.25V15M12 9l-3 3m0 0l3 3m-3-3h12.75" />
+            </svg>
+            <span id="texto-btn">Ingresar al sistema</span>
+          </button>
+
+        </form>
+
+        <div class="login-nota-seguridad mt-4">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+          </svg>
+          <span>
+            Tu contraseña se almacena cifrada con un algoritmo irreversible.
+            Los datos de las familias están protegidos conforme a la legislación
+            chilena sobre protección de datos personales.
+          </span>
+        </div>
+
+      </div>
+    </section>
+
+  </div>
+</main>
+
+<script src="{% static 'vendor/bootstrap/bootstrap.bundle.min.js' %}"></script>
+<script>
+  /* ------------------------------------------------------------------
+     JavaScript de apoyo (progressive enhancement): el formulario
+     funciona igual si el navegador no ejecuta este script.
+     ------------------------------------------------------------------ */
+
+  /* 1. Mostrar / ocultar la contraseña */
+  (function () {
+    const boton = document.getElementById('btn-ver-clave');
+    const campo = document.getElementById('{{ form.password.id_for_label }}');
+    const icono = document.getElementById('icono-ojo');
+    if (!boton || !campo) return;
+
+    const ojoAbierto = '<path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" /><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />';
+    const ojoCerrado = '<path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65" />';
+
+    boton.addEventListener('click', function () {
+      const visible = campo.type === 'text';
+      campo.type = visible ? 'password' : 'text';
+      icono.innerHTML = visible ? ojoAbierto : ojoCerrado;
+      boton.setAttribute('aria-pressed', String(!visible));
+      boton.setAttribute('aria-label', visible ? 'Mostrar contraseña' : 'Ocultar contraseña');
+    });
+  })();
+
+  /* 2. Evitar el doble envío del formulario (doble clic = dos peticiones) */
+  (function () {
+    const formulario = document.querySelector('form[method="post"]');
+    const boton = document.getElementById('btn-ingresar');
+    const texto = document.getElementById('texto-btn');
+    if (!formulario || !boton) return;
+
+    formulario.addEventListener('submit', function () {
+      boton.disabled = true;
+      texto.textContent = 'Verificando credenciales...';
+      /* Si la validación del servidor falla, la página se recarga completa y
+         el botón vuelve a su estado normal automáticamente. */
+    });
+  })();
+</script>
+
+</body>
+</html>

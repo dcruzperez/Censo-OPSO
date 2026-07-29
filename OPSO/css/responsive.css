@@ -1,0 +1,607 @@
+/* =========================================
+   OPSO – Operativo Médico Social
+   Archivo: responsive.css
+   Sprint 1 – Fundamentos del Sistema
+
+   Breakpoints:
+   - xs: < 480px   (teléfonos pequeños)
+   - sm: < 640px   (teléfonos)
+   - md: < 768px   (tablets portrait)
+   - lg: < 1024px  (tablets landscape / notebooks pequeños)
+   - xl: < 1280px  (notebooks)
+   - 2xl: ≥ 1280px (escritorio)
+   ========================================= */
+
+@import url('variables.css');
+
+
+/* ==========================================
+   TABLET LANDSCAPE / NOTEBOOK PEQUEÑO
+   Máx 1024px
+   ========================================== */
+
+@media (max-width: 1024px) {
+
+  /* Sidebar */
+  .sidebar {
+    width: var(--sidebar-collapsed-width);
+  }
+
+  .sidebar-brand-text,
+  .nav-item-label,
+  .sidebar-nav-section-label,
+  .sidebar-user-info {
+    display: none;
+  }
+
+  .sidebar-brand {
+    justify-content: center;
+    padding: var(--space-5) var(--space-4);
+  }
+
+  .nav-item {
+    justify-content: center;
+    padding: var(--space-3);
+  }
+
+  .nav-item.active::before {
+    height: 60%;
+  }
+
+  .sidebar-user {
+    justify-content: center;
+  }
+
+  .sidebar-footer {
+    padding: var(--space-4) var(--space-3);
+  }
+
+  /* Main content se ajusta */
+  .main-content {
+    margin-left: var(--sidebar-collapsed-width);
+  }
+
+  /* Header */
+  .header-user-info {
+    display: none;
+  }
+
+  .btn-logout span {
+    display: none;
+  }
+
+  /* KPI grid */
+  .kpi-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  /* Dashboard bottom */
+  .dashboard-bottom-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Welcome banner */
+  .welcome-banner {
+    padding: var(--space-6) var(--space-8);
+  }
+
+  .welcome-icon {
+    display: none;
+  }
+
+  /* Quick grid */
+  .quick-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+
+/* ==========================================
+   TABLET PORTRAIT
+   Máx 768px
+   ========================================== */
+
+@media (max-width: 768px) {
+
+  /* Sidebar: se oculta por defecto en móvil */
+  .sidebar {
+    width: var(--sidebar-width);
+    transform: translateX(-100%);
+    box-shadow: none;
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
+    box-shadow: var(--shadow-xl);
+  }
+
+  /* Restaurar textos del sidebar cuando está abierto */
+  .sidebar.open .sidebar-brand-text,
+  .sidebar.open .nav-item-label,
+  .sidebar.open .sidebar-user-info {
+    display: flex;
+  }
+
+  .sidebar.open .sidebar-brand {
+    justify-content: flex-start;
+    padding: var(--space-5) var(--space-6);
+  }
+
+  .sidebar.open .sidebar-nav-section-label {
+    display: block;
+  }
+
+  .sidebar.open .nav-item {
+    justify-content: flex-start;
+    padding: var(--space-3) var(--space-4);
+  }
+
+  .sidebar.open .sidebar-user {
+    justify-content: flex-start;
+  }
+
+  .sidebar.open .sidebar-footer {
+    padding: var(--space-4) var(--space-5);
+  }
+
+  /* Main content sin margen */
+  .main-content {
+    margin-left: 0;
+  }
+
+  /* Header: mostrar botón de menú hamburguesa */
+  .header-menu-btn {
+    display: flex;
+  }
+
+  /* Header: info de usuario simplificada */
+  .header-user-info {
+    display: none;
+  }
+
+  .header-user-chevron {
+    display: none;
+  }
+
+  /* Page content padding reducido */
+  .page-content {
+    padding: var(--space-6) var(--space-5);
+  }
+
+  /* Footer */
+  .app-footer {
+    padding: 0 var(--space-5);
+  }
+
+  /* Page header */
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-4);
+  }
+
+  .page-title {
+    font-size: var(--font-size-xl);
+  }
+
+  /* KPI grid */
+  .kpi-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-4);
+  }
+
+  /* Quick grid */
+  .quick-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* Welcome banner */
+  .welcome-banner {
+    padding: var(--space-6);
+    border-radius: var(--radius-lg);
+  }
+
+  .welcome-name {
+    font-size: var(--font-size-2xl);
+  }
+
+  .welcome-icon {
+    display: none;
+  }
+
+  .welcome-actions {
+    flex-wrap: wrap;
+  }
+
+  /* Dashboard bottom */
+  .dashboard-bottom-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Table toolbar */
+  .table-toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .table-toolbar-left {
+    width: 100%;
+  }
+
+  .table-toolbar-right {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  /* Users toolbar */
+  .users-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .users-search-group {
+    max-width: 100%;
+  }
+
+  .search-input-wrapper {
+    max-width: 100%;
+  }
+
+  /* Form row en modal */
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* Modal */
+  .modal {
+    max-width: 100%;
+    border-radius: var(--radius-lg);
+  }
+
+  /* Pagination */
+  .pagination {
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  /* Login */
+  .login-page {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+
+  .login-hero {
+    min-height: 280px;
+    padding: var(--space-8) var(--space-6);
+  }
+
+  .login-hero-content {
+    gap: var(--space-4);
+  }
+
+  .login-logo {
+    width: 60px;
+    height: 60px;
+  }
+
+  .login-logo svg {
+    width: 32px;
+    height: 32px;
+  }
+
+  .login-brand-name {
+    font-size: var(--font-size-4xl);
+  }
+
+  .login-brand-tagline {
+    font-size: var(--font-size-sm);
+  }
+
+  .login-illustration {
+    max-width: 220px;
+  }
+
+  .login-stats {
+    gap: var(--space-5);
+  }
+
+  .login-chips {
+    display: none;
+  }
+
+  .login-form-panel {
+    padding: var(--space-8) var(--space-6);
+  }
+}
+
+
+/* ==========================================
+   MÓVIL
+   Máx 640px
+   ========================================== */
+
+@media (max-width: 640px) {
+
+  /* Tipografía */
+  body {
+    font-size: var(--font-size-sm);
+  }
+
+  /* Page content */
+  .page-content {
+    padding: var(--space-5) var(--space-4);
+  }
+
+  /* KPI grid: 1 columna */
+  .kpi-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+  }
+
+  .kpi-value {
+    font-size: var(--font-size-2xl);
+  }
+
+  .kpi-icon {
+    width: 40px;
+    height: 40px;
+  }
+
+  .kpi-icon svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  /* Quick grid: 2 columnas */
+  .quick-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-3);
+  }
+
+  .quick-card-desc {
+    display: none;
+  }
+
+  /* Tabla responsive – ocultar columnas menos importantes */
+  .data-table th.hide-mobile,
+  .data-table td.hide-mobile {
+    display: none;
+  }
+
+  /* Header */
+  .app-header {
+    padding: 0 var(--space-4);
+  }
+
+  /* Header: ocultar botón de logout texto */
+  .btn-logout span {
+    display: none;
+  }
+
+  /* Footer: ocultar versión */
+  .footer-version {
+    display: none;
+  }
+
+  /* Footer: texto reducido */
+  .footer-text {
+    font-size: 10px;
+  }
+
+  /* Modal */
+  .modal-overlay {
+    padding: var(--space-3);
+  }
+
+  .modal-body {
+    padding: var(--space-5);
+  }
+
+  .modal-footer {
+    flex-direction: column;
+  }
+
+  .modal-footer .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Activity item */
+  .activity-item {
+    padding: var(--space-3) var(--space-4);
+  }
+
+  /* Filtros */
+  .filters-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .form-select {
+    width: 100%;
+  }
+
+  /* Paginación simplificada */
+  .pagination-info {
+    display: none;
+  }
+
+  /* Botones de tamaño */
+  .page-header-actions .btn span {
+    display: none;
+  }
+
+  .page-header-actions .btn {
+    padding: var(--space-2) var(--space-4);
+  }
+
+  .welcome-banner {
+    padding: var(--space-5);
+  }
+
+  .welcome-desc {
+    display: none;
+  }
+
+  .welcome-name {
+    font-size: var(--font-size-xl);
+  }
+
+  .welcome-actions .btn span {
+    display: none;
+  }
+}
+
+
+/* ==========================================
+   MÓVIL PEQUEÑO
+   Máx 480px
+   ========================================== */
+
+@media (max-width: 480px) {
+
+  /* KPI grid: 1 columna */
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Login: más compacto */
+  .login-hero {
+    min-height: 220px;
+    padding: var(--space-6);
+  }
+
+  .login-illustration {
+    display: none;
+  }
+
+  .login-stats {
+    gap: var(--space-4);
+  }
+
+  .login-stat-value {
+    font-size: var(--font-size-xl);
+  }
+
+  .login-form-panel {
+    padding: var(--space-6) var(--space-4);
+  }
+
+  /* Ocultar header chevron */
+  .header-user-chevron {
+    display: none;
+  }
+
+  /* Modal sin border-radius abajo */
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal {
+    border-radius: var(--radius-xl) var(--radius-xl) 0 0;
+    max-height: 95vh;
+  }
+
+  /* Table actions: solo íconos */
+  .table-actions .action-btn {
+    width: 28px;
+    height: 28px;
+  }
+}
+
+
+/* ==========================================
+   ESCRITORIO GRANDE
+   Mín 1280px
+   ========================================== */
+
+@media (min-width: 1280px) {
+
+  /* Sidebar siempre expandido */
+  .sidebar {
+    width: var(--sidebar-width);
+  }
+
+  .main-content {
+    margin-left: var(--sidebar-width);
+  }
+
+  /* KPI grid: 5 columnas */
+  .kpi-grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
+
+  /* Quick grid: 4 columnas */
+  .quick-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+
+/* ==========================================
+   PRINT
+   ========================================== */
+
+@media print {
+  .sidebar,
+  .app-header,
+  .app-footer,
+  .btn,
+  .table-toolbar-right,
+  .pagination,
+  .page-header-actions {
+    display: none !important;
+  }
+
+  .main-content {
+    margin-left: 0;
+  }
+
+  .page-content {
+    padding: 0;
+  }
+
+  .data-table th,
+  .data-table td {
+    font-size: 11px;
+    padding: 6px 10px;
+  }
+
+  body {
+    background: white;
+    color: black;
+  }
+}
+
+
+/* ==========================================
+   PREFERENCIAS DEL SISTEMA
+   ========================================== */
+
+/* Reducir movimiento para accesibilidad */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Modo oscuro (preparado para Sprint 2) */
+/* @media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0F1A2E;
+    --color-bg-dark: #0A1220;
+    --color-surface: #152240;
+    --color-surface-2: #1A2B4A;
+    --color-text: #E8EDF6;
+    --color-text-light: #C5CEDF;
+    --color-muted: #8097B4;
+    --color-border: #253A5E;
+    --color-border-light: #1E2F4C;
+  }
+} */

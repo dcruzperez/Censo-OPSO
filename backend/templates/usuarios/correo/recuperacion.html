@@ -1,0 +1,128 @@
+{% comment %} ==========================================================================
+   CUERPO DEL CORREO EN HTML.
+
+   Reglas de maquetación de correos (distintas a las de una página web):
+     1. Se usan TABLAS para la estructura, no flexbox ni grid. Outlook usa el
+        motor de Word para renderizar y no soporta CSS moderno.
+     2. Los estilos van EN LÍNEA (atributo style). Gmail elimina las hojas de
+        estilo y las etiquetas <style> del <head>.
+     3. Ancho máximo 600 px: es el estándar que se ve bien en escritorio y en
+        móvil sin desbordar.
+     4. Nada de JavaScript ni de imágenes externas: los clientes de correo los
+        bloquean y podrían marcar el mensaje como sospechoso.
+     5. El enlace aparece también como texto visible, para quien copia y pega.
+
+   AQUÍ NO se desactiva el autoescape: si el nombre de un usuario contuviera
+   caracteres de HTML, deben escaparse para que no rompan la maqueta.
+   ========================================================================= {% endcomment %}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+       style="background-color:#f4f6fb; padding:24px 12px; font-family:'Segoe UI',Arial,Helvetica,sans-serif;">
+  <tr>
+    <td align="center">
+
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600"
+             style="max-width:600px; width:100%; background-color:#ffffff; border-radius:16px; overflow:hidden; border:1px solid #dde3ee;">
+
+        <!-- Encabezado institucional -->
+        <tr>
+          <td style="background-color:#1a4d8f; padding:28px 32px; text-align:center;">
+            <div style="font-size:26px; font-weight:bold; color:#ffffff; letter-spacing:4px;">
+              {{ nombre_sistema }}
+            </div>
+            <div style="font-size:13px; color:#bfdbfe; margin-top:4px;">
+              Operativo Social
+            </div>
+          </td>
+        </tr>
+
+        <!-- Contenido -->
+        <tr>
+          <td style="padding:32px;">
+
+            <h1 style="margin:0 0 16px; font-size:20px; color:#0f2f5a;">
+              Restablecer tu contraseña
+            </h1>
+
+            <p style="margin:0 0 16px; font-size:15px; color:#374151; line-height:1.6;">
+              Hola <strong>{{ user.get_short_name|default:user.email }}</strong>:
+            </p>
+
+            <p style="margin:0 0 24px; font-size:15px; color:#374151; line-height:1.6;">
+              Recibimos una solicitud para restablecer la contraseña de la cuenta
+              asociada a <strong>{{ email }}</strong>. Haz clic en el botón para
+              crear una contraseña nueva.
+            </p>
+
+            <!-- Botón de acción -->
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%">
+              <tr>
+                <td align="center" style="padding:8px 0 24px;">
+                  <a href="{{ protocol }}://{{ domain }}{% url 'usuarios:password_reset_confirm' uidb64=uid token=token %}"
+                     style="display:inline-block; background-color:#1a4d8f; color:#ffffff;
+                            text-decoration:none; font-size:16px; font-weight:600;
+                            padding:14px 32px; border-radius:12px;">
+                    Crear nueva contraseña
+                  </a>
+                </td>
+              </tr>
+            </table>
+
+            <!-- Aviso de vigencia -->
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+                   style="background-color:#e0f2fe; border-radius:12px; margin-bottom:24px;">
+              <tr>
+                <td style="padding:14px 18px; font-size:13px; color:#0c4a6e; line-height:1.6;">
+                  Este enlace es <strong>personal</strong>, sirve
+                  <strong>una sola vez</strong> y caduca en
+                  <strong>{{ minutos_validez }} minutos</strong>.
+                </td>
+              </tr>
+            </table>
+
+            <!-- Enlace en texto, para copiar y pegar -->
+            <p style="margin:0 0 8px; font-size:12px; color:#6b7a90;">
+              Si el botón no funciona, copia y pega esta dirección en tu navegador:
+            </p>
+            <p style="margin:0 0 24px; font-size:12px; color:#1a4d8f; word-break:break-all;">
+              {{ protocol }}://{{ domain }}{% url 'usuarios:password_reset_confirm' uidb64=uid token=token %}
+            </p>
+
+            <!-- Advertencia de seguridad -->
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+                   style="background-color:#fef3c7; border-radius:12px;">
+              <tr>
+                <td style="padding:16px 18px; font-size:13px; color:#78350f; line-height:1.6;">
+                  <strong>¿No solicitaste este cambio?</strong><br>
+                  Puedes ignorar este mensaje con tranquilidad: tu contraseña
+                  actual seguirá funcionando y nadie podrá modificarla sin abrir
+                  el enlace de arriba.<br><br>
+                  Nunca compartas este enlace. El equipo de {{ nombre_sistema }}
+                  jamás te pedirá tu contraseña por correo, teléfono ni mensajería.
+                </td>
+              </tr>
+            </table>
+
+          </td>
+        </tr>
+
+        <!-- Pie -->
+        <tr>
+          <td style="background-color:#f8faff; padding:20px 32px; border-top:1px solid #eef0f8;">
+            <p style="margin:0 0 6px; font-size:13px; color:#374151;">
+              Saludos cordiales,<br>
+              <strong>Equipo {{ nombre_sistema }}</strong>
+            </p>
+            <p style="margin:0; font-size:11px; color:#9ca3af; line-height:1.6;">
+              Soporte: {{ correo_soporte }}<br>
+              Este es un mensaje automático; por favor no respondas a esta dirección.<br>
+              Tus datos están protegidos conforme a la legislación chilena sobre
+              protección de datos personales.
+            </p>
+          </td>
+        </tr>
+
+      </table>
+
+    </td>
+  </tr>
+</table>

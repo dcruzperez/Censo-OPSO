@@ -1,0 +1,244 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   FICHA DEL USUARIO — /usuarios/<pk>/
+
+   Reúne en una sola pantalla lo que de otro modo habría que buscar en tres
+   tablas distintas de PostgreSQL:
+     - los datos de la cuenta        (usuarios_usuario)
+     - sus últimos intentos de acceso (usuarios_intento_acceso, HU-01)
+     - las modificaciones que recibió (usuarios_registro_auditoria, HU-03)
+
+   Es la pantalla que permite responder "¿por qué esta persona no puede entrar?"
+   sin abrir la base de datos: se ve si está inactiva, si su rol está
+   desactivado y si sus últimos intentos fallaron.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}{{ usuario.get_full_name|default:usuario.email }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ruta de navegación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'usuarios:lista' %}">Usuarios</a></li>
+    <li class="breadcrumb-item active" aria-current="page">
+      {{ usuario.get_full_name|default:usuario.email }}
+    </li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-3 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+      {{ usuario.get_full_name|default:"(sin nombre)" }}
+    </h1>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      {% if usuario.is_active %}
+        <span class="badge text-bg-success">Activo</span>
+      {% else %}
+        <span class="badge text-bg-secondary">Inactivo</span>
+      {% endif %}
+      {% if usuario.rol %}
+        <span class="badge text-bg-light border">{{ usuario.rol.nombre }}</span>
+      {% else %}
+        <span class="badge text-bg-warning">Sin rol asignado</span>
+      {% endif %}
+      {% if usuario.is_superuser %}
+        <span class="badge text-bg-dark">Superusuario</span>
+      {% endif %}
+      <span class="text-secondary small">{{ usuario.email }}</span>
+    </div>
+  </div>
+
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{% url 'usuarios:editar' usuario.pk %}" class="btn btn-opso btn-sm">Editar</a>
+
+    {% comment %} Enviar el enlace MODIFICA el estado del sistema (dispara un correo),
+       así que va por POST con token CSRF, no como enlace. {% endcomment %}
+    {% if usuario.is_active %}
+      <form method="post" action="{% url 'usuarios:enviar_enlace' usuario.pk %}" class="m-0">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-outline-primary btn-sm">
+          Enviar enlace de contraseña
+        </button>
+      </form>
+    {% endif %}
+
+    {% if usuario.is_active %}
+      <a href="{% url 'usuarios:deshabilitar' usuario.pk %}" class="btn btn-outline-danger btn-sm">
+        Deshabilitar
+      </a>
+    {% else %}
+      <a href="{% url 'usuarios:habilitar' usuario.pk %}" class="btn btn-outline-success btn-sm">
+        Habilitar
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+{# ---------- Avisos de diagnóstico ---------- #}
+{% if not usuario.is_active %}
+  <div class="alert alert-secondary small" role="alert">
+    Esta cuenta está <strong>deshabilitada</strong>: todos sus datos y su
+    historial se conservan, pero no puede iniciar sesión. Al intentarlo, el
+    sistema le responde que su cuenta está desactivada.
+  </div>
+{% elif usuario.rol and not usuario.rol.activo %}
+  <div class="alert alert-warning small" role="alert">
+    La cuenta está activa, pero su <strong>rol está desactivado</strong>, así que
+    tampoco podrá iniciar sesión (regla aplicada en
+    <code>LoginForm.confirm_login_allowed</code>).
+  </div>
+{% elif not usuario.rol and not usuario.is_superuser %}
+  <div class="alert alert-warning small" role="alert">
+    La cuenta no tiene <strong>rol asignado</strong>: podrá iniciar sesión, pero
+    solo verá una pantalla informativa, sin acceso a ningún dato del censo.
+  </div>
+{% endif %}
+
+{% if es_ultimo_administrador %}
+  <div class="alert alert-info small" role="alert">
+    Es el <strong>único administrador activo</strong> del sistema. Por eso no se
+    puede deshabilitar ni cambiar su rol: dejaría a OPSO sin nadie capaz de
+    administrar cuentas.
+  </div>
+{% endif %}
+
+<div class="row g-3">
+
+  {# ---------- Datos de la cuenta ---------- #}
+  <div class="col-12 col-lg-5">
+    <div class="card-opso p-4 h-100">
+      <h2 class="h6 fw-semibold mb-3">Datos de la cuenta</h2>
+      <dl class="row small mb-0">
+        <dt class="col-5 text-secondary fw-normal">Nombre</dt>
+        <dd class="col-7">{{ usuario.first_name|default:"—" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Apellido</dt>
+        <dd class="col-7">{{ usuario.last_name|default:"—" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Correo (credencial)</dt>
+        <dd class="col-7">{{ usuario.email }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Nombre de usuario</dt>
+        <dd class="col-7">{{ usuario.nombre_usuario|default:"—" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">RUT</dt>
+        <dd class="col-7">{{ usuario.rut|default:"—" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Teléfono</dt>
+        <dd class="col-7">{{ usuario.telefono|default:"—" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Rol</dt>
+        <dd class="col-7">{{ usuario.rol.nombre|default:"Sin rol" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Estado</dt>
+        <dd class="col-7">{{ usuario.etiqueta_estado }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Creado en</dt>
+        <dd class="col-7">{{ usuario.creado_en|date:"d-m-Y H:i" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Modificado en</dt>
+        <dd class="col-7">{{ usuario.actualizado_en|date:"d-m-Y H:i" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Último acceso</dt>
+        <dd class="col-7">{{ usuario.last_login|date:"d-m-Y H:i"|default:"Nunca ha ingresado" }}</dd>
+      </dl>
+
+      <hr>
+      <p class="text-secondary small mb-0">
+        La contraseña no aparece en ninguna parte porque no está almacenada: la
+        base de datos guarda solo su hash Argon2id, y de un hash no se puede
+        volver al texto original.
+      </p>
+    </div>
+  </div>
+
+  <div class="col-12 col-lg-7">
+
+    {# ---------- Historial administrativo ---------- #}
+    <div class="card-opso p-0 overflow-hidden mb-3">
+      <div class="p-4 border-bottom">
+        <h2 class="h6 fw-semibold mb-1">Historial administrativo</h2>
+        <p class="text-secondary small mb-0">
+          Quién modificó esta cuenta, cuándo y qué cambió exactamente.
+        </p>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th scope="col">Fecha</th>
+              <th scope="col">Administrador</th>
+              <th scope="col">Acción</th>
+              <th scope="col">Detalle</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for registro in auditoria %}
+              <tr>
+                <td class="small text-nowrap">{{ registro.ocurrido_en|date:"d-m-Y H:i" }}</td>
+                <td class="small">{{ registro.administrador_email|default:"(cuenta eliminada)" }}</td>
+                <td class="small">
+                  <span class="badge text-bg-light border">{{ registro.get_accion_display }}</span>
+                </td>
+                <td class="small text-secondary">{{ registro.detalle|default:"—" }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="4" class="text-center text-secondary py-4">
+                  Sin modificaciones registradas.
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {# ---------- Últimos accesos (bitácora de la HU-01) ---------- #}
+    <div class="card-opso p-0 overflow-hidden">
+      <div class="p-4 border-bottom">
+        <h2 class="h6 fw-semibold mb-1">Últimos intentos de acceso</h2>
+        <p class="text-secondary small mb-0">
+          Varios intentos fallidos seguidos indican que la persona olvidó su
+          contraseña... o que alguien está probando entrar con su correo.
+        </p>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm table-hover align-middle mb-0">
+          <thead class="table-light">
+            <tr>
+              <th scope="col">Fecha y hora</th>
+              <th scope="col">Resultado</th>
+              <th scope="col">IP</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for acceso in accesos %}
+              <tr>
+                <td class="small text-nowrap">{{ acceso.ocurrido_en|date:"d-m-Y H:i:s" }}</td>
+                <td>
+                  {% if acceso.exitoso %}
+                    <span class="badge text-bg-success">Exitoso</span>
+                  {% else %}
+                    <span class="badge text-bg-danger">Fallido</span>
+                  {% endif %}
+                </td>
+                <td class="small text-secondary">{{ acceso.ip|default:"—" }}</td>
+              </tr>
+            {% empty %}
+              <tr>
+                <td colspan="3" class="text-center text-secondary py-4">
+                  Esta cuenta nunca ha intentado iniciar sesión.
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

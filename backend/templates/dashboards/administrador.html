@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block titulo %}Panel del Administrador{% endblock %}
+
+{% block contenido %}
+<div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">Panel del Administrador</h1>
+    <p class="text-secondary mb-0">Gestión de usuarios, roles y auditoría del sistema.</p>
+  </div>
+  <span class="badge text-bg-light border">Acceso total</span>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-12 col-md-4">
+    <div class="card-opso p-4 h-100">
+      <div class="kpi-valor">{{ total_usuarios }}</div>
+      <div class="kpi-etiqueta">Usuarios activos en el sistema</div>
+    </div>
+  </div>
+  <div class="col-12 col-md-4">
+    <div class="card-opso p-4 h-100">
+      <div class="kpi-valor text-secondary">{{ total_inactivos }}</div>
+      <div class="kpi-etiqueta">Usuarios deshabilitados (datos conservados)</div>
+    </div>
+  </div>
+  <div class="col-12 col-md-4">
+    <div class="card-opso p-4 h-100">
+      <div class="kpi-valor">{{ total_roles }}</div>
+      <div class="kpi-etiqueta">Roles activos definidos</div>
+    </div>
+  </div>
+</div>
+
+{# Accesos directos al módulo de administración de usuarios (HU-03) #}
+<div class="card-opso p-4 mb-4">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+    <div>
+      <h2 class="h5 fw-semibold mb-1">Administración de usuarios</h2>
+      <p class="text-secondary small mb-0">
+        Crear cuentas, editar datos, asignar roles y habilitar o deshabilitar el
+        acceso. Cada cambio queda registrado en la bitácora de auditoría.
+      </p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{% url 'usuarios:crear' %}" class="btn btn-opso btn-sm">Crear usuario</a>
+      <a href="{% url 'usuarios:lista' %}" class="btn btn-outline-primary btn-sm">Ver listado</a>
+      <a href="{% url 'usuarios:auditoria' %}" class="btn btn-outline-secondary btn-sm">Auditoría</a>
+    </div>
+  </div>
+</div>
+
+{# Últimas acciones administrativas: quién modificó a quién #}
+<div class="card-opso p-0 overflow-hidden mb-4">
+  <div class="p-4 border-bottom">
+    <h2 class="h5 fw-semibold mb-1">Últimas acciones administrativas</h2>
+    <p class="text-secondary small mb-0">
+      Registro de auditoría de la gestión de cuentas: quién hizo qué, cuándo y a quién.
+    </p>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th scope="col">Fecha y hora</th>
+          <th scope="col">Administrador</th>
+          <th scope="col">Acción</th>
+          <th scope="col">Usuario afectado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for registro in auditoria_reciente %}
+          <tr>
+            <td class="small">{{ registro.ocurrido_en|date:"d-m-Y H:i" }}</td>
+            <td class="small">{{ registro.administrador_email|default:"—" }}</td>
+            <td class="small">
+              <span class="badge text-bg-light border">{{ registro.get_accion_display }}</span>
+            </td>
+            <td class="small">{{ registro.usuario_afectado_email }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="4" class="text-center text-secondary py-4">
+              Todavía no se ha registrado ninguna acción administrativa.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# Bitácora de accesos: evidencia concreta de la trazabilidad del sistema #}
+<div class="card-opso p-0 overflow-hidden">
+  <div class="p-4 border-bottom">
+    <h2 class="h5 fw-semibold mb-1">Bitácora de accesos</h2>
+    <p class="text-secondary small mb-0">
+      Registro de auditoría: quién intentó entrar, cuándo y desde qué dirección IP.
+    </p>
+  </div>
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th scope="col">Fecha y hora</th>
+          <th scope="col">Correo</th>
+          <th scope="col">Resultado</th>
+          <th scope="col">IP</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for intento in accesos_recientes %}
+          <tr>
+            <td class="small">{{ intento.ocurrido_en|date:"d-m-Y H:i:s" }}</td>
+            <td class="small">{{ intento.email_ingresado }}</td>
+            <td>
+              {% if intento.exitoso %}
+                <span class="badge text-bg-success">Exitoso</span>
+              {% else %}
+                <span class="badge text-bg-danger">Fallido</span>
+              {% endif %}
+            </td>
+            <td class="small text-secondary">{{ intento.ip|default:"—" }}</td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="4" class="text-center text-secondary py-4">
+              Aún no hay registros de acceso.
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="row g-3 mt-3">
+  <div class="col-12 col-lg-6">
+    <div class="card-opso p-4 h-100">
+      <h2 class="h6 fw-semibold">Próximas historias de usuario</h2>
+      <ul class="text-secondary small mb-0 ps-3">
+        <li>Configurar los sectores y territorios del operativo.</li>
+        <li>Registrar la ficha de levantamiento de información familiar.</li>
+        <li>Exportar reportes consolidados del censo.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card-opso p-4 h-100">
+      <h2 class="h6 fw-semibold">Administración técnica (Django)</h2>
+      <p class="text-secondary small">
+        El panel <code>/admin/</code> se reserva para tareas técnicas: catálogo de
+        roles, permisos de Django y consulta de bitácoras. La gestión diaria de
+        cuentas se hace en el módulo propio de OPSO, que valida las reglas del
+        negocio y registra auditoría.
+      </p>
+      <a href="{% url 'admin:index' %}" class="btn btn-outline-secondary btn-sm">
+        Ir a la administración de Django
+      </a>
+    </div>
+  </div>
+</div>
+{% endblock %}

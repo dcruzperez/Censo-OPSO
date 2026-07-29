@@ -1,0 +1,45 @@
+{% comment %} ==========================================================================
+   FRAGMENTO REUTILIZABLE: dibuja UN campo de formulario.
+
+   Uso:
+     {% include "usuarios/gestion/_campo.html" with campo=form.email %}
+
+   ¿Por qué un fragmento y no repetir el HTML en cada campo?
+   Porque los cuatro formularios de este módulo tienen entre 8 y 11 campos. Sin
+   este archivo habría que repetir la etiqueta, el asterisco de obligatorio, el
+   texto de ayuda y el bucle de errores unas 40 veces. Si mañana se decide
+   mostrar los errores con un icono, se cambia UNA vez aquí.
+
+   Variables:
+     campo      -> el campo del formulario (obligatorio)
+     ancho      -> clases de columna Bootstrap (opcional, por defecto col-12)
+   ========================================================================= {% endcomment %}
+<div class="{{ ancho|default:'col-12' }}">
+  <label for="{{ campo.id_for_label }}" class="form-label fw-semibold small mb-1">
+    {{ campo.label }}
+    {% if campo.field.required and not campo.field.disabled %}
+      <span class="text-danger" title="Campo obligatorio">*</span>
+    {% endif %}
+  </label>
+
+  {% comment %} {{ campo }} dibuja el widget que definió el formulario en Python
+     (input, select, radio...). El HTML no decide el tipo de control: lo decide
+     el formulario, que es quien también valida. Así presentación y validación
+     nunca se contradicen. {% endcomment %}
+  {{ campo }}
+
+  {% if campo.help_text %}
+    <div class="form-text small">{{ campo.help_text|safe }}</div>
+  {% endif %}
+
+  {% comment %} Errores DE ESTE campo, mostrados junto a él: el administrador ve
+     exactamente qué corregir sin buscar en un bloque general. {% endcomment %}
+  {% for error in campo.errors %}
+    <div class="text-danger small mt-1 d-flex align-items-start gap-1">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" width="14" height="14" class="flex-shrink-0 mt-1" aria-hidden="true">
+        <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd" />
+      </svg>
+      <span>{{ error }}</span>
+    </div>
+  {% endfor %}
+</div>

@@ -1,0 +1,17 @@
+{{ nombre_sistema }}: instrucciones para restablecer tu contraseña
+{% comment %} ==========================================================================
+   ASUNTO del correo.
+
+   Django lee esta plantilla y luego ejecuta "".join(subject.splitlines()),
+   es decir, ELIMINA todos los saltos de línea. Por eso el asunto debe quedar
+   en una sola línea.
+
+   La razón es de seguridad: un salto de línea dentro de un encabezado de
+   correo permitiría inyectar encabezados adicionales (por ejemplo, una copia
+   oculta hacia la casilla de un atacante). Ese ataque se llama "inyección de
+   encabezados" (header injection), y Django lo neutraliza aquí.
+
+   NOTA SOBRE COMENTARIOS EN PLANTILLAS DJANGO:
+   la etiqueta corta de comentario solo funciona en UNA línea. Para comentarios
+   de varias líneas, como este, hay que usar comment / endcomment.
+   ========================================================================= {% endcomment %}

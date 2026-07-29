@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+
+{% block titulo %}Sin rol asignado{% endblock %}
+
+{% block contenido %}
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-7">
+    <div class="card-opso p-5 text-center">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5"
+           stroke="currentColor" width="56" height="56" class="mx-auto mb-3"
+           style="color: var(--opso-accent);" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+      </svg>
+
+      <h1 class="h4 fw-bold mb-2">Tu cuenta aún no tiene un rol asignado</h1>
+      <p class="text-secondary mb-4">
+        Tus credenciales son correctas, pero todavía no se te asignó un perfil
+        de trabajo dentro del operativo. Comunícate con el administrador del
+        sistema para que active tu acceso.
+      </p>
+
+      <form method="post" action="{% url 'usuarios:logout' %}" class="d-inline">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-opso">Cerrar sesión</button>
+      </form>
+    </div>
+  </div>
+</div>
+{% endblock %}

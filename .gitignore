@@ -1,0 +1,62 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# =========================================================
+# Python / Django (backend)
+# =========================================================
+
+# Entorno virtual: se reconstruye con requirements.txt
+.venv/
+venv/
+env/
+
+# Archivos compilados de Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# CREDENCIALES REALES: nunca deben subirse al repositorio.
+# La plantilla .env.example sí se versiona.
+.env
+*.env
+!.env.example
+
+# Base de datos local de contingencia (el proyecto usa PostgreSQL)
+*.sqlite3
+db_pruebas.sqlite3
+
+# Resultado de collectstatic (se regenera en el despliegue)
+staticfiles/
+
+# Archivos subidos por los usuarios
+media/
+
+# Cobertura de pruebas
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Preferencias locales de Claude Code: son de este equipo, no del proyecto.
+.claude/settings.local.json

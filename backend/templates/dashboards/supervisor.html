@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block titulo %}Panel del Supervisor{% endblock %}
+
+{% block contenido %}
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">Panel del Supervisor</h1>
+  <p class="text-secondary mb-0">
+    Seguimiento del trabajo en terreno y validación de las fichas levantadas.
+  </p>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-12 col-md-4">
+    <div class="card-opso p-4 h-100">
+      <div class="kpi-valor">{{ total_censistas }}</div>
+      <div class="kpi-etiqueta">Censistas activos</div>
+    </div>
+  </div>
+  <div class="col-12 col-md-4">
+    <div class="card-opso p-4 h-100">
+      <div class="kpi-valor">—</div>
+      <div class="kpi-etiqueta">Fichas por validar</div>
+    </div>
+  </div>
+  <div class="col-12 col-md-4">
+    <div class="card-opso p-4 h-100">
+      <div class="kpi-valor">—</div>
+      <div class="kpi-etiqueta">Sectores asignados</div>
+    </div>
+  </div>
+</div>
+
+<div class="card-opso p-4">
+  <h2 class="h6 fw-semibold">Alcance de este rol</h2>
+  <ul class="text-secondary small mb-0 ps-3">
+    <li>Revisar y validar las fichas familiares registradas por los censistas.</li>
+    <li>Asignar sectores y hacer seguimiento del avance del operativo.</li>
+    <li>Consultar reportes de su equipo (sin acceso a la configuración del sistema).</li>
+  </ul>
+</div>
+{% endblock %}

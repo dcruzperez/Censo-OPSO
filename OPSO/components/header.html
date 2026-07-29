@@ -1,0 +1,74 @@
+<!--
+  OPSO – Operativo Médico Social
+  Componente: header.html
+  Sprint 1 – Referencia visual del componente Header
+-->
+
+<!--
+  ESTRUCTURA DEL HEADER
+  ================================
+
+  <header class="app-header" role="banner">
+
+    <!== LADO IZQUIERDO: Menú + Breadcrumb ==>
+    <div class="header-left">
+
+      <!== Botón hamburguesa para mobile ==>
+      <button class="header-menu-btn" id="sidebar-toggle"
+              aria-label="Abrir menú de navegación"
+              aria-expanded="false"
+              aria-controls="sidebar">
+        <svg><!-- Ícono menú =--></svg>
+      </button>
+
+      <!== Breadcrumb ==>
+      <nav class="breadcrumb" aria-label="Navegación de ruta">
+        <a href="dashboard.html" class="breadcrumb-item">Inicio</a>
+        <span class="breadcrumb-separator" aria-hidden="true">›</span>
+        <span class="breadcrumb-item active" aria-current="page">Dashboard</span>
+      </nav>
+
+    </div>
+
+    <!== LADO DERECHO: Acciones + Usuario ==>
+    <div class="header-right">
+
+      <!== Notificaciones ==>
+      <button class="header-icon-btn" aria-label="Notificaciones (3 nuevas)">
+        <svg><!-- Ícono campana --></svg>
+        <span class="header-notif-dot" aria-hidden="true"></span>
+      </button>
+
+      <!== Perfil del usuario conectado ==>
+      <button class="header-user" aria-label="Menú de usuario"
+              aria-haspopup="true" aria-expanded="false">
+        <div class="header-user-avatar" aria-hidden="true">JM</div>
+        <div class="header-user-info">
+          <span class="header-user-name">Juan Martínez</span>
+          <span class="header-user-role">Administrador</span>
+        </div>
+        <svg class="header-user-chevron"><!-- Chevron abajo --></svg>
+      </button>
+
+      <!== Cerrar sesión ==>
+      <a href="login.html" class="btn-logout" aria-label="Cerrar sesión">
+        <svg><!-- Ícono logout --></svg>
+        <span>Salir</span>
+      </a>
+
+    </div>
+
+  </header>
+
+  ACCESIBILIDAD
+  ================================
+  - role="banner" identifica el header semánticamente
+  - aria-label en el botón de notificaciones indica el número de nuevas
+  - aria-expanded en el botón de usuario para menú desplegable
+  - aria-controls vincula el botón hamburguesa con el sidebar
+-->
+
+<p style="font-family:sans-serif;padding:2rem;color:#555;">
+  Este archivo es una <strong>referencia de componente</strong> del Header de OPSO.<br>
+  El código HTML completo está documentado en los comentarios de este archivo.
+</p>

@@ -1,0 +1,101 @@
+<!--
+  OPSO – Operativo Médico Social
+  Componente: sidebar.html
+  Sprint 1 – Referencia visual del componente Sidebar
+  Este archivo es una referencia de componente reutilizable.
+  En la aplicación real, el sidebar está incluido directamente
+  en cada página HTML para mantener compatibilidad con HTML puro.
+-->
+
+<!--
+  ESTRUCTURA DEL SIDEBAR
+  ================================
+
+  <aside class="sidebar" id="sidebar" role="navigation" aria-label="Menú principal">
+
+    <!== BRAND / LOGO ==>
+    <a href="dashboard.html" class="sidebar-brand" aria-label="OPSO - Inicio">
+      <div class="sidebar-logo">
+        <svg>...</svg>
+      </div>
+      <div class="sidebar-brand-text">
+        <span class="sidebar-brand-name">OPSO</span>
+        <span class="sidebar-brand-subtitle">Operativo Médico Social</span>
+      </div>
+    </a>
+
+    <!== NAVEGACIÓN PRINCIPAL ==>
+    <nav class="sidebar-nav" aria-label="Menú de navegación">
+
+      <!== SECCIÓN: PRINCIPAL ==>
+      <div class="sidebar-nav-section">
+        <span class="sidebar-nav-section-label">Principal</span>
+      </div>
+
+      <a href="dashboard.html" class="nav-item active" aria-current="page">
+        <svg><!-- Ícono Dashboard --></svg>
+        <span class="nav-item-label">Dashboard</span>
+      </a>
+
+      <a href="#" class="nav-item">
+        <svg><!-- Ícono Censo --></svg>
+        <span class="nav-item-label">Censo</span>
+        <span class="nav-badge">3</span>
+      </a>
+
+      <a href="#" class="nav-item">
+        <svg><!-- Ícono Familias --></svg>
+        <span class="nav-item-label">Familias</span>
+      </a>
+
+      <!== SECCIÓN: ADMINISTRACIÓN ==>
+      <div class="sidebar-nav-section">
+        <span class="sidebar-nav-section-label">Administración</span>
+      </div>
+
+      <a href="usuarios.html" class="nav-item">
+        <svg><!-- Ícono Usuarios --></svg>
+        <span class="nav-item-label">Usuarios</span>
+      </a>
+
+      <a href="#" class="nav-item">
+        <svg><!-- Ícono Reportes --></svg>
+        <span class="nav-item-label">Reportes</span>
+      </a>
+
+      <div class="sidebar-divider"></div>
+
+      <a href="#" class="nav-item">
+        <svg><!-- Ícono Configuración --></svg>
+        <span class="nav-item-label">Configuración</span>
+      </a>
+
+    </nav>
+
+    <!== USUARIO CONECTADO ==>
+    <div class="sidebar-footer">
+      <div class="sidebar-user">
+        <div class="sidebar-user-avatar">JM</div>
+        <div class="sidebar-user-info">
+          <span class="sidebar-user-name">Juan Martínez</span>
+          <span class="sidebar-user-role">Administrador</span>
+        </div>
+      </div>
+    </div>
+
+  </aside>
+
+  <!== OVERLAY PARA MOBILE ==>
+  <div class="sidebar-overlay" id="sidebar-overlay" aria-hidden="true"></div>
+
+  CLASES DE ESTADO
+  ================================
+  .sidebar.open       — Sidebar visible en mobile
+  .nav-item.active    — Item activo (página actual)
+  .sidebar-overlay.active — Overlay visible en mobile
+-->
+
+<p style="font-family:sans-serif;padding:2rem;color:#555;">
+  Este archivo es una <strong>referencia de componente</strong> del Sidebar de OPSO.<br>
+  El código HTML completo del sidebar está documentado en los comentarios de este archivo.
+</p>

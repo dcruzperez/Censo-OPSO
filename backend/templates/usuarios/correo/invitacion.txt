@@ -1,0 +1,62 @@
+{% autoescape off %}Hola {{ usuario.get_short_name|default:usuario.email }}:
+
+{% if es_nueva_cuenta %}El administrador de {{ nombre_sistema }} creó una cuenta para ti en el sistema
+de levantamiento de información de familias.
+
+Tus datos de acceso son:
+
+  Correo (con el que inicias sesión): {{ usuario.email }}
+  Nombre de usuario: {{ usuario.nombre_usuario|default:"(no asignado)" }}
+  Rol asignado: {{ usuario.rol.nombre|default:"pendiente de asignar" }}
+
+Para activar tu cuenta necesitas crear tu propia contraseña. Abre este enlace:
+{% else %}Un administrador de {{ nombre_sistema }} solicitó el envío de un enlace para que
+crees una contraseña nueva para tu cuenta ({{ usuario.email }}).
+
+Para definirla, abre el siguiente enlace:
+{% endif %}
+{{ protocol }}://{{ domain }}{% url 'usuarios:password_reset_confirm' uidb64=uid token=token %}
+
+Este enlace es personal, sirve UNA SOLA VEZ y caduca en {{ minutos_validez }} minutos.
+Si se vence, pídele al administrador que te lo envíe de nuevo.
+
+------------------------------------------------------------------
+AVISO DE SEGURIDAD
+
+La contraseña que definas la conocerás solo tú: ni el administrador ni el
+equipo de soporte pueden verla, porque el sistema no almacena contraseñas,
+solo un cálculo irreversible a partir de ellas.
+
+Nunca compartas este enlace ni tu contraseña. El equipo de {{ nombre_sistema }}
+jamás te pedirá tu contraseña por correo, por teléfono ni por mensajería.
+
+Si no esperabas este mensaje, avisa a {{ correo_soporte }} y no abras el enlace.
+------------------------------------------------------------------
+
+Saludos cordiales,
+
+Equipo {{ nombre_sistema }} - Operativo Social
+Soporte: {{ correo_soporte }}
+
+Este es un mensaje automático. Por favor no respondas a esta dirección.
+{% endautoescape %}
+{% comment %} ==========================================================================
+   CUERPO EN TEXTO PLANO del correo de activación / reenvío de enlace (HU-03).
+
+   Variables (las entrega seguridad.enviar_enlace_contrasena):
+     usuario         -> el objeto Usuario destinatario
+     uid             -> su id codificado en base64 seguro para URL
+     token           -> la firma temporal generada por default_token_generator
+     protocol        -> "http" o "https"
+     domain          -> dominio tomado de la petición (validado por ALLOWED_HOSTS)
+     minutos_validez -> PASSWORD_RESET_TIMEOUT en minutos
+     es_nueva_cuenta -> True si es la invitación inicial; False si es un reenvío
+
+   El enlace apunta a 'usuarios:password_reset_confirm', LA MISMA vista de la
+   HU-02. No se creó ninguna vista ni token nuevo: solo cambia el texto del
+   mensaje. Reutilizar la parte criptográfica es la decisión más importante de
+   este correo.
+
+   Sobre {% autoescape off %}: en texto plano no hay HTML que pueda ejecutarse,
+   y sin desactivarlo un apellido como "O'Higgins" se leería "O&#x27;Higgins".
+   ========================================================================= {% endcomment %}

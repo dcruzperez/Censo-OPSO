@@ -1,0 +1,55 @@
+{% autoescape off %}Hola {{ user.get_short_name|default:user.email }}:
+
+Recibimos una solicitud para restablecer la contraseña de tu cuenta en
+{{ nombre_sistema }} ({{ email }}).
+
+Para crear una contraseña nueva, abre el siguiente enlace:
+
+{{ protocol }}://{{ domain }}{% url 'usuarios:password_reset_confirm' uidb64=uid token=token %}
+
+Este enlace es personal, sirve UNA SOLA VEZ y caduca en {{ minutos_validez }} minutos.
+
+------------------------------------------------------------------
+AVISO DE SEGURIDAD
+
+Si no solicitaste este cambio, puedes ignorar este mensaje: tu contraseña
+actual seguirá funcionando y nadie podrá modificarla sin abrir el enlace de
+arriba.
+
+Nunca compartas este enlace con otra persona. El equipo de {{ nombre_sistema }}
+jamás te pedirá tu contraseña por correo, por teléfono ni por mensajería.
+------------------------------------------------------------------
+
+Saludos cordiales,
+
+Equipo {{ nombre_sistema }} - Operativo Social
+Soporte: {{ correo_soporte }}
+
+Este es un mensaje automático. Por favor no respondas a esta dirección.
+{% endautoescape %}
+{% comment %} ==========================================================================
+   CUERPO DEL CORREO EN TEXTO PLANO.
+
+   Variables disponibles (las entrega PasswordResetForm.save()):
+     user            -> el objeto Usuario destinatario
+     email           -> su correo electrónico
+     uid             -> su id codificado en base64 seguro para URL
+     token           -> la firma temporal
+     protocol        -> "http" o "https" (según request.is_secure())
+     domain          -> el dominio del sitio
+     site_name       -> nombre del sitio
+   Más las que agregamos en extra_email_context (nombre_sistema,
+   correo_soporte, minutos_validez).
+
+   ¿Por qué {% autoescape off %}?
+   Django escapa las variables por defecto para prevenir XSS en HTML. En un
+   correo de TEXTO PLANO eso es contraproducente: un apellido como "O'Higgins"
+   se mostraría como "O&#x27;Higgins". Aquí no hay HTML que pueda ejecutarse,
+   así que desactivarlo es correcto. En la versión HTML del correo NO se
+   desactiva.
+
+   ¿Por qué se envía también en texto plano si ya existe la versión HTML?
+   Porque muchos clientes de correo corporativos bloquean el HTML por
+   seguridad, y algunos lectores de pantalla trabajan mejor con texto. El
+   mensaje viaja con ambas versiones y cada cliente elige la que puede mostrar.
+   ========================================================================= {% endcomment %}

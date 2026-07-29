@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   CREAR USUARIO — /usuarios/nuevo/
+
+   La decisión de diseño visible en esta pantalla es la de la CONTRASEÑA INICIAL.
+   Se ofrecen dos caminos y el recomendado viene marcado por defecto:
+
+     A) ENVIAR UN ENLACE AL CORREO  (recomendado, opción por defecto)
+        El administrador nunca conoce la contraseña. La persona la crea ella
+        misma con el mismo mecanismo seguro de la HU-02.
+
+     B) DEFINIR UNA CONTRASEÑA INICIAL
+        Existe porque hay situaciones reales donde el correo no está disponible
+        (cuenta institucional en trámite, capacitación presencial). El
+        administrador conoce la clave, así que es la opción menos segura.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Crear usuario{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ruta de navegación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'usuarios:lista' %}">Usuarios</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Crear usuario</li>
+  </ol>
+</nav>
+
+<h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">Crear usuario</h1>
+<p class="text-secondary mb-4">
+  La cuenta queda registrada en PostgreSQL y la acción se anota en la bitácora de auditoría.
+</p>
+
+{% if form.non_field_errors %}
+  <div class="alert alert-danger small" role="alert" aria-live="assertive">
+    {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+  </div>
+{% endif %}
+
+<div class="row g-4">
+  <div class="col-12 col-xl-8">
+
+    {% comment %} novalidate desactiva la validación del navegador a propósito: así
+       durante el desarrollo se comprueba que la validación del SERVIDOR
+       funciona, que es la única que un atacante no puede saltarse. {% endcomment %}
+    <form method="post" novalidate autocomplete="off">
+      {% csrf_token %}
+
+      {% include "usuarios/gestion/_datos_personales.html" %}
+
+      {# ---------- Contraseña inicial ---------- #}
+      <div class="card-opso p-4 mb-3">
+        <h2 class="h6 fw-semibold mb-1">Contraseña inicial</h2>
+        <p class="text-secondary small mb-3">
+          OPSO nunca guarda contraseñas legibles: solo el resultado de aplicarles
+          Argon2id, que es un cálculo irreversible.
+        </p>
+
+        <fieldset class="mb-3">
+          <legend class="form-label fw-semibold small">{{ form.metodo_clave.label }}</legend>
+          {% for opcion in form.metodo_clave %}
+            <div class="form-check">
+              {{ opcion.tag }}
+              <label class="form-check-label small" for="{{ opcion.id_for_label }}">
+                {{ opcion.choice_label }}
+              </label>
+            </div>
+          {% endfor %}
+          {% for error in form.metodo_clave.errors %}
+            <div class="text-danger small mt-1">{{ error }}</div>
+          {% endfor %}
+        </fieldset>
+
+        {% comment %} Este bloque se muestra u oculta con JavaScript según la opción
+           elegida. Es solo comodidad visual: si el JavaScript no cargara, los
+           campos quedan visibles y el formulario sigue funcionando, porque la
+           regla real ("si eliges definirla, escríbela") la valida el
+           servidor en CrearUsuarioForm.clean(). {% endcomment %}
+        <div id="bloque-clave-manual" class="row g-3">
+          {% include "usuarios/gestion/_campo.html" with campo=form.password1 ancho="col-12 col-md-6" %}
+          {% include "usuarios/gestion/_campo.html" with campo=form.password2 ancho="col-12 col-md-6" %}
+        </div>
+      </div>
+
+      <div class="d-flex gap-2">
+        <button type="submit" class="btn btn-opso">Crear usuario</button>
+        <a href="{% url 'usuarios:lista' %}" class="btn btn-outline-secondary">Cancelar</a>
+      </div>
+    </form>
+  </div>
+
+  {# ---------- Ayuda lateral: qué otorga cada rol ---------- #}
+  <div class="col-12 col-xl-4">
+    <div class="card-opso p-4">
+      <h2 class="h6 fw-semibold mb-3">¿Qué permite cada rol?</h2>
+      <dl class="small mb-0">
+        {% for rol in roles %}
+          <dt class="fw-semibold">{{ rol.nombre }}</dt>
+          <dd class="text-secondary">{{ rol.descripcion }}</dd>
+        {% endfor %}
+      </dl>
+      <hr>
+      <p class="text-secondary small mb-0">
+        <strong>Principio de mínimo privilegio:</strong> asigna siempre el rol más
+        bajo que permita a la persona hacer su trabajo. Los permisos se pueden
+        ampliar después; un dato filtrado no se puede recuperar.
+      </p>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block js_extra %}
+<script>
+  // Muestra los campos de contraseña solo si el administrador elige definirla.
+  // Se ejecuta también al cargar la página, para respetar la opción que quedó
+  // seleccionada cuando el formulario vuelve con errores de validación.
+  (function () {
+    const bloque = document.getElementById('bloque-clave-manual');
+    const opciones = document.querySelectorAll('input[name="metodo_clave"]');
+
+    function actualizar() {
+      const manual = document.querySelector('input[name="metodo_clave"]:checked')?.value === 'manual';
+      bloque.hidden = !manual;
+    }
+
+    opciones.forEach((opcion) => opcion.addEventListener('change', actualizar));
+    actualizar();
+  })();
+</script>
+{% endblock %}

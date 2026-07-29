@@ -1,0 +1,52 @@
+{% comment %} ==========================================================================
+   FRAGMENTO COMPARTIDO: los campos comunes de crear y editar.
+
+   Crear y editar usan el mismo conjunto de campos (nombre, apellido, correo,
+   nombre de usuario, RUT, teléfono, rol, estado); solo cambia lo relativo a la
+   contraseña, que existe únicamente al crear. Por eso los campos comunes viven
+   aquí y cada plantilla agrega lo suyo.
+
+   Beneficio concreto: si mañana se agrega el campo "sector asignado", se
+   escribe una vez y aparece en los dos formularios, sin riesgo de que uno
+   quede desactualizado.
+   ========================================================================= {% endcomment %}
+
+<div class="card-opso p-4 mb-3">
+  <h2 class="h6 fw-semibold mb-1">Datos personales</h2>
+  <p class="text-secondary small mb-3">
+    Identifican a la persona en los listados y en las fichas del censo.
+  </p>
+
+  <div class="row g-3">
+    {% include "usuarios/gestion/_campo.html" with campo=form.first_name ancho="col-12 col-md-6" %}
+    {% include "usuarios/gestion/_campo.html" with campo=form.last_name ancho="col-12 col-md-6" %}
+    {% include "usuarios/gestion/_campo.html" with campo=form.rut ancho="col-12 col-md-6" %}
+    {% include "usuarios/gestion/_campo.html" with campo=form.telefono ancho="col-12 col-md-6" %}
+  </div>
+</div>
+
+<div class="card-opso p-4 mb-3">
+  <h2 class="h6 fw-semibold mb-1">Acceso al sistema</h2>
+  <p class="text-secondary small mb-3">
+    El <strong>correo electrónico</strong> es la credencial con la que la persona
+    inicia sesión. El <strong>nombre de usuario</strong> es solo una etiqueta
+    corta para listados y planillas.
+  </p>
+
+  <div class="row g-3">
+    {% include "usuarios/gestion/_campo.html" with campo=form.email ancho="col-12 col-md-6" %}
+    {% include "usuarios/gestion/_campo.html" with campo=form.nombre_usuario ancho="col-12 col-md-6" %}
+  </div>
+</div>
+
+<div class="card-opso p-4 mb-3">
+  <h2 class="h6 fw-semibold mb-1">Rol y estado</h2>
+  <p class="text-secondary small mb-3">
+    El rol define los permisos; el estado define si la cuenta puede usarse.
+  </p>
+
+  <div class="row g-3">
+    {% include "usuarios/gestion/_campo.html" with campo=form.rol ancho="col-12 col-md-6" %}
+    {% include "usuarios/gestion/_campo.html" with campo=form.is_active ancho="col-12 col-md-6" %}
+  </div>
+</div>

@@ -1,0 +1,412 @@
+/* =========================================================================
+   OPSO – Estilos propios sobre Bootstrap 5
+   Reutiliza los tokens de diseño del prototipo (OPSO/css/variables.css) para
+   mantener una identidad visual única en todo el sistema.
+   ========================================================================= */
+
+:root {
+  /* Azul institucional */
+  --opso-primary: #1a4d8f;
+  --opso-primary-dark: #0f2f5a;
+  --opso-primary-light: #2e6cc7;
+  --opso-accent: #3bb5e8;
+
+  --opso-bg: #f4f6fb;
+  --opso-surface: #ffffff;
+  --opso-text: #1c2b3a;
+  --opso-muted: #6b7a90;
+  --opso-border: #dde3ee;
+
+  --opso-radius: 12px;
+  --opso-radius-lg: 16px;
+  --opso-shadow-md: 0 4px 16px rgba(15, 47, 90, 0.1), 0 2px 6px rgba(15, 47, 90, 0.06);
+  --opso-shadow-lg: 0 8px 28px rgba(15, 47, 90, 0.14), 0 4px 10px rgba(15, 47, 90, 0.08);
+
+  /* Sobrescribe variables propias de Bootstrap para no pelear con !important */
+  --bs-primary: #1a4d8f;
+  --bs-primary-rgb: 26, 77, 143;
+  --bs-body-bg: #f4f6fb;
+  --bs-body-color: #1c2b3a;
+  --bs-border-radius: 12px;
+  --bs-link-color: #1a4d8f;
+  --bs-link-hover-color: #0f2f5a;
+}
+
+body {
+  font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  background-color: var(--opso-bg);
+  color: var(--opso-text);
+}
+
+/* Botón primario institucional ------------------------------------------ */
+.btn-opso {
+  background: linear-gradient(135deg, var(--opso-primary) 0%, var(--opso-primary-light) 100%);
+  border: none;
+  color: #fff;
+  font-weight: 600;
+  border-radius: var(--opso-radius);
+  padding: 0.75rem 1.25rem;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+.btn-opso:hover:not(:disabled) {
+  color: #fff;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 20px rgba(26, 77, 143, 0.3);
+  filter: brightness(1.05);
+}
+.btn-opso:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(59, 181, 232, 0.4);
+}
+.btn-opso:disabled {
+  opacity: 0.6;
+}
+
+/* =========================================================================
+   PÁGINA DE INICIO DE SESIÓN
+   Dos columnas: panel de marca (izquierda) + formulario (derecha).
+   ========================================================================= */
+
+.login-page {
+  min-height: 100vh;
+}
+
+.login-hero {
+  background: linear-gradient(160deg, var(--opso-primary-dark) 0%, var(--opso-primary) 55%, #17578f 100%);
+  color: #fff;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Círculos decorativos difusos del fondo */
+.login-hero::before,
+.login-hero::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(59, 181, 232, 0.18);
+  filter: blur(2px);
+}
+.login-hero::before {
+  width: 320px;
+  height: 320px;
+  top: -90px;
+  right: -110px;
+}
+.login-hero::after {
+  width: 240px;
+  height: 240px;
+  bottom: -80px;
+  left: -70px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.login-hero-content {
+  position: relative;
+  z-index: 1;
+}
+
+.login-logo {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--opso-radius-lg);
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+}
+.login-logo svg {
+  width: 34px;
+  height: 34px;
+  color: #fff;
+}
+
+.login-brand-name {
+  font-size: 2.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1;
+}
+
+.login-brand-tagline {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 1rem;
+  margin-bottom: 0;
+}
+
+.login-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.85rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  font-size: 0.8125rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+.login-chip svg {
+  width: 15px;
+  height: 15px;
+}
+
+.login-stat-value {
+  display: block;
+  font-size: 1.6rem;
+  font-weight: 700;
+  color: var(--opso-accent);
+  line-height: 1.1;
+}
+.login-stat-label {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* Columna del formulario ------------------------------------------------- */
+.login-form-panel {
+  background: var(--opso-surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.login-form-container {
+  width: 100%;
+  max-width: 420px;
+}
+
+.login-form-title {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--opso-primary-dark);
+  margin-bottom: 0.35rem;
+}
+.login-form-subtitle {
+  color: var(--opso-muted);
+  font-size: 0.9375rem;
+}
+
+/* Campo con icono a la izquierda */
+.input-icono {
+  position: relative;
+}
+.input-icono > svg {
+  position: absolute;
+  left: 0.9rem;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  color: var(--opso-muted);
+  pointer-events: none;
+  z-index: 3;
+}
+.input-icono .form-control {
+  padding-left: 2.75rem;
+  border-radius: var(--opso-radius);
+  border-color: var(--opso-border);
+}
+.input-icono .form-control:focus {
+  border-color: var(--opso-accent);
+  box-shadow: 0 0 0 3px rgba(59, 181, 232, 0.25);
+}
+.input-icono .form-control.is-invalid:focus {
+  box-shadow: 0 0 0 3px rgba(224, 59, 59, 0.25);
+}
+
+/* Botón de mostrar/ocultar contraseña */
+.btn-ver-clave {
+  position: absolute;
+  right: 0.6rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  padding: 0.25rem;
+  color: var(--opso-muted);
+  z-index: 4;
+  line-height: 0;
+}
+.btn-ver-clave:hover {
+  color: var(--opso-primary);
+}
+.btn-ver-clave svg {
+  width: 18px;
+  height: 18px;
+}
+/* Deja espacio para el ojo y para el icono de error de Bootstrap */
+.input-icono .form-control[type="password"],
+.input-icono .form-control#id_password {
+  padding-right: 2.75rem;
+  background-position: right 2.75rem center;
+}
+
+.login-nota-seguridad {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  font-size: 0.75rem;
+  color: var(--opso-muted);
+  background: #f8faff;
+  border: 1px solid var(--opso-border);
+  border-radius: var(--opso-radius);
+  padding: 0.75rem 0.9rem;
+}
+.login-nota-seguridad svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: #22a865;
+  margin-top: 1px;
+}
+
+/* =========================================================================
+   PANTALLAS PÚBLICAS (recuperación de contraseña)
+   Tarjeta centrada sobre el fondo institucional.
+   ========================================================================= */
+
+.pagina-publica {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 15% 0%, rgba(59, 181, 232, 0.12), transparent 45%),
+    radial-gradient(circle at 85% 100%, rgba(26, 77, 143, 0.1), transparent 45%),
+    var(--opso-bg);
+  display: flex;
+  align-items: center;
+}
+
+.logo-publico {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--opso-radius);
+  background: linear-gradient(135deg, var(--opso-primary) 0%, var(--opso-primary-light) 100%);
+  box-shadow: 0 4px 14px rgba(26, 77, 143, 0.25);
+}
+.logo-publico svg {
+  width: 24px;
+  height: 24px;
+  color: #fff;
+}
+
+/* Icono circular grande de cada pantalla */
+.icono-circulo {
+  width: 68px;
+  height: 68px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 50%;
+}
+.icono-circulo svg {
+  width: 32px;
+  height: 32px;
+}
+.icono-circulo-primario {
+  background: var(--bs-primary-bg-subtle, #dbeafe);
+  color: var(--opso-primary);
+}
+.icono-circulo-exito {
+  background: #dcfce7;
+  color: #16794a;
+}
+.icono-circulo-error {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+/* Indicador de progreso: 4 pasos */
+.pasos-recuperacion {
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+}
+.pasos-recuperacion .paso {
+  width: 34px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--opso-border);
+  transition: background-color 0.2s ease;
+}
+.pasos-recuperacion .paso-hecho {
+  background: var(--opso-accent);
+}
+.pasos-recuperacion .paso-actual {
+  background: var(--opso-primary);
+}
+
+/* Requisitos de contraseña que Django genera como <ul> en el help_text */
+.form-text ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.1rem;
+}
+.form-text ul li {
+  margin-bottom: 0.15rem;
+}
+
+/* =========================================================================
+   ESTRUCTURA DE LOS PANELES (dashboards)
+   ========================================================================= */
+
+.opso-navbar {
+  background: linear-gradient(90deg, var(--opso-primary-dark) 0%, var(--opso-primary) 100%);
+  box-shadow: var(--opso-shadow-md);
+}
+.opso-navbar .navbar-brand {
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #fff;
+}
+
+.badge-rol {
+  background: rgba(59, 181, 232, 0.2);
+  border: 1px solid rgba(59, 181, 232, 0.45);
+  color: #fff;
+  font-weight: 500;
+  border-radius: 999px;
+  padding: 0.3rem 0.75rem;
+  font-size: 0.75rem;
+}
+
+.card-opso {
+  background: var(--opso-surface);
+  border: 1px solid var(--opso-border);
+  border-radius: var(--opso-radius-lg);
+  box-shadow: var(--opso-shadow-md);
+}
+
+.kpi-valor {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--opso-primary);
+  line-height: 1.1;
+}
+.kpi-etiqueta {
+  font-size: 0.8125rem;
+  color: var(--opso-muted);
+}
+
+/* =========================================================================
+   RESPONSIVO
+   ========================================================================= */
+
+@media (max-width: 991.98px) {
+  /* En pantallas chicas el panel de marca se reduce a un encabezado */
+  .login-hero {
+    padding: 2rem 1.5rem !important;
+  }
+  .login-brand-name {
+    font-size: 2rem;
+  }
+  .login-form-panel {
+    padding: 2rem 1.25rem !important;
+  }
+}
+
+/* Accesibilidad: respeta a quien pidió menos animación en su sistema */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}

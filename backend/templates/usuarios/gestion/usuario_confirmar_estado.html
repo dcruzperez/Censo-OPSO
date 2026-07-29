@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   CONFIRMACIÓN DE CAMBIO DE ESTADO
+   /usuarios/<pk>/deshabilitar/  y  /usuarios/<pk>/habilitar/
+
+   Esta pantalla es la respuesta al requisito "confirmación antes de
+   deshabilitar", y está implementada como PÁGINA y no como ventana emergente de
+   JavaScript (confirm()) por tres razones:
+
+     1. Funciona con JavaScript deshabilitado o bloqueado por una política
+        corporativa. Una confirmación que depende de JS no es una garantía.
+     2. Permite explicar CON DETALLE qué va a pasar y qué no va a pasar. En un
+        confirm() solo cabe una línea de texto.
+     3. Separa correctamente los verbos HTTP: este GET solo muestra
+        información; el POST del botón es el único que modifica datos.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}{% if activar %}Habilitar{% else %}Deshabilitar{% endif %} usuario{% endblock %}
+
+{% block contenido %}
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-7">
+
+    <div class="card-opso p-4 p-lg-5">
+
+      {% if activar %}
+        <span class="badge text-bg-success mb-3">Habilitar cuenta</span>
+        <h1 class="h4 fw-bold mb-3">¿Devolver el acceso a esta persona?</h1>
+      {% else %}
+        <span class="badge text-bg-danger mb-3">Deshabilitar cuenta</span>
+        <h1 class="h4 fw-bold mb-3">¿Quitar el acceso a esta persona?</h1>
+      {% endif %}
+
+      {# ---------- Resumen de la cuenta afectada ---------- #}
+      <dl class="row small border rounded p-3 mb-4 bg-light">
+        <dt class="col-4 text-secondary fw-normal">Nombre</dt>
+        <dd class="col-8 mb-1 fw-semibold">{{ usuario.get_full_name|default:"(sin nombre)" }}</dd>
+
+        <dt class="col-4 text-secondary fw-normal">Correo</dt>
+        <dd class="col-8 mb-1">{{ usuario.email }}</dd>
+
+        <dt class="col-4 text-secondary fw-normal">Rol</dt>
+        <dd class="col-8 mb-1">{{ usuario.rol.nombre|default:"Sin rol" }}</dd>
+
+        <dt class="col-4 text-secondary fw-normal">Estado actual</dt>
+        <dd class="col-8 mb-0">{{ usuario.etiqueta_estado }}</dd>
+      </dl>
+
+      {% if error %}
+        {# ---------- La operación NO está permitida ---------- #}
+        <div class="alert alert-danger" role="alert">
+          <h2 class="h6 fw-bold">No es posible realizar esta acción</h2>
+          <p class="small mb-0">{{ error }}</p>
+        </div>
+
+        <a href="{% url 'usuarios:detalle' usuario.pk %}" class="btn btn-outline-secondary">
+          Volver a la ficha
+        </a>
+
+      {% else %}
+        {# ---------- Explicación de las consecuencias ---------- #}
+        {% if activar %}
+          <p class="small">Al habilitar la cuenta:</p>
+          <ul class="small text-secondary">
+            <li>El campo <code>is_active</code> pasa a <code>True</code> en PostgreSQL.</li>
+            <li>La persona vuelve a poder iniciar sesión con su contraseña de siempre.</li>
+            <li>Recupera el acceso a su panel según el rol que tenga asignado.</li>
+            <li>La acción queda registrada en la bitácora de auditoría con tu nombre.</li>
+          </ul>
+        {% else %}
+          <p class="small">Al deshabilitar la cuenta:</p>
+          <ul class="small text-secondary">
+            <li>El campo <code>is_active</code> pasa a <code>False</code>. <strong>La fila
+              NO se elimina</strong> de la base de datos.</li>
+            <li>La persona no podrá volver a iniciar sesión: Django rechaza la
+              autenticación de las cuentas inactivas.</li>
+            <li>Tampoco podrá usar la recuperación de contraseña (Django excluye
+              a los usuarios inactivos de ese flujo).</li>
+            <li>Su sesión abierta, si la tiene, se cortará en cuanto expire o
+              cambie de página protegida.</li>
+          </ul>
+
+          <div class="alert alert-info small" role="alert">
+            <strong>Se conserva todo:</strong> sus datos personales, su historial de
+            accesos, sus registros de auditoría y el vínculo con las fichas del
+            censo que levantó. Es un <em>borrado lógico</em>, reversible con un
+            clic desde esta misma pantalla.
+          </div>
+        {% endif %}
+
+        {# ---------- El único elemento que modifica datos ---------- #}
+        {% comment %} Es un FORMULARIO POST con token CSRF, no un enlace.
+           Si fuera un enlace (GET), bastaría con incrustar
+           <img src=".../deshabilitar/"> en cualquier página para que el
+           navegador de un administrador con sesión abierta ejecutara la acción
+           sin darse cuenta. Eso es un ataque CSRF, y el token lo impide. {% endcomment %}
+        <form method="post" class="d-flex gap-2 flex-wrap">
+          {% csrf_token %}
+          {% if activar %}
+            <button type="submit" class="btn btn-success">Sí, habilitar la cuenta</button>
+          {% else %}
+            <button type="submit" class="btn btn-danger">Sí, deshabilitar la cuenta</button>
+          {% endif %}
+          <a href="{% url 'usuarios:detalle' usuario.pk %}" class="btn btn-outline-secondary">
+            No, cancelar
+          </a>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}
