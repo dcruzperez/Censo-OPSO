@@ -1,16 +1,50 @@
-# React + Vite
+# OPSO — Operativo Social
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Sistema web para digitalizar el levantamiento de información de familias en
+operativos sociales.
 
-Currently, two official plugins are available:
+Proyecto de título · Ingeniería en Computación e Informática · Universidad
+Andrés Bello.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+**Stack:** Python 3.14 · Django 6.0 · PostgreSQL 18 · Bootstrap 5.3
 
-## React Compiler
+---
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Estructura
 
-## Expanding the ESLint configuration
+```
+stock-flow-main/
+│
+├── .venv/      entorno virtual (no se versiona; se reconstruye con requirements.txt)
+├── OPSO/       prototipo HTML estático original (referencia de diseño)
+└── backend/    ← PROYECTO DJANGO
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+El código, la documentación y las instrucciones detalladas están en
+**[`backend/`](backend/README.md)**.
+
+## Puesta en marcha
+
+```bash
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
+
+cd backend
+..\.venv\Scripts\python.exe scripts\preparar_base_datos.py --migrar
+..\.venv\Scripts\python.exe manage.py runserver
+```
+
+`preparar_base_datos.py` crea la base y el usuario de PostgreSQL, genera una
+contraseña aleatoria y la escribe en `.env`. Las historias de usuario y las
+decisiones de diseño están en [`backend/README.md`](backend/README.md) y
+[`backend/docs/`](backend/docs/).
+
+## Pruebas
+
+```bash
+cd backend
+set DB_ENGINE=sqlite3 && ..\.venv\Scripts\python.exe manage.py test
+```
+
+`DB_ENGINE=sqlite3` permite ejecutar las 149 pruebas sin un servidor
+PostgreSQL levantado. Desarrollo y producción usan siempre PostgreSQL.
