@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   MIS SECTORES — /operativos/mis-sectores/
+
+   La otra mitad de la HU-06. Repartir el trabajo solo sirve si la persona a la que
+   se le reparte puede VERLO: sin esta pantalla, el supervisor asignaría sectores y
+   tendría que avisar por teléfono, que es exactamente el procedimiento informal que
+   OPSO existe para reemplazar.
+
+   Muestra únicamente los sectores de quien entró (el filtro por request.user está
+   en la vista y no es parametrizable). Por eso es la única pantalla del módulo que
+   no exige permiso: la explicación completa está en MisSectoresView.
+
+   Está pensada para leerse EN TERRENO, probablemente en un teléfono: cada sector es
+   una tarjeta con su comuna, sus zonas y las observaciones del supervisor, sin
+   tablas anchas que obliguen a desplazarse en horizontal.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Mis sectores{% endblock %}
+
+{% block contenido %}
+
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">Mis sectores</h1>
+  <p class="text-secondary mb-0">
+    El territorio que tienes a cargo. Lo asigna tu supervisor.
+  </p>
+</div>
+
+{% if asignaciones %}
+  {# ---------- Resumen de la carga propia ---------- #}
+  <div class="row g-3 mb-4">
+    <div class="col-6 col-md-4">
+      <div class="card-opso p-3">
+        <div class="kpi-valor">{{ total_sectores }}</div>
+        <div class="kpi-etiqueta">Sector{{ total_sectores|pluralize:"es" }} a cargo</div>
+      </div>
+    </div>
+    <div class="col-6 col-md-4">
+      <div class="card-opso p-3">
+        <div class="kpi-valor">{{ total_viviendas|default:"—" }}</div>
+        <div class="kpi-etiqueta">Viviendas estimadas</div>
+      </div>
+    </div>
+  </div>
+
+  {# ---------- Una tarjeta por sector ---------- #}
+  {% for asignacion in asignaciones %}
+    <div class="card-opso p-4 mb-3">
+      <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2">
+        <div>
+          <h2 class="h5 fw-bold mb-1">{{ asignacion.sector.nombre }}</h2>
+          <p class="text-secondary small mb-0">
+            {{ asignacion.sector.comuna.nombre }} ·
+            {{ asignacion.sector.comuna.region.nombre }}
+          </p>
+        </div>
+        <div class="text-end">
+          {% include "operativos/_estado_operativo.html" with estado=asignacion.sector.operativo %}
+          <div class="text-secondary small mt-1">{{ asignacion.sector.operativo.nombre }}</div>
+        </div>
+      </div>
+
+      {% if asignacion.sector.descripcion %}
+        <p class="small mb-3">{{ asignacion.sector.descripcion }}</p>
+      {% endif %}
+
+      {% comment %} Las observaciones son las instrucciones concretas que el supervisor
+         dejó para esta persona en este sector. Se destacan porque son lo único de la
+         tarjeta que no se puede deducir del territorio. {% endcomment %}
+      {% if asignacion.observaciones %}
+        <div class="alert alert-info small py-2 mb-3" role="alert">
+          <strong>Indicaciones de tu supervisor:</strong> {{ asignacion.observaciones }}
+        </div>
+      {% endif %}
+
+      {# ---------- Las zonas del sector ---------- #}
+      {% comment %} sector.zonas.all lo trajo el prefetch de la vista: recorrerlo aquí no
+         lanza una consulta por tarjeta. {% endcomment %}
+      <h3 class="h6 fw-semibold mb-2">Zonas de este sector</h3>
+      {% if asignacion.sector.zonas.all %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr class="small text-secondary">
+                <th scope="col" class="fw-normal ps-0">Zona</th>
+                <th scope="col" class="fw-normal">Referencias</th>
+                <th scope="col" class="fw-normal text-center">Viviendas</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for zona in asignacion.sector.zonas.all %}
+                {% if zona.activa %}
+                  <tr>
+                    <td class="ps-0 fw-semibold">{{ zona.nombre }}</td>
+                    <td class="small text-secondary">{{ zona.descripcion|default:"—" }}</td>
+                    <td class="text-center small">{{ zona.viviendas_estimadas|default:"—" }}</td>
+                  </tr>
+                {% endif %}
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="small text-secondary mb-0">
+          Este sector todavía no está dividido en zonas. Consúltalo con tu
+          supervisor antes de salir a terreno.
+        </p>
+      {% endif %}
+
+      <p class="text-secondary small mt-3 mb-0">
+        Asignado el {{ asignacion.asignado_en|date:"d-m-Y" }}
+        {% if asignacion.asignado_por %}
+          por {{ asignacion.asignado_por.get_full_name|default:asignacion.asignado_por.email }}
+        {% endif %}.
+      </p>
+    </div>
+  {% endfor %}
+
+{% else %}
+  {# ---------- Sin sectores asignados ---------- #}
+  {% comment %} Se explica QUÉ HACER y no solo que la lista está vacía: alguien que
+     entra a trabajar y no ve nada necesita saber si es un error del sistema o si
+     simplemente todavía no le asignaron nada. {% endcomment %}
+  <div class="card-opso p-4 p-lg-5 text-center">
+    <h2 class="h5 fw-semibold mb-2">Todavía no tienes sectores asignados</h2>
+    <p class="text-secondary mb-0">
+      Tu supervisor es quien reparte el territorio. Cuando te asigne un sector
+      aparecerá aquí, con sus zonas y sus indicaciones.
+    </p>
+  </div>
+{% endif %}
+
+{# ---------- Historial: operativos cerrados ---------- #}
+{% if historicas %}
+  <h2 class="h5 fw-bold mt-4 mb-3">Operativos anteriores</h2>
+  <div class="card-opso p-0 overflow-hidden">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th scope="col">Sector</th>
+            <th scope="col">Comuna</th>
+            <th scope="col">Operativo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for asignacion in historicas %}
+            <tr>
+              <td>{{ asignacion.sector.nombre }}</td>
+              <td class="small text-secondary">{{ asignacion.sector.comuna.nombre }}</td>
+              <td class="small text-secondary">
+                {{ asignacion.sector.operativo.nombre }}
+                <span class="badge text-bg-secondary">cerrado</span>
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <p class="text-secondary small mt-3 mb-0">
+    Estos sectores pertenecen a operativos ya cerrados. Se muestran como registro
+    de tu trabajo anterior; no hay nada que levantar en ellos.
+  </p>
+{% endif %}
+
+{% endblock %}

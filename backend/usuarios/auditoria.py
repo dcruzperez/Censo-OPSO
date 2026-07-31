@@ -131,6 +131,56 @@ def _describir_objeto_territorial(objeto, tipo_objeto=None):
     return tipo_objeto, objeto.pk, nombre
 
 
+def describir_cambio_de_conjunto(
+    antes, despues, clave, etiqueta, verbo_entra, verbo_sale
+):
+    """Compara dos conjuntos de objetos y describe qué entró y qué salió.
+
+    Es la parte común de "cambiaron los permisos de un rol" (HU-04) y "cambiaron
+    los censistas de un sector" (HU-06). Las dos operaciones son la misma en el
+    fondo —se envía el conjunto completo y hay que averiguar la diferencia— y solo
+    se distinguen en tres cosas: cómo se identifica cada elemento, cómo se lee, y
+    con qué palabras se narra el movimiento. Esos tres puntos son los parámetros.
+
+    Se extrajo al agregar el segundo caso, no al escribir el primero. Antes de la
+    HU-06 no había nada que compartir, y generalizar con un solo caso de uso lleva
+    a inventar parámetros que nadie necesita.
+
+    Parámetros:
+        antes, despues -> colecciones de objetos (el estado anterior y el nuevo)
+        clave          -> función que devuelve el identificador estable de uno
+        etiqueta       -> función que devuelve su nombre legible
+        verbo_entra    -> cómo se narra lo que se agregó ("concedidos")
+        verbo_sale     -> cómo se narra lo que se quitó ("revocados")
+
+    Devuelve cadena vacía si no hubo ningún cambio. Las vistas usan ese valor para
+    NO escribir una fila de auditoría: guardar un formulario sin tocar nada no es
+    un hecho auditable, y una bitácora llena de filas "no cambió nada" esconde las
+    que sí importan.
+
+    El orden alfabético del resultado es deliberado: hace el texto comparable
+    entre filas y estable entre ejecuciones, así que dos cambios idénticos se leen
+    idénticos.
+    """
+    mapa_antes = {clave(objeto): objeto for objeto in antes}
+    mapa_despues = {clave(objeto): objeto for objeto in despues}
+
+    entraron = sorted(
+        etiqueta(objeto) for k, objeto in mapa_despues.items() if k not in mapa_antes
+    )
+    salieron = sorted(
+        etiqueta(objeto) for k, objeto in mapa_antes.items() if k not in mapa_despues
+    )
+
+    partes = []
+    if entraron:
+        partes.append(f"{verbo_entra}: {', '.join(entraron)}")
+    if salieron:
+        partes.append(f"{verbo_sale}: {', '.join(salieron)}")
+
+    return "; ".join(partes)
+
+
 def describir_cambio_permisos(permisos_antes, permisos_despues):
     """Arma el detalle de un cambio de permisos: qué se concedió y qué se revocó.
 
@@ -143,25 +193,39 @@ def describir_cambio_permisos(permisos_antes, permisos_despues):
     Porque la bitácora la lee una persona. "revocados: fichas.validar" obliga a
     ir a buscar qué era eso; "revocados: Validar fichas levantadas" se entiende
     solo. El código sigue estando en la base de datos si hace falta precisión.
-
-    Devuelve cadena vacía si no hubo ningún cambio. La vista usa ese valor para
-    NO escribir una fila de auditoría: guardar el formulario sin tocar nada no es
-    un hecho auditable, y una bitácora llena de filas "no cambió nada" esconde
-    las que sí importan.
     """
-    antes = {permiso.codigo: permiso for permiso in permisos_antes}
-    despues = {permiso.codigo: permiso for permiso in permisos_despues}
+    return describir_cambio_de_conjunto(
+        permisos_antes,
+        permisos_despues,
+        clave=lambda permiso: permiso.codigo,
+        etiqueta=lambda permiso: permiso.nombre,
+        verbo_entra="concedidos",
+        verbo_sale="revocados",
+    )
 
-    concedidos = sorted(p.nombre for c, p in despues.items() if c not in antes)
-    revocados = sorted(p.nombre for c, p in antes.items() if c not in despues)
 
-    partes = []
-    if concedidos:
-        partes.append(f"concedidos: {', '.join(concedidos)}")
-    if revocados:
-        partes.append(f"revocados: {', '.join(revocados)}")
+def describir_cambio_asignaciones(censistas_antes, censistas_despues):
+    """Arma el detalle de un cambio en el reparto de un sector (HU-06).
 
-    return "; ".join(partes)
+    Recibe dos colecciones de objetos Usuario y devuelve una cadena como:
+
+        asignados: Marta Soto (censista@opso.cl); desasignados: Juan Vera (jvera@opso.cl)
+
+    Se guarda el nombre Y el correo. El nombre porque la bitácora la lee una
+    persona y "Marta Soto" se entiende sola; el correo porque es el identificador
+    único de la cuenta y en un operativo grande puede haber dos personas con el
+    mismo nombre. Con los dos datos la fila es legible y además inequívoca.
+    """
+    return describir_cambio_de_conjunto(
+        censistas_antes,
+        censistas_despues,
+        clave=lambda usuario: usuario.pk,
+        etiqueta=lambda usuario: (
+            f"{usuario.get_full_name() or usuario.email} ({usuario.email})"
+        ),
+        verbo_entra="asignados",
+        verbo_sale="desasignados",
+    )
 
 
 def _valor_legible(formulario, nombre_campo, valor):

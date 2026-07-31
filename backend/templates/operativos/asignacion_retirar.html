@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   CONFIRMACIÓN: RETIRAR A UNA PERSONA DE UN SECTOR
+   /operativos/asignaciones/<pk>/retirar/
+
+   Página de confirmación y no ventana emergente de JavaScript, por las mismas tres
+   razones que documentó la HU-03: funciona sin JS, permite explicar las
+   consecuencias con detalle, y separa los verbos HTTP (este GET solo muestra; el
+   POST del botón es el único que modifica).
+
+   El aviso más importante es si el sector va a quedar SIN NADIE, porque eso
+   significa territorio que no se va a visitar.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Retirar de {{ sector.nombre }}{% endblock %}
+
+{% block contenido %}
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-7">
+    <div class="card-opso p-4 p-lg-5">
+
+      <span class="badge text-bg-danger mb-3">Retirar asignación</span>
+      <h1 class="h4 fw-bold mb-3">¿Quitarle este sector a esta persona?</h1>
+
+      <dl class="row small border rounded p-3 mb-4 bg-light">
+        <dt class="col-5 col-sm-4 text-secondary fw-normal">Censista</dt>
+        <dd class="col-7 col-sm-8 mb-1 fw-semibold">
+          {{ asignacion.censista.get_full_name|default:asignacion.censista.email }}
+        </dd>
+
+        <dt class="col-5 col-sm-4 text-secondary fw-normal">Correo</dt>
+        <dd class="col-7 col-sm-8 mb-1">{{ asignacion.censista.email }}</dd>
+
+        <dt class="col-5 col-sm-4 text-secondary fw-normal">Sector</dt>
+        <dd class="col-7 col-sm-8 mb-1">
+          {{ sector.nombre }} · {{ sector.comuna.nombre }}
+        </dd>
+
+        <dt class="col-5 col-sm-4 text-secondary fw-normal">Operativo</dt>
+        <dd class="col-7 col-sm-8 mb-1">{{ operativo.nombre }}</dd>
+
+        <dt class="col-5 col-sm-4 text-secondary fw-normal">Asignado desde</dt>
+        <dd class="col-7 col-sm-8 mb-0">
+          {{ asignacion.asignado_en|date:"d-m-Y H:i" }}
+          {% if asignacion.asignado_por %}
+            <span class="text-secondary">
+              por {{ asignacion.asignado_por.get_full_name|default:asignacion.asignado_por.email }}
+            </span>
+          {% endif %}
+        </dd>
+      </dl>
+
+      {% if asignacion.observaciones %}
+        <p class="small text-secondary">
+          <strong>Observaciones que tenía:</strong> {{ asignacion.observaciones }}
+        </p>
+      {% endif %}
+
+      {# ---------- Consecuencias ---------- #}
+      <p class="small">Al retirar la asignación:</p>
+      <ul class="small text-secondary">
+        <li>La persona deja de ver este sector en su panel «Mis sectores».</li>
+        <li>El campo <code>activa</code> pasa a <code>False</code> y se anota la
+          fecha. <strong>La fila NO se elimina</strong> de la base de datos.</li>
+        <li>Las fichas que ya levantó en este sector <strong>no se tocan</strong>:
+          la asignación histórica es justamente lo que explica por qué las
+          levantó.</li>
+        <li>Se puede volver a asignar más adelante; al hacerlo se reactiva esta
+          misma fila y conserva su historial.</li>
+      </ul>
+
+      {% comment %} El aviso que de verdad importa: si nadie más cubre el sector, el
+         territorio queda sin visitar. Se dice explícitamente en vez de dejar que el
+         supervisor lo deduzca de la tabla. {% endcomment %}
+      {% if otros %}
+        <div class="alert alert-info small" role="alert">
+          <strong>El sector sigue cubierto</strong> por
+          {% for asignacion_otra in otros %}
+            {{ asignacion_otra.censista.get_full_name|default:asignacion_otra.censista.email }}{% if not forloop.last %}, {% endif %}
+          {% endfor %}.
+        </div>
+      {% else %}
+        <div class="alert alert-warning small" role="alert">
+          <strong>Atención:</strong> nadie más cubre «{{ sector.nombre }}». Al
+          retirar esta asignación el sector queda <strong>sin personal</strong>, y
+          ese territorio no lo va a visitar ningún censista hasta que asignes a
+          alguien.
+        </div>
+      {% endif %}
+
+      {% comment %} FORMULARIO POST con token CSRF, nunca un enlace: con un GET
+         bastaría un <img src="..."> incrustado en cualquier página para que el
+         navegador del supervisor ejecutara la baja sin que lo notara. {% endcomment %}
+      <form method="post" class="d-flex gap-2 flex-wrap">
+        {% csrf_token %}
+        <button type="submit" class="btn btn-danger">Sí, retirar la asignación</button>
+        <a href="{% url 'operativos:asignaciones_panel' operativo.pk %}"
+           class="btn btn-outline-secondary">No, cancelar</a>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

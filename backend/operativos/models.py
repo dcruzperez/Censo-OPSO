@@ -378,6 +378,46 @@ class Operativo(models.Model):
     def total_zonas(self):
         return Zona.objects.filter(sector__operativo=self).count()
 
+    # -- reparto del trabajo (HU-06) ---------------------------------------
+
+    def total_sectores_asignados(self):
+        """Sectores activos que ya tienen al menos un censista vigente.
+
+        Se resuelve con una sola consulta y distinct(): un sector con tres
+        censistas debe contar UNA vez, no tres.
+        """
+        return (
+            self.sectores.filter(activo=True, asignaciones__activa=True)
+            .distinct()
+            .count()
+        )
+
+    def total_sectores_sin_asignar(self):
+        """Sectores activos que todavía no tienen a nadie.
+
+        Es el número que de verdad importa al supervisor: cada uno es territorio
+        que nadie va a visitar. La ficha lo muestra en rojo por eso.
+        """
+        return (
+            self.sectores.filter(activo=True)
+            .exclude(asignaciones__activa=True)
+            .distinct()
+            .count()
+        )
+
+    def censistas_desplegados(self):
+        """Personas distintas con al menos un sector a cargo en este operativo."""
+        from usuarios.models import Usuario
+
+        return (
+            Usuario.objects.filter(
+                asignaciones_sector__sector__operativo=self,
+                asignaciones_sector__activa=True,
+            )
+            .distinct()
+            .order_by("first_name", "last_name")
+        )
+
     def comunas_cubiertas(self):
         """Comunas distintas que este operativo toca, ordenadas.
 
@@ -511,6 +551,72 @@ class Sector(models.Model):
     def zonas_activas(self):
         return self.zonas.filter(activa=True)
 
+    # -- reparto del trabajo (HU-06) ---------------------------------------
+
+    def asignaciones_activas(self):
+        """Asignaciones vigentes, con el censista ya cargado."""
+        return self.asignaciones.filter(activa=True).select_related("censista")
+
+    def censistas_asignados(self):
+        """Los censistas que hoy tienen este sector a cargo."""
+        from usuarios.models import Usuario
+
+        return Usuario.objects.filter(
+            asignaciones_sector__sector=self, asignaciones_sector__activa=True
+        ).order_by("first_name", "last_name")
+
+    @property
+    def esta_asignado(self):
+        return self.asignaciones.filter(activa=True).exists()
+
+    def viviendas_estimadas(self):
+        """Suma de las viviendas estimadas de sus zonas activas.
+
+        Es la medida de CARGA DE TRABAJO del sector, y es lo que permite que
+        "distribuir el trabajo" sea una decisión informada en vez de un reparto a
+        ojo: el supervisor ve que Los Boldos tiene 400 viviendas y Barrio Norte
+        60, y reparte en consecuencia.
+
+        Devuelve 0 si ninguna zona tiene estimación, que es distinto de que no
+        haya viviendas: la pantalla lo muestra como «sin estimar».
+        """
+        from django.db.models import Sum
+
+        total = self.zonas.filter(activa=True).aggregate(
+            total=Sum("viviendas_estimadas")
+        )["total"]
+        return total or 0
+
+    def puede_recibir_asignaciones(self):
+        """¿Se le puede asignar gente? Devuelve (True, "") o (False, motivo).
+
+        Mismo criterio que Comuna.puede_desactivarse(): se devuelve el MOTIVO y no
+        un booleano suelto, para que la vista pueda explicar el rechazo en vez de
+        dejar al supervisor adivinando.
+
+        Dos reglas, por razones distintas:
+
+          - Un operativo CERRADO no admite cambios: repartir trabajo en un
+            operativo terminado no significa nada y falsearía su historial.
+          - Un sector DESACTIVADO ya no es parte del territorio vigente, así que
+            mandar a alguien a trabajarlo sería enviarlo a un sitio que el propio
+            operativo dejó fuera.
+        """
+        if not self.operativo.admite_cambios_de_territorio:
+            return False, (
+                f"El operativo «{self.operativo.nombre}» está cerrado: su reparto "
+                "de trabajo ya no se puede modificar."
+            )
+
+        if not self.activo:
+            return False, (
+                f"El sector «{self.nombre}» está desactivado: no forma parte del "
+                "territorio vigente del operativo. Actívalo antes de asignarle "
+                "personal."
+            )
+
+        return True, ""
+
 
 class Zona(models.Model):
     """División de un sector. Es la unidad más pequeña del territorio.
@@ -601,3 +707,166 @@ class Zona(models.Model):
         que se copia mal.
         """
         return self.sector.operativo
+
+
+# ==========================================================================
+# 4. REPARTO DEL TRABAJO: ASIGNACIÓN DE SECTORES (HU-06)
+# ==========================================================================
+
+
+class AsignacionSector(models.Model):
+    """Un censista asignado a un sector, con su historial.
+
+    Es la respuesta a "¿a quién le toca este sector?", que es la pregunta que el
+    supervisor necesita responder para distribuir el trabajo de terreno.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 1 — una TABLA propia y no un ManyToManyField simple
+    ----------------------------------------------------------------------
+    Podría escribirse como `Sector.censistas = ManyToManyField(Usuario)` y Django
+    crearía la tabla intermedia solo. Se descartó porque una asignación tiene
+    DATOS PROPIOS que no caben en una tabla intermedia automática:
+
+      asignado_por     -> quién repartió el trabajo
+      asignado_en      -> cuándo
+      activa           -> si sigue vigente
+      desasignado_en   -> cuándo se retiró
+      observaciones    -> instrucciones para esa persona en ese sector
+
+    Es exactamente la situación INVERSA a la de Rol.permisos en la HU-04. Allí se
+    razonó que un modelo intermedio explícito era innecesario porque
+    RegistroAuditoria ya respondía "quién concedió qué y cuándo", y una tabla
+    intermedia solo guarda el estado actual. Aquí la conclusión es la contraria, y
+    la diferencia es concreta: el reparto del trabajo NO es solo un hecho
+    auditable, es un DATO QUE SE CONSULTA a diario. El censista abre su panel y
+    necesita ver sus sectores; el supervisor necesita ver quién cubre qué. Eso no
+    se puede resolver leyendo la bitácora.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 2 — no se borra, se desactiva (y por eso hay historial)
+    ----------------------------------------------------------------------
+    Al retirar a alguien de un sector la fila NO se elimina: se marca activa=False
+    y se anota desasignado_en. Es la misma decisión que la HU-03 tomó con las
+    cuentas y la HU-05 con el territorio, pero aquí la razón es más fuerte todavía:
+    las fichas que ese censista levantó en ese sector se explican por esta
+    asignación. Borrarla dejaría huérfano el "por qué" de un dato del censo.
+
+    La consecuencia es que la tabla acumula el historial completo del reparto:
+    "en marzo Los Boldos lo cubrió Marta; desde abril, Juan". Eso responde
+    preguntas reales de supervisión sin necesidad de leer la bitácora.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 3 — la unicidad es PARCIAL
+    ----------------------------------------------------------------------
+    Una restricción `unique(sector, censista)` sería incorrecta: impediría volver a
+    asignar a alguien que ya estuvo antes, porque la fila histórica seguiría ahí.
+    Y quitarla del todo permitiría duplicar una asignación vigente.
+
+    La restricción correcta es "único ENTRE LAS ACTIVAS", que en PostgreSQL es un
+    índice único parcial (`WHERE activa`). Django lo expresa con el argumento
+    `condition` de UniqueConstraint.
+    """
+
+    sector = models.ForeignKey(
+        Sector,
+        on_delete=models.CASCADE,
+        related_name="asignaciones",
+        verbose_name="sector",
+        help_text="Sector que se le encarga a la persona.",
+    )
+    censista = models.ForeignKey(
+        "usuarios.Usuario",
+        on_delete=models.PROTECT,
+        related_name="asignaciones_sector",
+        verbose_name="censista",
+        help_text="Persona que levantará la información en ese sector.",
+    )
+    asignado_por = models.ForeignKey(
+        "usuarios.Usuario",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="asignaciones_realizadas",
+        verbose_name="asignado por",
+        help_text="Supervisor que hizo el reparto.",
+    )
+    observaciones = models.TextField(
+        "observaciones",
+        blank=True,
+        help_text=(
+            "Instrucciones para esta persona en este sector. Ej.: «empezar por "
+            "el pasaje sur, la subida está en obras»."
+        ),
+    )
+    activa = models.BooleanField(
+        "activa",
+        default=True,
+        help_text=(
+            "Si se desactiva, la persona deja de tener el sector a cargo, pero "
+            "la fila se conserva como historial del reparto."
+        ),
+    )
+    asignado_en = models.DateTimeField("asignado en", auto_now_add=True)
+    desasignado_en = models.DateTimeField(
+        "desasignado en",
+        null=True,
+        blank=True,
+        help_text="Cuándo se retiró la asignación. Vacío si sigue vigente.",
+    )
+
+    class Meta:
+        db_table = "operativos_asignacion_sector"
+        verbose_name = "asignación de sector"
+        verbose_name_plural = "asignaciones de sectores"
+        # Las vigentes primero, y dentro de cada grupo la más reciente arriba:
+        # es el orden en que se lee un historial.
+        ordering = ["-activa", "-asignado_en"]
+        constraints = [
+            # Índice único PARCIAL: solo entre las activas (ver la decisión 3).
+            models.UniqueConstraint(
+                fields=["sector", "censista"],
+                condition=models.Q(activa=True),
+                name="asignacion_activa_unica",
+            ),
+            # Coherencia entre las dos columnas que describen el mismo hecho: una
+            # asignación activa no puede tener fecha de baja, y una inactiva tiene
+            # que tenerla. Sin esto, un `save()` que olvidara una de las dos
+            # dejaría filas que se contradicen consigo mismas, y el historial
+            # dejaría de ser fiable justo cuando alguien lo necesita.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(activa=True, desasignado_en__isnull=True)
+                    | models.Q(activa=False, desasignado_en__isnull=False)
+                ),
+                name="asignacion_baja_coherente",
+            ),
+        ]
+        indexes = [
+            # "Mis sectores": la consulta que hace el censista al entrar.
+            models.Index(
+                fields=["censista", "activa"], name="idx_asignacion_censista"
+            ),
+            # "¿Quién cubre este sector?": la consulta del panel del supervisor.
+            models.Index(fields=["sector", "activa"], name="idx_asignacion_sector"),
+        ]
+
+    def __str__(self):
+        return f"{self.censista} → {self.sector}"
+
+    @property
+    def operativo(self):
+        """Atajo al operativo, dos niveles arriba. Mismo motivo que en Zona."""
+        return self.sector.operativo
+
+    def desactivar(self):
+        """Retira la asignación conservando la fila.
+
+        Se escribe como método del modelo y no en la vista para que las dos
+        columnas que describen la baja se actualicen SIEMPRE juntas. Si cada vista
+        lo hiciera a mano, alguna pondría activa=False y olvidaría
+        desasignado_en, y el CheckConstraint rechazaría el guardado —o peor, en un
+        motor sin esa restricción, dejaría un historial mentiroso.
+        """
+        self.activa = False
+        self.desasignado_en = timezone.now()
+        self.save(update_fields=["activa", "desasignado_en"])

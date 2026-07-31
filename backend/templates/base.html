@@ -76,6 +76,20 @@
             <a class="nav-link" href="{% url 'operativos:operativo_lista' %}">Operativos</a>
           </li>
         {% endif %}
+
+        {% comment %} «Mis sectores» (HU-06) no se decide por permiso ni por rol, sino por
+           un HECHO: si la persona tiene territorio a cargo, el enlace le sirve; si no,
+           solo la llevaría a una pantalla vacía.
+
+           El censista es quien lo necesita y no tiene ningún permiso de operativos,
+           así que un filtro de permiso lo dejaría fuera. Es coherente con que la
+           vista tampoco exija permiso: mostrar a alguien su propio trabajo no es una
+           decisión configurable (ver MisSectoresView). {% endcomment %}
+        {% if user.asignaciones_sector.exists %}
+          <li class="nav-item">
+            <a class="nav-link" href="{% url 'operativos:mis_sectores' %}">Mis sectores</a>
+          </li>
+        {% endif %}
       </ul>
 
       <div class="d-flex align-items-center gap-3 flex-wrap">

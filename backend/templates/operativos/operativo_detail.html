@@ -48,6 +48,19 @@
       </span>
     </div>
   </div>
+  <div class="d-flex gap-2 flex-wrap">
+    {% comment %} El reparto del trabajo (HU-06) va aquí porque es el paso siguiente
+       natural: una vez dibujado el territorio, hay que asignarlo. Se muestra según
+       operativos.ver y no según puede_gestionar, porque consultar quién cubre qué no
+       es modificar la división territorial: un supervisor entra aquí sin tener
+       operativos.gestionar. {% endcomment %}
+    <a href="{% url 'operativos:asignaciones_panel' operativo.pk %}" class="btn btn-outline-dark btn-sm">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="16" height="16" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.106A12.318 12.318 0 018.624 21c-2.331 0-4.512-.645-6.374-1.766l-.001-.109a6.375 6.375 0 0111.964-3.07M12 6.375a3.375 3.375 0 11-6.75 0 3.375 3.375 0 016.75 0zm8.25 2.25a2.625 2.625 0 11-5.25 0 2.625 2.625 0 015.25 0z" />
+      </svg>
+      Reparto del trabajo
+    </a>
+  </div>
   {% if puede_gestionar %}
     <div class="d-flex gap-2">
       <a href="{% url 'operativos:operativo_editar' operativo.pk %}" class="btn btn-outline-primary btn-sm">Editar datos</a>
@@ -146,6 +159,24 @@
             {% if not sector.activo %}
               <span class="badge text-bg-secondary ms-1">desactivado</span>
             {% endif %}
+            {% comment %} HU-06: quién cubre el sector. Se muestra aquí y no solo en el
+               panel de reparto porque al mirar el territorio la pregunta "¿y esto
+               quién lo trabaja?" surge de inmediato.
+
+               sector.equipo lo puso el Prefetch de la vista, ya filtrado a las
+               asignaciones activas. NO se llama a sector.asignaciones_activas()
+               aquí: eso lanzaría una consulta por sector y rompería la garantía de
+               que esta página cueste un número fijo de consultas. {% endcomment %}
+            <div class="small text-secondary">
+              {% if sector.equipo %}
+                <span class="text-success">●</span>
+                {% for asignacion in sector.equipo %}
+                  {{ asignacion.censista.get_full_name|default:asignacion.censista.email }}{% if not forloop.last %}, {% endif %}
+                {% endfor %}
+              {% else %}
+                <span class="text-danger">● sin nadie a cargo</span>
+              {% endif %}
+            </div>
             {% if sector.descripcion %}
               <div class="small text-secondary">{{ sector.descripcion }}</div>
             {% endif %}

@@ -81,6 +81,48 @@ class DashboardSupervisorView(RolRequeridoMixin, TemplateView):
         contexto["total_censistas"] = Usuario.objects.filter(
             is_active=True, rol__codigo=RolCodigo.CENSISTA
         ).count()
+
+        # HU-06: el reparto del trabajo. El panel tenía estos contadores como
+        # marcadores de posición ("—") desde la HU-01; ahora hay datos que ponerles.
+        from operativos.models import AsignacionSector, EstadoOperativo, Operativo, Sector
+
+        operativos_vigentes = Operativo.objects.filter(
+            estado__in=(EstadoOperativo.PLANIFICACION, EstadoOperativo.EN_CURSO)
+        )
+
+        # distinct() porque un sector con tres censistas debe contar UNA vez.
+        contexto["sectores_asignados"] = (
+            Sector.objects.filter(
+                operativo__in=operativos_vigentes, activo=True, asignaciones__activa=True
+            )
+            .distinct()
+            .count()
+        )
+
+        # El número que de verdad le sirve al supervisor: territorio que nadie va a
+        # visitar. Se muestra destacado en el panel por eso.
+        contexto["sectores_sin_asignar"] = (
+            Sector.objects.filter(operativo__in=operativos_vigentes, activo=True)
+            .exclude(asignaciones__activa=True)
+            .distinct()
+            .count()
+        )
+
+        contexto["censistas_desplegados"] = (
+            AsignacionSector.objects.filter(
+                activa=True, sector__operativo__in=operativos_vigentes
+            )
+            .values("censista")
+            .distinct()
+            .count()
+        )
+
+        # El operativo al que llevan los enlaces del panel: el más próximo en curso
+        # o en planificación. Sin esto el supervisor tendría que pasar por el
+        # listado de operativos para llegar a su trabajo del día.
+        contexto["operativo_actual"] = operativos_vigentes.order_by(
+            "-fecha_inicio"
+        ).first()
         return contexto
 
 
@@ -93,4 +135,19 @@ class DashboardCensistaView(RolRequeridoMixin, TemplateView):
     def get_context_data(self, **kwargs):
         contexto = super().get_context_data(**kwargs)
         contexto["titulo_pagina"] = "Panel del Censista"
+
+        # HU-06: sus sectores a cargo. Es lo primero que necesita ver al entrar:
+        # dónde le toca trabajar hoy.
+        #
+        # Se filtra por self.request.user y se excluyen los operativos cerrados: un
+        # sector de un operativo terminado no es trabajo pendiente, y mezclarlos
+        # obligaría a distinguirlos leyendo las fechas.
+        from operativos.models import AsignacionSector, EstadoOperativo
+
+        contexto["mis_asignaciones"] = (
+            AsignacionSector.objects.filter(activa=True, censista=self.request.user)
+            .exclude(sector__operativo__estado=EstadoOperativo.CERRADO)
+            .select_related("sector", "sector__comuna", "sector__operativo")
+            .order_by("sector__nombre")
+        )
         return contexto

@@ -608,6 +608,16 @@ class AccionAuditoria(models.TextChoices):
         "CAMBIAR_ESTADO_OPERATIVO",
         "Cambió el estado del operativo",
     )
+    # HU-06: el reparto del trabajo de terreno. Recae sobre un SECTOR (quién lo
+    # cubre), así que reutiliza TipoObjetoAuditoria.SECTOR sin agregar un tipo
+    # nuevo. Una sola acción para asignar y desasignar, igual que
+    # CAMBIAR_PERMISOS: el detalle dice qué entró y qué salió, y así una
+    # reasignación —que es las dos cosas a la vez— queda en UNA fila y no en dos
+    # que habría que correlacionar por su hora.
+    CAMBIAR_ASIGNACIONES = (
+        "CAMBIAR_ASIGNACIONES",
+        "Cambió las asignaciones del sector",
+    )
 
 
 class TipoObjetoAuditoria(models.TextChoices):

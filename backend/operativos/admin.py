@@ -22,7 +22,7 @@ sin dejar rastro.
 
 from django.contrib import admin
 
-from .models import Comuna, Operativo, Region, Sector, Zona
+from .models import AsignacionSector, Comuna, Operativo, Region, Sector, Zona
 
 
 @admin.register(Region)
@@ -84,13 +84,36 @@ class ZonaInline(admin.TabularInline):
     fields = ("nombre", "descripcion", "viviendas_estimadas", "activa")
 
 
+class AsignacionSectorInline(admin.TabularInline):
+    """El equipo de un sector, visible desde su ficha (HU-06).
+
+    Se muestran también las asignaciones históricas (activa=False), a diferencia de
+    la pantalla de OPSO, que solo ofrece las vigentes. El admin es la herramienta
+    técnica: aquí interesa ver el registro completo del reparto, incluida la gente
+    que pasó por el sector y ya no está.
+    """
+
+    model = AsignacionSector
+    extra = 0
+    fields = ("censista", "activa", "asignado_por", "asignado_en", "desasignado_en")
+    readonly_fields = ("asignado_en",)
+    autocomplete_fields = ("censista", "asignado_por")
+
+
 @admin.register(Sector)
 class SectorAdmin(admin.ModelAdmin):
-    list_display = ("nombre", "comuna", "operativo", "activo", "total_zonas")
+    list_display = (
+        "nombre",
+        "comuna",
+        "operativo",
+        "activo",
+        "total_zonas",
+        "total_asignados",
+    )
     list_filter = ("activo", "operativo", "comuna__region")
     search_fields = ("nombre", "comuna__nombre", "operativo__nombre")
     readonly_fields = ("creado_en", "actualizado_en")
-    inlines = (ZonaInline,)
+    inlines = (ZonaInline, AsignacionSectorInline)
     # select_related en el listado: sin esto, mostrar la comuna y el operativo de
     # cada fila costaría dos consultas por fila.
     list_select_related = ("comuna", "operativo")
@@ -98,6 +121,10 @@ class SectorAdmin(admin.ModelAdmin):
     @admin.display(description="zonas")
     def total_zonas(self, obj):
         return obj.zonas.count()
+
+    @admin.display(description="censistas a cargo")
+    def total_asignados(self, obj):
+        return obj.asignaciones.filter(activa=True).count()
 
 
 class SectorInline(admin.TabularInline):
@@ -154,3 +181,45 @@ class ZonaAdmin(admin.ModelAdmin):
     @admin.display(description="comuna", ordering="sector__comuna__nombre")
     def comuna(self, obj):
         return obj.sector.comuna.nombre
+
+
+@admin.register(AsignacionSector)
+class AsignacionSectorAdmin(admin.ModelAdmin):
+    """El reparto del trabajo, con su historial completo (HU-06).
+
+    La pantalla propia existe para lo que el inline del sector no permite: buscar
+    todos los sectores de una persona, o revisar quién repartió qué. Es consulta
+    técnica; el reparto del día a día se hace en /operativos/<pk>/asignaciones/,
+    que valida las reglas del negocio y deja auditoría.
+    """
+
+    list_display = (
+        "censista",
+        "sector",
+        "operativo",
+        "activa",
+        "asignado_en",
+        "desasignado_en",
+        "asignado_por",
+    )
+    list_filter = ("activa", "sector__operativo", "sector__comuna__region")
+    search_fields = (
+        "censista__email",
+        "censista__first_name",
+        "censista__last_name",
+        "sector__nombre",
+    )
+    readonly_fields = ("asignado_en",)
+    autocomplete_fields = ("censista", "asignado_por", "sector")
+    # Sin esto, mostrar el sector, su operativo y las dos personas de cada fila
+    # costaría cuatro consultas por fila.
+    list_select_related = (
+        "censista",
+        "sector",
+        "sector__operativo",
+        "asignado_por",
+    )
+
+    @admin.display(description="operativo", ordering="sector__operativo__nombre")
+    def operativo(self, obj):
+        return obj.sector.operativo.nombre

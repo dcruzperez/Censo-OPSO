@@ -42,7 +42,7 @@ Dos decisiones que conviene poder explicar:
 
 from django.urls import path
 
-from . import views
+from . import views, views_asignaciones
 
 app_name = "operativos"
 
@@ -52,6 +52,24 @@ urlpatterns = [
     # ------------------------------------------------------------------
     path("", views.OperativoListView.as_view(), name="operativo_lista"),
     path("nuevo/", views.OperativoCreateView.as_view(), name="operativo_crear"),
+    # ------------------------------------------------------------------
+    # REPARTO DEL TRABAJO (HU-06) — rutas fijas, antes de <int:pk>
+    # ------------------------------------------------------------------
+    # /operativos/mis-sectores/ es la pantalla del CENSISTA: la única del módulo
+    # que no exige permiso, porque muestra exclusivamente el trabajo de quien
+    # entró (ver MisSectoresView). No lleva ningún identificador en la dirección,
+    # y eso es parte de su seguridad: no hay nada que manipular para pedir los
+    # sectores de otra persona.
+    path(
+        "mis-sectores/",
+        views_asignaciones.MisSectoresView.as_view(),
+        name="mis_sectores",
+    ),
+    path(
+        "asignaciones/<int:pk>/retirar/",
+        views_asignaciones.RetirarAsignacionView.as_view(),
+        name="asignacion_retirar",
+    ),
     # ------------------------------------------------------------------
     # COMUNAS — antes de <int:pk> (ver la nota 2 de la cabecera)
     # ------------------------------------------------------------------
@@ -98,6 +116,14 @@ urlpatterns = [
         views.ZonaCreateView.as_view(),
         name="zona_crear",
     ),
+    # Quiénes cubren este sector (HU-06). Va bajo /sectores/<pk>/ y no anidado en
+    # el operativo por la misma razón que editar: el sector ya sabe a cuál
+    # pertenece, y repetirlo en la URL sería un dato más que verificar.
+    path(
+        "sectores/<int:pk>/asignar/",
+        views_asignaciones.AsignarSectorView.as_view(),
+        name="sector_asignar",
+    ),
     # ------------------------------------------------------------------
     # ZONAS
     # ------------------------------------------------------------------
@@ -130,5 +156,11 @@ urlpatterns = [
         "<int:operativo_pk>/sectores/nuevo/",
         views.SectorCreateView.as_view(),
         name="sector_crear",
+    ),
+    # Panel de reparto del operativo (HU-06).
+    path(
+        "<int:pk>/asignaciones/",
+        views_asignaciones.PanelAsignacionesView.as_view(),
+        name="asignaciones_panel",
     ),
 ]

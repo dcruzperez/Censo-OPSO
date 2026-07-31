@@ -288,12 +288,31 @@ class OperativoDetailView(ConsultaTerritorialMixin, DetailView):
         ordenar en la consulta lo hace PostgreSQL; ordenar en la plantilla
         obligaría a traerlo todo y reordenarlo en memoria.
         """
+        # HU-06: el equipo a cargo de cada sector se trae en el mismo prefetch. Se
+        # filtra a las asignaciones ACTIVAS y se guarda en `equipo` con to_attr,
+        # porque sin filtrar la plantilla mostraría también a quien ya fue retirado.
+        #
+        # Añadirlo aquí y no llamar a sector.asignaciones_activas() en la plantilla
+        # es lo que mantiene constante el coste de la página: hay una prueba
+        # (OperativoDetalleConsultasTest) que falla si el número de consultas crece
+        # con el número de sectores.
+        from .models import AsignacionSector
+
+        equipo_activo = Prefetch(
+            "asignaciones",
+            queryset=AsignacionSector.objects.filter(activa=True)
+            .select_related("censista")
+            .order_by("censista__first_name", "censista__last_name"),
+            to_attr="equipo",
+        )
+
         return Operativo.objects.select_related("creado_por").prefetch_related(
             Prefetch(
                 "sectores",
                 queryset=Sector.objects.select_related("comuna", "comuna__region")
                 .prefetch_related(
-                    Prefetch("zonas", queryset=Zona.objects.order_by("nombre"))
+                    Prefetch("zonas", queryset=Zona.objects.order_by("nombre")),
+                    equipo_activo,
                 )
                 .order_by("comuna__region__orden", "comuna__nombre", "nombre"),
             )

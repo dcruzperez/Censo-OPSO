@@ -46,5 +46,5 @@ cd backend
 set DB_ENGINE=sqlite3 && ..\.venv\Scripts\python.exe manage.py test
 ```
 
-`DB_ENGINE=sqlite3` permite ejecutar las 422 pruebas sin un servidor
+`DB_ENGINE=sqlite3` permite ejecutar las 546 pruebas sin un servidor
 PostgreSQL levantado. Desarrollo y producción usan siempre PostgreSQL.

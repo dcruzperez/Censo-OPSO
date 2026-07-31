@@ -1,0 +1,263 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   PANEL DE REPARTO DEL OPERATIVO — /operativos/<pk>/asignaciones/
+
+   Es la pantalla central de la HU-06 y la primera del sistema pensada para el
+   SUPERVISOR, no para el administrador.
+
+   Responde tres preguntas de un vistazo, y el orden en que se presentan no es
+   casual:
+
+     1. ¿Qué sectores no tiene nadie?  -> el contador rojo y las filas marcadas.
+        Va primero porque es lo único que puede arruinar el operativo: territorio
+        que nadie va a visitar.
+     2. ¿Quién cubre cada uno?         -> la columna del equipo.
+     3. ¿Está bien repartida la carga? -> la tabla de equilibrio, al final.
+        Es lo que convierte "asignar" en DISTRIBUIR: sin ver las viviendas por
+        persona, repartir cinco sectores entre dos es una decisión a ciegas.
+
+   Los datos del equipo llegan en sector.equipo (un Prefetch filtrado a las
+   asignaciones ACTIVAS) y los contadores anotados por PostgreSQL. La plantilla no
+   llama a ningún método del modelo dentro de los bucles: hacerlo lanzaría una
+   consulta por fila.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Reparto de {{ operativo.nombre }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'operativos:operativo_lista' %}">Operativos</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'operativos:operativo_detalle' operativo.pk %}">{{ operativo.nombre }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Reparto del trabajo</li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+      Reparto del trabajo
+    </h1>
+    <p class="text-secondary mb-0">
+      Quién cubre cada sector de <strong>{{ operativo.nombre }}</strong>.
+      {% include "operativos/_estado_operativo.html" with estado=operativo %}
+    </p>
+  </div>
+  <a href="{% url 'operativos:operativo_detalle' operativo.pk %}" class="btn btn-outline-secondary btn-sm">
+    Ver el territorio
+  </a>
+</div>
+
+{% if not reparto_abierto %}
+  {% comment %} Un operativo cerrado no admite cambios en el reparto. Se avisa aquí y
+     se ocultan los botones, pero lo que de verdad lo impide es
+     Sector.puede_recibir_asignaciones(), comprobada en el GET y en el POST de las
+     vistas: ocultar un botón no es una validación. {% endcomment %}
+  <div class="alert alert-secondary small d-flex gap-2" role="alert">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+    </svg>
+    <div>
+      <strong>Operativo cerrado.</strong> El reparto quedó congelado: es el registro
+      de quién trabajó realmente cada sector. Para modificarlo hay que reabrir el
+      operativo.
+    </div>
+  </div>
+{% endif %}
+
+{# ---------- Contadores: la cobertura ---------- #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card-opso p-3">
+      <div class="kpi-valor">{{ total_sectores }}</div>
+      <div class="kpi-etiqueta">Sectores activos</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-opso p-3">
+      <div class="kpi-valor text-success">{{ total_asignados }}</div>
+      <div class="kpi-etiqueta">Con equipo asignado</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    {% comment %} El único contador que se pinta según su valor: si hay sectores sin
+       nadie es un problema que hay que resolver, y si no hay ninguno es una buena
+       noticia que merece verse. {% endcomment %}
+    <div class="card-opso p-3">
+      <div class="kpi-valor {% if total_sin_asignar %}text-danger{% else %}text-success{% endif %}">
+        {{ total_sin_asignar }}
+      </div>
+      <div class="kpi-etiqueta">
+        {% if total_sin_asignar %}Sin nadie a cargo{% else %}Cobertura completa{% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-opso p-3">
+      <div class="kpi-valor">{{ censistas_desplegados|length }}</div>
+      <div class="kpi-etiqueta">Censistas desplegados</div>
+    </div>
+  </div>
+</div>
+
+{% if total_sin_asignar and reparto_abierto %}
+  <div class="alert alert-warning small d-flex gap-2" role="alert">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+    </svg>
+    <div>
+      Hay <strong>{{ total_sin_asignar }} sector{{ total_sin_asignar|pluralize:"es" }}</strong>
+      sin nadie a cargo. Ese territorio no lo va a visitar ningún censista.
+      <a href="?cobertura=sin_asignar" class="fw-semibold">Ver solo esos</a>.
+    </div>
+  </div>
+{% endif %}
+
+{# ---------- Buscador y filtros ---------- #}
+<form method="get" class="card-opso p-3 mb-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-lg-4">
+      <label for="{{ filtro.q.id_for_label }}" class="form-label small fw-semibold mb-1">{{ filtro.q.label }}</label>
+      {{ filtro.q }}
+    </div>
+    <div class="col-12 col-sm-6 col-lg-3">
+      <label for="{{ filtro.cobertura.id_for_label }}" class="form-label small fw-semibold mb-1">{{ filtro.cobertura.label }}</label>
+      {{ filtro.cobertura }}
+    </div>
+    <div class="col-12 col-sm-6 col-lg-3">
+      <label for="{{ filtro.censista.id_for_label }}" class="form-label small fw-semibold mb-1">{{ filtro.censista.label }}</label>
+      {{ filtro.censista }}
+    </div>
+    <div class="col-12 col-lg-2 d-flex gap-2">
+      <button type="submit" class="btn btn-opso btn-sm w-100">Filtrar</button>
+      {% if parametros %}
+        <a href="{% url 'operativos:asignaciones_panel' operativo.pk %}"
+           class="btn btn-outline-secondary btn-sm" title="Quitar los filtros">Limpiar</a>
+      {% endif %}
+    </div>
+  </div>
+</form>
+
+{# ---------- Tabla de sectores ---------- #}
+<div class="card-opso p-0 overflow-hidden mb-4">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th scope="col">Sector</th>
+          <th scope="col">Comuna</th>
+          <th scope="col">Equipo a cargo</th>
+          <th scope="col" class="text-center">Viviendas</th>
+          <th scope="col" class="text-end">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for sector in sectores %}
+          <tr {% if not sector.n_asignados %}class="table-warning"{% endif %}>
+            <td>
+              <span class="fw-semibold">{{ sector.nombre }}</span>
+              {% if not sector.activo %}
+                <span class="badge text-bg-secondary ms-1">desactivado</span>
+              {% endif %}
+            </td>
+            <td class="small text-secondary">{{ sector.comuna.nombre }}</td>
+            <td>
+              {% comment %} sector.equipo lo puso el Prefetch con to_attr, ya filtrado
+                 a las asignaciones activas. Recorrerlo no consulta la base. {% endcomment %}
+              {% if sector.equipo %}
+                <div class="d-flex flex-wrap gap-1">
+                  {% for asignacion in sector.equipo %}
+                    <span class="badge text-bg-light border d-inline-flex align-items-center gap-1">
+                      {{ asignacion.censista.get_full_name|default:asignacion.censista.email }}
+                      {% if not asignacion.censista.is_active %}
+                        <span class="text-danger" title="La cuenta está deshabilitada: no podrá iniciar sesión">⚠</span>
+                      {% endif %}
+                      {% if puede_asignar and reparto_abierto %}
+                        <a href="{% url 'operativos:asignacion_retirar' asignacion.pk %}"
+                           class="text-decoration-none text-danger fw-bold"
+                           title="Retirar a esta persona del sector">&times;</a>
+                      {% endif %}
+                    </span>
+                  {% endfor %}
+                </div>
+              {% else %}
+                <span class="text-danger small fw-semibold">— sin nadie a cargo —</span>
+              {% endif %}
+            </td>
+            <td class="text-center small">{{ sector.carga|default:"—" }}</td>
+            <td class="text-end">
+              {% if puede_asignar and reparto_abierto %}
+                <a href="{% url 'operativos:sector_asignar' sector.pk %}"
+                   class="btn btn-sm {% if sector.n_asignados %}btn-outline-primary{% else %}btn-opso{% endif %}">
+                  {% if sector.n_asignados %}Cambiar equipo{% else %}Asignar{% endif %}
+                </a>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="5" class="text-center text-secondary py-5">
+              {% if parametros %}
+                Ningún sector coincide con el filtro.
+                <a href="{% url 'operativos:asignaciones_panel' operativo.pk %}">Quitar los filtros</a>.
+              {% else %}
+                Este operativo todavía no tiene sectores.
+                <a href="{% url 'operativos:operativo_detalle' operativo.pk %}">Definir el territorio</a>
+                antes de repartir el trabajo.
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% include "operativos/_paginacion.html" with etiqueta="sector" %}
+</div>
+
+{# ---------- Equilibrio de la carga ---------- #}
+{% if carga_por_censista %}
+  <h2 class="h5 fw-bold mb-3">Carga por censista</h2>
+  <div class="card-opso p-0 overflow-hidden">
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th scope="col">Censista</th>
+            <th scope="col" class="text-center">Sectores</th>
+            <th scope="col" class="text-center">Viviendas estimadas</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for censista in carga_por_censista %}
+            <tr>
+              <td>
+                {{ censista.get_full_name|default:censista.email }}
+                <span class="text-secondary small">· {{ censista.email }}</span>
+                {% if not censista.is_active %}
+                  <span class="badge text-bg-danger ms-1"
+                        title="No puede iniciar sesión: revisa su cuenta o retíralo de sus sectores">cuenta deshabilitada</span>
+                {% endif %}
+              </td>
+              <td class="text-center">{{ censista.n_sectores }}</td>
+              <td class="text-center">{{ censista.viviendas|default:"—" }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <p class="text-secondary small mt-3 mb-0">
+    <strong>Cómo leer esta tabla:</strong> la columna de viviendas es la que
+    importa para repartir con justicia. Dos personas con tres sectores cada una
+    pueden tener cargas muy distintas si unos sectores son grandes y otros
+    pequeños.
+  </p>
+{% endif %}
+
+{% endblock %}

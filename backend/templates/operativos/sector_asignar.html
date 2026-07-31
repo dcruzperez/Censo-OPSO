@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   ASIGNAR UN SECTOR — /operativos/sectores/<pk>/asignar/
+
+   Se responde una sola pregunta: ¿quiénes cubren este sector? Y se responde con
+   CASILLAS, no con un "agregar persona" repetido, porque así el estado completo se
+   ve y se corrige de un vistazo: se marca a quien entra, se desmarca a quien sale,
+   y una reasignación es una sola operación.
+
+   Es el mismo enfoque que la matriz de permisos de la HU-04, y comparte su
+   consecuencia: al guardar se calcula la DIFERENCIA entre lo que había y lo que
+   llegó, y solo eso queda en la bitácora.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Asignar {{ sector.nombre }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'operativos:operativo_lista' %}">Operativos</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'operativos:operativo_detalle' operativo.pk %}">{{ operativo.nombre }}</a>
+    </li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'operativos:asignaciones_panel' operativo.pk %}">Reparto</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">{{ sector.nombre }}</li>
+  </ol>
+</nav>
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-8">
+
+    <div class="card-opso p-4 p-lg-5">
+
+      <h1 class="h4 fw-bold mb-1">¿Quiénes cubren «{{ sector.nombre }}»?</h1>
+      <p class="text-secondary small mb-4">
+        En {{ sector.comuna.nombre }}, operativo {{ operativo.nombre }}.
+      </p>
+
+      {# ---------- Resumen del sector ---------- #}
+      <dl class="row small border rounded p-3 mb-4 bg-light">
+        <dt class="col-5 col-sm-4 text-secondary fw-normal">Sector</dt>
+        <dd class="col-7 col-sm-8 mb-1 fw-semibold">{{ sector.nombre }}</dd>
+
+        <dt class="col-5 col-sm-4 text-secondary fw-normal">Ubicación</dt>
+        <dd class="col-7 col-sm-8 mb-1">
+          {{ sector.comuna.nombre }} · {{ sector.comuna.region.nombre }}
+        </dd>
+
+        <dt class="col-5 col-sm-4 text-secondary fw-normal">Zonas</dt>
+        <dd class="col-7 col-sm-8 mb-1">{{ sector.total_zonas }}</dd>
+
+        {% comment %} La carga es el dato que hace que el reparto sea informado y no a
+           ojo: 400 viviendas y 60 viviendas no son el mismo encargo. {% endcomment %}
+        <dt class="col-5 col-sm-4 text-secondary fw-normal">Viviendas estimadas</dt>
+        <dd class="col-7 col-sm-8 mb-0">
+          {% if carga %}
+            <strong>{{ carga }}</strong>
+          {% else %}
+            <span class="text-secondary">sin estimar</span>
+          {% endif %}
+        </dd>
+      </dl>
+
+      {% if sector.descripcion %}
+        <p class="small text-secondary">{{ sector.descripcion }}</p>
+      {% endif %}
+
+      {% if not hay_censistas %}
+        {# Sin censistas habilitados no hay nada que marcar, y una lista vacía sin
+           explicación deja al supervisor sin saber qué hacer. #}
+        <div class="alert alert-warning" role="alert">
+          <h2 class="h6 fw-bold">No hay censistas disponibles</h2>
+          <p class="small mb-0">
+            No existe ninguna cuenta con rol Censista habilitada. Pídele al
+            administrador que cree las cuentas del equipo de terreno antes de
+            repartir el trabajo.
+          </p>
+        </div>
+
+        <a href="{% url 'operativos:asignaciones_panel' operativo.pk %}"
+           class="btn btn-outline-secondary">Volver al reparto</a>
+
+      {% else %}
+
+        {% if form.non_field_errors %}
+          <div class="alert alert-danger" role="alert">
+            {% for error in form.non_field_errors %}
+              <div class="small">{{ error }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        <form method="post" novalidate>
+          {% csrf_token %}
+
+          {# ---------- Las casillas ---------- #}
+          <fieldset class="mb-4">
+            <legend class="form-label fw-semibold small mb-1">
+              {{ form.censistas.label }}
+            </legend>
+
+            {% if form.censistas.help_text %}
+              <div class="form-text small mb-2">{{ form.censistas.help_text }}</div>
+            {% endif %}
+
+            <div class="border rounded p-3">
+              {% comment %} Se recorre el campo para dibujar cada casilla con su etiqueta
+                 y poder marcar los casos especiales (una cuenta deshabilitada que
+                 todavía tiene el sector). Con {{ form.censistas }} a secas Django
+                 dibujaría la lista, pero sin esos avisos. {% endcomment %}
+              {% for opcion in form.censistas %}
+                <div class="form-check">
+                  {{ opcion.tag }}
+                  <label class="form-check-label small" for="{{ opcion.id_for_label }}">
+                    {{ opcion.choice_label }}
+                  </label>
+                </div>
+              {% endfor %}
+            </div>
+
+            {% for error in form.censistas.errors %}
+              <div class="text-danger small mt-1">{{ error }}</div>
+            {% endfor %}
+          </fieldset>
+
+          {% include "usuarios/gestion/_campo.html" with campo=form.observaciones %}
+
+          <div class="alert alert-info small mt-3" role="alert">
+            <strong>Qué ocurre al guardar:</strong> quien quede marcado tendrá el
+            sector a cargo y lo verá en su panel. Quien quede desmarcado lo pierde,
+            pero <strong>su asignación no se borra</strong>: queda como historial,
+            porque explica las fichas que ya levantó aquí.
+          </div>
+
+          <div class="d-flex gap-2 flex-wrap mt-4">
+            <button type="submit" class="btn btn-opso">Guardar el reparto</button>
+            <a href="{% url 'operativos:asignaciones_panel' operativo.pk %}"
+               class="btn btn-outline-secondary">Cancelar</a>
+          </div>
+        </form>
+      {% endif %}
+    </div>
+
+    {# ---------- Historial del sector ---------- #}
+    {% if historial %}
+      <div class="card-opso p-4 mt-3">
+        <h2 class="h6 fw-semibold mb-1">Quién lo cubrió antes</h2>
+        <p class="text-secondary small mb-3">
+          Da contexto para decidir: alguien que ya trabajó este sector conoce el
+          terreno.
+        </p>
+        <ul class="list-unstyled small mb-0">
+          {% for asignacion in historial %}
+            <li class="d-flex justify-content-between border-bottom py-1">
+              <span>{{ asignacion.censista.get_full_name|default:asignacion.censista.email }}</span>
+              <span class="text-secondary">
+                hasta {{ asignacion.desasignado_en|date:"d-m-Y" }}
+              </span>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

@@ -25,10 +25,54 @@
   </div>
 </div>
 
+{# Mis sectores (HU-06) — lo primero que necesita ver: dónde le toca trabajar #}
+<div class="card-opso p-4 mb-4">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
+    <h2 class="h5 fw-semibold mb-0">Mi territorio a cargo</h2>
+    {% if mis_asignaciones %}
+      <a href="{% url 'operativos:mis_sectores' %}" class="btn btn-opso btn-sm">
+        Ver el detalle
+      </a>
+    {% endif %}
+  </div>
+
+  {% if mis_asignaciones %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr class="small text-secondary">
+            <th scope="col" class="fw-normal ps-0">Sector</th>
+            <th scope="col" class="fw-normal">Comuna</th>
+            <th scope="col" class="fw-normal">Operativo</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for asignacion in mis_asignaciones %}
+            <tr>
+              <td class="ps-0 fw-semibold">{{ asignacion.sector.nombre }}</td>
+              <td class="small text-secondary">{{ asignacion.sector.comuna.nombre }}</td>
+              <td class="small text-secondary">{{ asignacion.sector.operativo.nombre }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    {% comment %} Se explica el motivo y no solo que está vacío: quien entra a
+       trabajar y no ve nada necesita saber si falla el sistema o si todavía no le
+       asignaron territorio. {% endcomment %}
+    <p class="text-secondary small mb-0">
+      Tu supervisor todavía no te ha asignado sectores. Cuando lo haga aparecerán
+      aquí, con sus zonas y sus indicaciones.
+    </p>
+  {% endif %}
+</div>
+
 <div class="card-opso p-4">
   <h2 class="h6 fw-semibold">Alcance de este rol</h2>
   <ul class="text-secondary small mb-0 ps-3">
     <li>Registrar nuevas fichas de familias durante el operativo.</li>
+    <li>Consultar los sectores y zonas que tiene asignados.</li>
     <li>Editar únicamente las fichas que él mismo levantó.</li>
     <li>Sin acceso a la gestión de usuarios ni a los reportes globales.</li>
   </ul>
