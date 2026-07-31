@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   CONFIRMACIÓN: ACTIVAR O DESACTIVAR UN SECTOR
+   /operativos/sectores/<pk>/desactivar/  y  .../activar/
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}{% if activar %}Activar{% else %}Desactivar{% endif %} sector{% endblock %}
+
+{% block contenido %}
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-7">
+    <div class="card-opso p-4 p-lg-5">
+
+      {% if activar %}
+        <span class="badge text-bg-success mb-3">Activar sector</span>
+        <h1 class="h4 fw-bold mb-3">¿Volver a incluir este sector?</h1>
+      {% else %}
+        <span class="badge text-bg-danger mb-3">Desactivar sector</span>
+        <h1 class="h4 fw-bold mb-3">¿Sacar este sector del operativo?</h1>
+      {% endif %}
+
+      <dl class="row small border rounded p-3 mb-4 bg-light">
+        <dt class="col-4 text-secondary fw-normal">Sector</dt>
+        <dd class="col-8 mb-1 fw-semibold">{{ sector.nombre }}</dd>
+
+        <dt class="col-4 text-secondary fw-normal">Comuna</dt>
+        <dd class="col-8 mb-1">{{ sector.comuna.nombre }}</dd>
+
+        <dt class="col-4 text-secondary fw-normal">Operativo</dt>
+        <dd class="col-8 mb-1">{{ operativo.nombre }}</dd>
+
+        <dt class="col-4 text-secondary fw-normal">Zonas que contiene</dt>
+        <dd class="col-8 mb-1">{{ total_zonas }}</dd>
+
+        <dt class="col-4 text-secondary fw-normal">Estado actual</dt>
+        <dd class="col-8 mb-0">
+          {% if sector.activo %}
+            <span class="badge text-bg-success">Activo</span>
+          {% else %}
+            <span class="badge text-bg-secondary">Desactivado</span>
+          {% endif %}
+        </dd>
+      </dl>
+
+      {% if activar %}
+        <p class="small">Al activar el sector:</p>
+        <ul class="small text-secondary">
+          <li>Vuelve a contarse como parte del territorio del operativo.</li>
+          <li>Sus {{ total_zonas }} zona{{ total_zonas|pluralize }} vuelven a estar disponibles.</li>
+          <li>La acción queda registrada en la bitácora de auditoría con tu nombre.</li>
+        </ul>
+      {% else %}
+        <p class="small">Al desactivar el sector:</p>
+        <ul class="small text-secondary">
+          <li>El campo <code>activo</code> pasa a <code>False</code>.
+            <strong>La fila NO se elimina</strong> de la base de datos.</li>
+          <li>Deja de considerarse parte del territorio vigente del operativo.</li>
+          <li>Sus {{ total_zonas }} zona{{ total_zonas|pluralize }}
+            <strong>no se borran ni se desactivan</strong>: siguen colgando del
+            sector y volverán a estar disponibles si lo reactivas.</li>
+        </ul>
+
+        <div class="alert alert-info small" role="alert">
+          <strong>Se conserva todo</strong>, incluidas las fichas del censo
+          levantadas en él. Es un <em>borrado lógico</em>, reversible desde esta
+          misma pantalla.
+        </div>
+      {% endif %}
+
+      <form method="post" class="d-flex gap-2 flex-wrap">
+        {% csrf_token %}
+        {% if activar %}
+          <button type="submit" class="btn btn-success">Sí, activar el sector</button>
+        {% else %}
+          <button type="submit" class="btn btn-danger">Sí, desactivar el sector</button>
+        {% endif %}
+        <a href="{% url 'operativos:operativo_detalle' operativo.pk %}"
+           class="btn btn-outline-secondary">No, cancelar</a>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

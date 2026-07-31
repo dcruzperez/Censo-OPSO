@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   ALTA Y EDICIÓN DE UN SECTOR
+   /operativos/<operativo_pk>/sectores/nuevo/  y  /operativos/sectores/<pk>/editar/
+
+   El OPERATIVO no es un campo del formulario: se muestra como dato fijo y viaja en
+   la URL. No es un descuido, es la decisión explicada en SectorForm: un campo
+   oculto con el identificador se podría manipular para crear sectores en un
+   operativo que el administrador no estaba mirando.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}{% if es_creacion %}Nuevo sector{% else %}Editar sector{% endif %}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'operativos:operativo_lista' %}">Operativos</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'operativos:operativo_detalle' operativo.pk %}">{{ operativo.nombre }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">
+      {% if es_creacion %}Nuevo sector{% else %}{{ form.instance.nombre }}{% endif %}
+    </li>
+  </ol>
+</nav>
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-7">
+    <div class="card-opso p-4 p-lg-5">
+
+      <h1 class="h4 fw-bold mb-1">
+        {% if es_creacion %}Nuevo sector{% else %}Editar «{{ form.instance.nombre }}»{% endif %}
+      </h1>
+      <p class="text-secondary small mb-4">
+        En el operativo <strong>{{ operativo.nombre }}</strong>. Un sector es la
+        porción de una comuna que se le encarga a un censista o a un equipo.
+      </p>
+
+      {% if not hay_comunas %}
+        {# Sin comunas activas el desplegable saldría vacío y nadie entendería por
+           qué. Se explica y se ofrece el camino para resolverlo. #}
+        <div class="alert alert-warning" role="alert">
+          <h2 class="h6 fw-bold">No hay comunas disponibles</h2>
+          <p class="small mb-2">
+            Un sector tiene que estar en una comuna, y todavía no hay ninguna
+            activa en el sistema.
+          </p>
+          <a href="{% url 'operativos:comuna_crear' %}" class="btn btn-sm btn-warning">
+            Agregar una comuna primero
+          </a>
+        </div>
+      {% else %}
+
+        {% if form.non_field_errors %}
+          <div class="alert alert-danger" role="alert">
+            {% for error in form.non_field_errors %}
+              <div class="small">{{ error }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        <form method="post" novalidate>
+          {% csrf_token %}
+
+          <div class="row g-3">
+            {% include "usuarios/gestion/_campo.html" with campo=form.comuna %}
+            {% include "usuarios/gestion/_campo.html" with campo=form.nombre %}
+            {% include "usuarios/gestion/_campo.html" with campo=form.descripcion %}
+          </div>
+
+          <div class="d-flex gap-2 flex-wrap mt-4">
+            <button type="submit" class="btn btn-opso">
+              {% if es_creacion %}Crear sector{% else %}Guardar cambios{% endif %}
+            </button>
+            <a href="{% url 'operativos:operativo_detalle' operativo.pk %}"
+               class="btn btn-outline-secondary">Cancelar</a>
+          </div>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}

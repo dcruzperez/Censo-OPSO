@@ -1,0 +1,22 @@
+{% comment %} ==========================================================================
+   FRAGMENTO REUTILIZABLE: la etiqueta de color del estado de un operativo.
+
+   Uso:
+     {% include "operativos/_estado_operativo.html" with estado=operativo %}
+
+   ¿Por qué un fragmento para tres líneas de HTML?
+   Porque el mismo condicional aparece en el listado, en la ficha y en la pantalla
+   de cambio de estado. Escrito tres veces, basta con que alguien agregue un
+   cuarto estado al modelo para que dos pantallas lo pinten de color y la tercera
+   lo deje gris sin que nadie lo note. Aquí se corrige en un solo lugar.
+
+   El color no es decorativo: comunica urgencia. Verde = hay gente en terreno
+   ahora; azul = todavía se está planificando; gris = terminó y es solo histórico.
+   ========================================================================= {% endcomment %}
+{% if estado.estado == "EN_CURSO" %}
+  <span class="badge text-bg-success">{{ estado.get_estado_display }}</span>
+{% elif estado.estado == "PLANIFICACION" %}
+  <span class="badge text-bg-primary">{{ estado.get_estado_display }}</span>
+{% else %}
+  <span class="badge text-bg-secondary">{{ estado.get_estado_display }}</span>
+{% endif %}

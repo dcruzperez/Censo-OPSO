@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   ALTA Y EDICIÓN DE UNA COMUNA
+   /operativos/comunas/nueva/  y  /operativos/comunas/<pk>/editar/
+
+   El campo "activa" NO aparece en este formulario a propósito: se cambia desde la
+   pantalla de confirmación, que explica las consecuencias. Mezclarlo aquí
+   permitiría desactivar una comuna sin querer mientras se le corrige una tilde al
+   nombre. Es la misma separación que la HU-03 hizo entre editar una cuenta y
+   deshabilitarla.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}{% if es_creacion %}Nueva comuna{% else %}Editar comuna{% endif %}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'operativos:operativo_lista' %}">Operativos</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'operativos:comuna_lista' %}">Comunas</a></li>
+    <li class="breadcrumb-item active" aria-current="page">
+      {% if es_creacion %}Nueva{% else %}{{ form.instance.nombre }}{% endif %}
+    </li>
+  </ol>
+</nav>
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-6">
+    <div class="card-opso p-4 p-lg-5">
+
+      <h1 class="h4 fw-bold mb-1">
+        {% if es_creacion %}Nueva comuna{% else %}Editar «{{ form.instance.nombre }}»{% endif %}
+      </h1>
+      <p class="text-secondary small mb-4">
+        Agrega solo las comunas donde OPSO va a trabajar. Después podrás crear
+        sectores dentro de ellas, en cada operativo.
+      </p>
+
+      {% if form.non_field_errors %}
+        <div class="alert alert-danger" role="alert">
+          {% for error in form.non_field_errors %}
+            <div class="small">{{ error }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <form method="post" novalidate>
+        {% csrf_token %}
+
+        <div class="row g-3">
+          {% include "usuarios/gestion/_campo.html" with campo=form.region %}
+          {% include "usuarios/gestion/_campo.html" with campo=form.nombre %}
+        </div>
+
+        <div class="d-flex gap-2 flex-wrap mt-4">
+          <button type="submit" class="btn btn-opso">
+            {% if es_creacion %}Agregar comuna{% else %}Guardar cambios{% endif %}
+          </button>
+          <a href="{% url 'operativos:comuna_lista' %}" class="btn btn-outline-secondary">Cancelar</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

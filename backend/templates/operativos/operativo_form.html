@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   ALTA Y EDICIÓN DE UN OPERATIVO
+   /operativos/nuevo/  y  /operativos/<pk>/editar/
+
+   UNA SOLA PLANTILLA PARA LAS DOS OPERACIONES. El contexto "es_creacion" cambia
+   los títulos y el texto del botón. Se hace así porque el formulario es idéntico:
+   con dos archivos, cualquier campo nuevo habría que agregarlo dos veces, y es
+   exactamente el tipo de cambio que se hace en uno y se olvida en el otro.
+
+   Los campos se dibujan con el fragmento _campo.html de la HU-03. Se REUTILIZA en
+   vez de escribir uno propio: resuelve la etiqueta, el asterisco de obligatorio,
+   el texto de ayuda y los errores junto al campo, que es exactamente lo que hace
+   falta aquí. Copiarlo habría duplicado 30 líneas para no cambiar nada.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}{% if es_creacion %}Nuevo operativo{% else %}Editar operativo{% endif %}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'operativos:operativo_lista' %}">Operativos</a></li>
+    {% if not es_creacion %}
+      <li class="breadcrumb-item">
+        <a href="{% url 'operativos:operativo_detalle' form.instance.pk %}">{{ form.instance.nombre }}</a>
+      </li>
+    {% endif %}
+    <li class="breadcrumb-item active" aria-current="page">
+      {% if es_creacion %}Nuevo{% else %}Editar{% endif %}
+    </li>
+  </ol>
+</nav>
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-8">
+    <div class="card-opso p-4 p-lg-5">
+
+      <h1 class="h4 fw-bold mb-1">
+        {% if es_creacion %}Nuevo operativo{% else %}Editar «{{ form.instance.nombre }}»{% endif %}
+      </h1>
+      <p class="text-secondary small mb-4">
+        {% if es_creacion %}
+          Define el nombre y las fechas. El operativo nace <strong>en
+          planificación</strong>: después podrás agregarle los sectores y las
+          zonas, y cambiarlo a «en curso» cuando empiece el terreno.
+        {% else %}
+          Cambiar las fechas o la descripción no altera la división territorial.
+        {% endif %}
+      </p>
+
+      {% comment %} Errores que NO pertenecen a un campo concreto (los que levanta
+         clean() sobre varios campos a la vez). Los de cada campo se muestran junto
+         a él, dentro de _campo.html. {% endcomment %}
+      {% if form.non_field_errors %}
+        <div class="alert alert-danger" role="alert">
+          {% for error in form.non_field_errors %}
+            <div class="small">{{ error }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <form method="post" novalidate>
+        {% csrf_token %}
+
+        <div class="row g-3">
+          {% include "usuarios/gestion/_campo.html" with campo=form.nombre %}
+          {% include "usuarios/gestion/_campo.html" with campo=form.fecha_inicio ancho="col-12 col-sm-6" %}
+          {% include "usuarios/gestion/_campo.html" with campo=form.fecha_termino ancho="col-12 col-sm-6" %}
+          {% include "usuarios/gestion/_campo.html" with campo=form.descripcion %}
+        </div>
+
+        <div class="d-flex gap-2 flex-wrap mt-4">
+          <button type="submit" class="btn btn-opso">
+            {% if es_creacion %}Crear operativo{% else %}Guardar cambios{% endif %}
+          </button>
+          <a href="{% if es_creacion %}{% url 'operativos:operativo_lista' %}{% else %}{% url 'operativos:operativo_detalle' form.instance.pk %}{% endif %}"
+             class="btn btn-outline-secondary">Cancelar</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -592,6 +592,36 @@ class AccionAuditoria(models.TextChoices):
     # HU-04: esta acción no recae sobre una cuenta sino sobre un ROL. Por eso la
     # bitácora tiene, además de usuario_afectado, un rol_afectado.
     CAMBIAR_PERMISOS = "CAMBIAR_PERMISOS", "Cambió los permisos del rol"
+    # HU-05: acciones sobre la organización territorial (operativos, comunas,
+    # sectores y zonas). Son genéricas a propósito: cuál de las cuatro entidades
+    # se tocó lo dice objeto_tipo, así que no hacen falta cuatro juegos de
+    # acciones ("CREAR_COMUNA", "CREAR_SECTOR", ...) que multiplicarían el
+    # catálogo sin agregar información.
+    CREAR_TERRITORIO = "CREAR_TERRITORIO", "Creó el registro territorial"
+    EDITAR_TERRITORIO = "EDITAR_TERRITORIO", "Editó el registro territorial"
+    ACTIVAR_TERRITORIO = "ACTIVAR_TERRITORIO", "Activó el registro territorial"
+    DESACTIVAR_TERRITORIO = (
+        "DESACTIVAR_TERRITORIO",
+        "Desactivó el registro territorial",
+    )
+    CAMBIAR_ESTADO_OPERATIVO = (
+        "CAMBIAR_ESTADO_OPERATIVO",
+        "Cambió el estado del operativo",
+    )
+
+
+class TipoObjetoAuditoria(models.TextChoices):
+    """Qué clase de objeto territorial afectó una acción (HU-05).
+
+    Acompaña a las columnas objeto_id y objeto_nombre de RegistroAuditoria. Ver
+    allí la explicación de por qué el territorio se referencia así y no con una
+    clave foránea por entidad.
+    """
+
+    OPERATIVO = "OPERATIVO", "Operativo"
+    COMUNA = "COMUNA", "Comuna"
+    SECTOR = "SECTOR", "Sector"
+    ZONA = "ZONA", "Zona"
 
 
 class RegistroAuditoria(models.Model):
@@ -644,7 +674,10 @@ class RegistroAuditoria(models.Model):
     )
     accion = models.CharField(
         "acción",
-        max_length=20,
+        # 30 y no 20: la HU-05 agregó "CAMBIAR_ESTADO_OPERATIVO", de 24
+        # caracteres. Se amplía la columna en vez de abreviar el código, porque
+        # un código legible en la base de datos vale más que cuatro bytes.
+        max_length=30,
         choices=AccionAuditoria.choices,
         db_index=True,
     )
@@ -690,6 +723,64 @@ class RegistroAuditoria(models.Model):
         blank=True,
         help_text="Copia fija: sobrevive aunque el rol se elimine.",
     )
+    # ------------------------------------------------------------------
+    # HU-05: el objeto afectado también puede ser territorial (un operativo,
+    # una comuna, un sector o una zona).
+    #
+    # REVISIÓN EXPLÍCITA DE LA DECISIÓN DE DISEÑO 2 DE LA HU-04.
+    #
+    # Allí se escribió que dos claves foráneas explícitas eran preferibles a una
+    # referencia genérica, con este argumento: "solo hay dos tipos de objeto
+    # auditables y no se prevén muchos más". La HU-05 agrega cuatro de golpe, así
+    # que la premisa dejó de ser cierta y la decisión se revisa en vez de
+    # arrastrarse.
+    #
+    # Seguir el camino anterior significaría OCHO columnas nuevas (cuatro claves
+    # foráneas más cuatro copias de texto) para una tabla que ya tiene cuatro
+    # dedicadas a lo mismo, y otras dos por cada entidad que traigan las
+    # historias de fichas y reportes. Una bitácora con veinte columnas casi
+    # siempre nulas es ilegible, y las consultas tendrían que unir seis tablas
+    # para responder "¿qué pasó aquí?".
+    #
+    # Se usan entonces tres columnas para las cuatro entidades: el tipo, el
+    # identificador y el nombre. NO hay clave foránea, y eso es aceptable aquí
+    # por una razón concreta que no valía para las cuentas: el territorio NUNCA
+    # se borra físicamente. Comuna, sector y zona se desactivan (misma decisión
+    # que las cuentas en la HU-03), así que la fila apuntada sigue existiendo y
+    # el identificador no queda huérfano. Y si algún día se borrara, objeto_nombre
+    # conserva la información legible, que es exactamente el mismo seguro que ya
+    # protege a usuario_afectado_email.
+    #
+    # Lo que se pierde —que PostgreSQL valide la referencia— se compensa donde
+    # importa: el valor probatorio de una bitácora está en el texto que una
+    # persona puede leer, no en poder navegar la clave foránea.
+    # ------------------------------------------------------------------
+    objeto_tipo = models.CharField(
+        "tipo de objeto territorial",
+        max_length=20,
+        choices=TipoObjetoAuditoria.choices,
+        blank=True,
+        db_index=True,
+        help_text="Qué clase de registro territorial se afectó (HU-05).",
+    )
+    objeto_id = models.PositiveIntegerField(
+        "identificador del objeto",
+        null=True,
+        blank=True,
+        help_text=(
+            "Clave primaria del registro territorial afectado. Sin clave "
+            "foránea a propósito: ver la explicación en el modelo."
+        ),
+    )
+    objeto_nombre = models.CharField(
+        "nombre del objeto territorial",
+        max_length=250,
+        blank=True,
+        help_text=(
+            "Copia fija con el camino completo, ej.: «Zona 1 · Los Boldos · "
+            "Concepción». Es lo que hace legible la fila años después."
+        ),
+    )
     detalle = models.TextField(
         "detalle",
         blank=True,
@@ -720,8 +811,9 @@ class RegistroAuditoria(models.Model):
         """Sobre qué se actuó, en una sola cadena legible.
 
         Existe para que las plantillas y el admin no repitan el mismo
-        condicional: una fila de auditoría apunta a una cuenta o a un rol, nunca
-        a los dos, y quien la lee solo quiere saber "¿a quién o a qué?".
+        condicional: una fila de auditoría apunta a una cuenta, a un rol o a un
+        registro territorial, nunca a más de uno, y quien la lee solo quiere
+        saber "¿a quién o a qué?".
 
         Se leen las COPIAS DE TEXTO y no las claves foráneas, por la misma razón
         por la que esas copias existen: si el objeto se eliminó, la clave es
@@ -731,7 +823,28 @@ class RegistroAuditoria(models.Model):
             return self.usuario_afectado_email
         if self.rol_afectado_nombre:
             return f"Rol: {self.rol_afectado_nombre}"
+        if self.objeto_nombre:
+            # El tipo va delante porque "Los Boldos" no dice si es un sector o
+            # una comuna, y en una bitácora esa diferencia importa.
+            return f"{self.etiqueta_objeto}: {self.objeto_nombre}"
         return "—"
+
+    @property
+    def etiqueta_objeto(self):
+        """Nombre legible del tipo de objeto territorial («Sector», «Zona»)."""
+        if not self.objeto_tipo:
+            return ""
+        return TipoObjetoAuditoria(self.objeto_tipo).label
+
+    @property
+    def es_territorial(self):
+        """True si la fila registra una acción sobre la organización territorial.
+
+        La usa la plantilla de la bitácora para elegir la etiqueta de color, y
+        evita que tenga que enumerar las cinco acciones de la HU-05 en un `if`
+        que habría que actualizar cada vez que se agregue una.
+        """
+        return bool(self.objeto_tipo)
 
     def __str__(self):
         return (

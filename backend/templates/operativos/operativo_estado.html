@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   CAMBIO DE ESTADO DE UN OPERATIVO — /operativos/<pk>/estado/
+
+   Página de confirmación, no ventana emergente de JavaScript, por las mismas tres
+   razones que la HU-03 documentó al deshabilitar una cuenta: funciona sin JS,
+   permite EXPLICAR las consecuencias con detalle, y separa los verbos HTTP (este
+   GET solo muestra; el POST del botón es el único que modifica).
+
+   Las opciones del desplegable las calcula el formulario según el estado actual
+   (CambiarEstadoOperativoForm.TRANSICIONES). La plantilla no decide qué
+   transiciones son válidas: si lo hiciera, la regla viviría en dos sitios y
+   acabaría habiendo una opción que la interfaz muestra y la vista rechaza.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Cambiar el estado de {{ operativo.nombre }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'operativos:operativo_lista' %}">Operativos</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'operativos:operativo_detalle' operativo.pk %}">{{ operativo.nombre }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Estado</li>
+  </ol>
+</nav>
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-7">
+    <div class="card-opso p-4 p-lg-5">
+
+      <h1 class="h4 fw-bold mb-3">Cambiar el estado del operativo</h1>
+
+      {# ---------- Resumen del operativo ---------- #}
+      <dl class="row small border rounded p-3 mb-4 bg-light">
+        <dt class="col-4 text-secondary fw-normal">Operativo</dt>
+        <dd class="col-8 mb-1 fw-semibold">{{ operativo.nombre }}</dd>
+
+        <dt class="col-4 text-secondary fw-normal">Fechas</dt>
+        <dd class="col-8 mb-1">
+          {{ operativo.fecha_inicio|date:"d-m-Y" }} → {{ operativo.fecha_termino|date:"d-m-Y" }}
+        </dd>
+
+        <dt class="col-4 text-secondary fw-normal">Territorio</dt>
+        <dd class="col-8 mb-1">
+          {{ operativo.total_sectores }} sector{{ operativo.total_sectores|pluralize:"es" }},
+          {{ operativo.total_zonas }} zona{{ operativo.total_zonas|pluralize }}
+        </dd>
+
+        <dt class="col-4 text-secondary fw-normal">Estado actual</dt>
+        <dd class="col-8 mb-0">{% include "operativos/_estado_operativo.html" with estado=operativo %}</dd>
+      </dl>
+
+      {% if sin_transiciones %}
+        {# No debería ocurrir con los tres estados actuales, pero si alguien
+           agregara un estado sin transiciones de salida, la pantalla lo explica
+           en vez de mostrar un desplegable vacío. #}
+        <div class="alert alert-secondary" role="alert">
+          <p class="small mb-0">
+            Este operativo no admite ningún cambio de estado desde
+            «{{ operativo.get_estado_display }}».
+          </p>
+        </div>
+        <a href="{% url 'operativos:operativo_detalle' operativo.pk %}" class="btn btn-outline-secondary">
+          Volver a la ficha
+        </a>
+
+      {% else %}
+        {# ---------- Qué implica cada estado ---------- #}
+        <p class="small">Qué significa cada estado:</p>
+        <ul class="small text-secondary">
+          <li><strong>En planificación</strong> — se arma la división territorial.
+            Todavía no hay nadie en terreno.</li>
+          <li><strong>En curso</strong> — hay censistas trabajando. El territorio
+            se puede seguir ajustando, porque en terreno aparecen realidades que la
+            planificación no previó.</li>
+          <li><strong>Cerrado</strong> — el operativo terminó. Su división
+            territorial <strong>queda congelada</strong>: no se pueden agregar,
+            editar ni desactivar sectores ni zonas.</li>
+        </ul>
+
+        <div class="alert alert-info small" role="alert">
+          <strong>Cerrar no borra nada</strong> y es reversible: se puede reabrir
+          desde esta misma pantalla. Lo que hace es proteger el registro histórico
+          de cómo se trabajó realmente.
+        </div>
+
+        {% if form.non_field_errors %}
+          <div class="alert alert-danger" role="alert">
+            {% for error in form.non_field_errors %}
+              <div class="small">{{ error }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        {% comment %} FORMULARIO POST con token CSRF, no un enlace. Si fuera un GET,
+           bastaría con incrustar <img src=".../estado/"> en cualquier página para
+           que el navegador de un administrador con sesión abierta ejecutara el
+           cambio sin darse cuenta: eso es un ataque CSRF. {% endcomment %}
+        <form method="post" novalidate>
+          {% csrf_token %}
+
+          <div class="row g-3">
+            {% include "usuarios/gestion/_campo.html" with campo=form.estado ancho="col-12 col-sm-6" %}
+            {% include "usuarios/gestion/_campo.html" with campo=form.motivo %}
+          </div>
+
+          <div class="d-flex gap-2 flex-wrap mt-4">
+            <button type="submit" class="btn btn-opso">Cambiar el estado</button>
+            <a href="{% url 'operativos:operativo_detalle' operativo.pk %}"
+               class="btn btn-outline-secondary">Cancelar</a>
+          </div>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   CONFIRMACIÓN: ACTIVAR O DESACTIVAR UNA COMUNA
+   /operativos/comunas/<pk>/desactivar/  y  .../activar/
+
+   Cuando la operación NO está permitida (la comuna tiene sectores en operativos
+   sin cerrar), esta pantalla lo explica y NO muestra el botón. Pero lo que de
+   verdad lo impide es la comprobación del POST en la vista: ocultar un botón no es
+   una validación, porque la URL se puede escribir a mano. Es la misma lección que
+   la HU-03 documentó con "no autodeshabilitarse".
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}{% if activar %}Activar{% else %}Desactivar{% endif %} comuna{% endblock %}
+
+{% block contenido %}
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-7">
+    <div class="card-opso p-4 p-lg-5">
+
+      {% if activar %}
+        <span class="badge text-bg-success mb-3">Activar comuna</span>
+        <h1 class="h4 fw-bold mb-3">¿Volver a usar esta comuna?</h1>
+      {% else %}
+        <span class="badge text-bg-danger mb-3">Desactivar comuna</span>
+        <h1 class="h4 fw-bold mb-3">¿Dejar de usar esta comuna?</h1>
+      {% endif %}
+
+      {# ---------- Resumen ---------- #}
+      <dl class="row small border rounded p-3 mb-4 bg-light">
+        <dt class="col-4 text-secondary fw-normal">Comuna</dt>
+        <dd class="col-8 mb-1 fw-semibold">{{ comuna.nombre }}</dd>
+
+        <dt class="col-4 text-secondary fw-normal">Región</dt>
+        <dd class="col-8 mb-1">{{ comuna.region.nombre }}</dd>
+
+        <dt class="col-4 text-secondary fw-normal">Sectores que la usan</dt>
+        <dd class="col-8 mb-1">{{ total_sectores }}</dd>
+
+        <dt class="col-4 text-secondary fw-normal">Estado actual</dt>
+        <dd class="col-8 mb-0">
+          {% if comuna.activa %}
+            <span class="badge text-bg-success">Activa</span>
+          {% else %}
+            <span class="badge text-bg-secondary">Desactivada</span>
+          {% endif %}
+        </dd>
+      </dl>
+
+      {% if not permitido %}
+        {# ---------- La operación NO está permitida ---------- #}
+        <div class="alert alert-danger" role="alert">
+          <h2 class="h6 fw-bold">No es posible desactivar esta comuna</h2>
+          <p class="small mb-0">{{ motivo }}</p>
+        </div>
+
+        <a href="{% url 'operativos:comuna_lista' %}" class="btn btn-outline-secondary">
+          Volver al listado
+        </a>
+
+      {% else %}
+        {# ---------- Consecuencias ---------- #}
+        {% if activar %}
+          <p class="small">Al activar la comuna:</p>
+          <ul class="small text-secondary">
+            <li>El campo <code>activa</code> pasa a <code>True</code> en PostgreSQL.</li>
+            <li>Vuelve a aparecer en el desplegable al crear sectores nuevos.</li>
+            <li>La acción queda registrada en la bitácora de auditoría con tu nombre.</li>
+          </ul>
+        {% else %}
+          <p class="small">Al desactivar la comuna:</p>
+          <ul class="small text-secondary">
+            <li>El campo <code>activa</code> pasa a <code>False</code>.
+              <strong>La fila NO se elimina</strong> de la base de datos.</li>
+            <li>Deja de ofrecerse al crear sectores nuevos.</li>
+            <li>Los sectores que ya existen en ella <strong>no se modifican</strong>:
+              siguen apareciendo en la ficha de su operativo, marcados con un aviso.</li>
+          </ul>
+
+          <div class="alert alert-info small" role="alert">
+            <strong>Se conserva todo:</strong> los sectores, sus zonas y el
+            historial del censo levantado en ellos. Es un <em>borrado lógico</em>,
+            reversible con un clic desde esta misma pantalla.
+          </div>
+        {% endif %}
+
+        {% comment %} FORMULARIO POST con token CSRF, nunca un enlace: un GET
+           permitiría desactivar la comuna con un <img src="..."> incrustado en
+           cualquier página (ataque CSRF). {% endcomment %}
+        <form method="post" class="d-flex gap-2 flex-wrap">
+          {% csrf_token %}
+          {% if activar %}
+            <button type="submit" class="btn btn-success">Sí, activar la comuna</button>
+          {% else %}
+            <button type="submit" class="btn btn-danger">Sí, desactivar la comuna</button>
+          {% endif %}
+          <a href="{% url 'operativos:comuna_lista' %}" class="btn btn-outline-secondary">
+            No, cancelar
+          </a>
+        </form>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -1,4 +1,4 @@
-{% load static %}<!DOCTYPE html>
+{% load static permisos %}<!DOCTYPE html>
 {% comment %} ==========================================================================
    Plantilla base de las pantallas internas de OPSO.
 
@@ -62,6 +62,18 @@
         {% elif user.es_censista %}
           <li class="nav-item">
             <a class="nav-link" href="{% url 'dashboards:censista' %}">Panel</a>
+          </li>
+        {% endif %}
+
+        {% comment %} El enlace a Operativos NO va dentro del bloque por rol: se
+           muestra según el PERMISO, con el filtro de la HU-05. Es lo coherente con
+           que el módulo se proteja por permiso y no por rol: si el administrador
+           concede "operativos.ver" al supervisor desde la matriz, el enlace le
+           aparece sin tocar esta plantilla. Con un `elif user.es_supervisor`
+           habría que editar el HTML cada vez que cambia el reparto. {% endcomment %}
+        {% if user|tiene_algun_permiso:"operativos.ver,operativos.gestionar" %}
+          <li class="nav-item">
+            <a class="nav-link" href="{% url 'operativos:operativo_lista' %}">Operativos</a>
           </li>
         {% endif %}
       </ul>

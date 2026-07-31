@@ -59,6 +59,7 @@ INSTALLED_APPS = [
     # --- Aplicaciones de OPSO ---
     "usuarios",  # HU: autenticación, roles y auditoría de accesos
     "dashboards",  # paneles diferenciados por rol
+    "operativos",  # HU-05: operativos y organización territorial
 ]
 
 

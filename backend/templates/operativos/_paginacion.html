@@ -1,0 +1,64 @@
+{% comment %} ==========================================================================
+   FRAGMENTO REUTILIZABLE: la barra de paginación.
+
+   Uso:
+     {% include "operativos/_paginacion.html" with etiqueta="operativo" %}
+
+   Variables:
+     etiqueta -> nombre singular de lo que se lista ("operativo", "comuna").
+                 Se usa para el texto "· 12 operativos encontrados", que con el
+                 filtro |pluralize se ajusta solo al plural.
+
+   Espera en el contexto (los pone ListView y la vista):
+     page_obj, is_paginated, parametros
+
+   ¿Por qué un fragmento y no repetir el HTML en los dos listados?
+   Porque son unas 35 líneas con la lógica de la ventana de páginas. Repetidas dos
+   veces, cualquier corrección tendría que hacerse dos veces, y es exactamente el
+   tipo de código que se arregla en un sitio y se olvida en el otro. Es el mismo
+   criterio con que la HU-03 extrajo _campo.html.
+   ========================================================================= {% endcomment %}
+{% if is_paginated %}
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 p-3 border-top">
+    <span class="text-secondary small">
+      Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}
+      · {{ page_obj.paginator.count }} {{ etiqueta }}{{ page_obj.paginator.count|pluralize }}
+      encontrado{{ page_obj.paginator.count|pluralize }}
+    </span>
+
+    {% comment %} Cada enlace arrastra "parametros" (los filtros vigentes sin el
+       número de página). Sin eso, al pasar a la página 2 se perdería la búsqueda
+       y se vería una lista distinta. {% endcomment %}
+    <nav aria-label="Paginación del listado">
+      <ul class="pagination pagination-sm mb-0">
+        {% if page_obj.has_previous %}
+          <li class="page-item">
+            <a class="page-link" href="?page={{ page_obj.previous_page_number }}{% if parametros %}&{{ parametros }}{% endif %}">Anterior</a>
+          </li>
+        {% else %}
+          <li class="page-item disabled"><span class="page-link">Anterior</span></li>
+        {% endif %}
+
+        {% for numero in page_obj.paginator.page_range %}
+          {% if numero == page_obj.number %}
+            <li class="page-item active" aria-current="page">
+              <span class="page-link">{{ numero }}</span>
+            </li>
+          {% elif numero > page_obj.number|add:"-3" and numero < page_obj.number|add:"3" %}
+            <li class="page-item">
+              <a class="page-link" href="?page={{ numero }}{% if parametros %}&{{ parametros }}{% endif %}">{{ numero }}</a>
+            </li>
+          {% endif %}
+        {% endfor %}
+
+        {% if page_obj.has_next %}
+          <li class="page-item">
+            <a class="page-link" href="?page={{ page_obj.next_page_number }}{% if parametros %}&{{ parametros }}{% endif %}">Siguiente</a>
+          </li>
+        {% else %}
+          <li class="page-item disabled"><span class="page-link">Siguiente</span></li>
+        {% endif %}
+      </ul>
+    </nav>
+  </div>
+{% endif %}

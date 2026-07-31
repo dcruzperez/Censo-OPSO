@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   FICHA DEL OPERATIVO — /operativos/<pk>/
+
+   Es la pantalla central de la HU-05: muestra el ÁRBOL completo del territorio,
+   agrupado por comuna → sector → zona.
+
+   ¿POR QUÉ UN ÁRBOL EN UNA SOLA PÁGINA, Y NO UNA PANTALLA POR NIVEL?
+
+   Porque la pregunta que se hace quien planifica no es "¿qué zonas tiene el
+   sector 9?" sino "¿está bien repartido el trabajo?". Y esa se responde VIENDO
+   la forma del reparto: un sector con nueve zonas junto a otro con una salta a la
+   vista de inmediato. Con una pantalla por nivel habría que abrir cinco pestañas
+   y recordar lo que decía cada una.
+
+   Es el mismo razonamiento con que la HU-04 eligió una matriz de permisos en vez
+   de una pantalla por rol: hacer visible de un vistazo lo que se está comparando.
+
+   Los datos llegan YA agrupados desde la vista (contexto "grupos"). La plantilla
+   solo recorre dos bucles anidados: el lenguaje de plantillas de Django no
+   agrupa, y forzarlo obligaría a inventar filtros propios.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}{{ operativo.nombre }}{% endblock %}
+
+{% block contenido %}
+
+{# ---------- Migas de pan ---------- #}
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'operativos:operativo_lista' %}">Operativos</a></li>
+    <li class="breadcrumb-item active" aria-current="page">{{ operativo.nombre }}</li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+      {{ operativo.nombre }}
+    </h1>
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      {% include "operativos/_estado_operativo.html" with estado=operativo %}
+      <span class="text-secondary small">
+        {{ operativo.fecha_inicio|date:"d \d\e F \d\e Y" }} →
+        {{ operativo.fecha_termino|date:"d \d\e F \d\e Y" }}
+        ({{ operativo.duracion_dias }} día{{ operativo.duracion_dias|pluralize }})
+      </span>
+    </div>
+  </div>
+  {% if puede_gestionar %}
+    <div class="d-flex gap-2">
+      <a href="{% url 'operativos:operativo_editar' operativo.pk %}" class="btn btn-outline-primary btn-sm">Editar datos</a>
+      <a href="{% url 'operativos:operativo_estado' operativo.pk %}" class="btn btn-outline-dark btn-sm">Cambiar estado</a>
+      {% if operativo.admite_cambios_de_territorio %}
+        <a href="{% url 'operativos:sector_crear' operativo.pk %}" class="btn btn-opso btn-sm">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="16" height="16" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+          </svg>
+          Agregar sector
+        </a>
+      {% endif %}
+    </div>
+  {% endif %}
+</div>
+
+{% if operativo.descripcion %}
+  <div class="card-opso p-3 mb-3">
+    <p class="small mb-0">{{ operativo.descripcion|linebreaksbr }}</p>
+  </div>
+{% endif %}
+
+{% comment %} Un operativo cerrado no admite cambios de territorio. Se avisa AQUÍ
+   y además se ocultan los botones, pero lo que realmente lo impide es
+   OperativoAbiertoMixin en las vistas: ocultar un botón no es una validación,
+   porque la URL se puede escribir a mano. {% endcomment %}
+{% if operativo.esta_cerrado %}
+  <div class="alert alert-secondary small d-flex gap-2" role="alert">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+    </svg>
+    <div>
+      <strong>Operativo cerrado.</strong> Su división territorial quedó congelada:
+      es el registro histórico de cómo se trabajó realmente. Si necesitas
+      modificarla, reábrelo desde «Cambiar estado».
+    </div>
+  </div>
+{% endif %}
+
+{# ---------- Contadores del territorio ---------- #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card-opso p-3">
+      <div class="kpi-valor">{{ total_comunas }}</div>
+      <div class="kpi-etiqueta">Comuna{{ total_comunas|pluralize }} cubierta{{ total_comunas|pluralize }}</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-opso p-3">
+      <div class="kpi-valor">{{ total_sectores }}</div>
+      <div class="kpi-etiqueta">Sectores</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-opso p-3">
+      <div class="kpi-valor">{{ total_zonas }}</div>
+      <div class="kpi-etiqueta">Zonas</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-opso p-3">
+      <div class="kpi-valor">{{ viviendas_estimadas|default:"—" }}</div>
+      <div class="kpi-etiqueta">Viviendas estimadas</div>
+    </div>
+  </div>
+</div>
+
+{# ---------- El árbol: comuna → sector → zona ---------- #}
+<h2 class="h5 fw-bold mb-3">División territorial</h2>
+
+{% for grupo in grupos %}
+  <div class="card-opso p-0 mb-3 overflow-hidden">
+
+    {# ----- Nivel 1: la comuna ----- #}
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 p-3 bg-light border-bottom">
+      <div>
+        <span class="fw-bold">{{ grupo.comuna.nombre }}</span>
+        <span class="text-secondary small">· {{ grupo.comuna.region.nombre }}</span>
+        {% if not grupo.comuna.activa %}
+          <span class="badge text-bg-warning ms-1"
+                title="La comuna está desactivada: no se ofrece para sectores nuevos">comuna desactivada</span>
+        {% endif %}
+      </div>
+      <span class="text-secondary small">
+        {{ grupo.sectores|length }} sector{{ grupo.sectores|length|pluralize:"es" }}
+      </span>
+    </div>
+
+    {# ----- Nivel 2: los sectores ----- #}
+    {% for sector in grupo.sectores %}
+      <div class="p-3 {% if not forloop.last %}border-bottom{% endif %} {% if not sector.activo %}bg-body-secondary{% endif %}">
+
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2">
+          <div>
+            <span class="fw-semibold">{{ sector.nombre }}</span>
+            {% if not sector.activo %}
+              <span class="badge text-bg-secondary ms-1">desactivado</span>
+            {% endif %}
+            {% if sector.descripcion %}
+              <div class="small text-secondary">{{ sector.descripcion }}</div>
+            {% endif %}
+          </div>
+
+          {% if puede_gestionar and operativo.admite_cambios_de_territorio %}
+            <div class="d-inline-flex gap-1">
+              <a href="{% url 'operativos:zona_crear' sector.pk %}"
+                 class="btn btn-sm btn-outline-success" title="Agregar una zona a este sector">+ Zona</a>
+              <a href="{% url 'operativos:sector_editar' sector.pk %}"
+                 class="btn btn-sm btn-outline-primary">Editar</a>
+              {% if sector.activo %}
+                <a href="{% url 'operativos:sector_desactivar' sector.pk %}"
+                   class="btn btn-sm btn-outline-danger">Desactivar</a>
+              {% else %}
+                <a href="{% url 'operativos:sector_activar' sector.pk %}"
+                   class="btn btn-sm btn-outline-success">Activar</a>
+              {% endif %}
+            </div>
+          {% endif %}
+        </div>
+
+        {# ----- Nivel 3: las zonas ----- #}
+        {% comment %} sector.zonas.all NO lanza una consulta: la vista las trajo con
+           un Prefetch anidado. Es la diferencia entre 4 consultas por página y una
+           por cada sector más una por cada zona. {% endcomment %}
+        {% if sector.zonas.all %}
+          <div class="table-responsive mt-2">
+            <table class="table table-sm align-middle mb-0">
+              <thead>
+                <tr class="small text-secondary">
+                  <th scope="col" class="fw-normal ps-0">Zona</th>
+                  <th scope="col" class="fw-normal">Descripción</th>
+                  <th scope="col" class="fw-normal text-center">Viviendas</th>
+                  <th scope="col" class="fw-normal text-end pe-0">Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for zona in sector.zonas.all %}
+                  <tr>
+                    <td class="ps-0">
+                      {{ zona.nombre }}
+                      {% if not zona.activa %}
+                        <span class="badge text-bg-secondary">desactivada</span>
+                      {% endif %}
+                    </td>
+                    <td class="small text-secondary">{{ zona.descripcion|default:"—" }}</td>
+                    <td class="text-center small">{{ zona.viviendas_estimadas|default:"—" }}</td>
+                    <td class="text-end pe-0">
+                      {% if puede_gestionar and operativo.admite_cambios_de_territorio %}
+                        <div class="d-inline-flex gap-1">
+                          <a href="{% url 'operativos:zona_editar' zona.pk %}"
+                             class="btn btn-sm btn-outline-primary py-0 px-2">Editar</a>
+                          {% if zona.activa %}
+                            <a href="{% url 'operativos:zona_desactivar' zona.pk %}"
+                               class="btn btn-sm btn-outline-danger py-0 px-2">Desactivar</a>
+                          {% else %}
+                            <a href="{% url 'operativos:zona_activar' zona.pk %}"
+                               class="btn btn-sm btn-outline-success py-0 px-2">Activar</a>
+                          {% endif %}
+                        </div>
+                      {% endif %}
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        {% else %}
+          {% comment %} Un sector sin zonas no es un error, pero sí algo que
+             conviene señalar: significa que ese trabajo todavía no se puede
+             repartir entre censistas. {% endcomment %}
+          <p class="small text-secondary mt-2 mb-0">
+            Sin zonas todavía.
+            {% if puede_gestionar and operativo.admite_cambios_de_territorio %}
+              <a href="{% url 'operativos:zona_crear' sector.pk %}">Dividirlo en zonas</a>
+              para poder repartir el trabajo.
+            {% endif %}
+          </p>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+
+{% empty %}
+  {# ---------- Ningún sector todavía ---------- #}
+  <div class="card-opso p-4 p-lg-5 text-center">
+    <p class="text-secondary mb-3">
+      Este operativo todavía no tiene territorio definido. Un sector es la porción
+      de una comuna que se le encarga a un censista o a un equipo.
+    </p>
+    {% if puede_gestionar and operativo.admite_cambios_de_territorio %}
+      <div>
+        <a href="{% url 'operativos:sector_crear' operativo.pk %}" class="btn btn-opso">
+          Agregar el primer sector
+        </a>
+      </div>
+    {% endif %}
+  </div>
+{% endfor %}
+
+{# ---------- Pie con los datos de creación ---------- #}
+<p class="text-secondary small mt-3 mb-0">
+  Creado el {{ operativo.creado_en|date:"d-m-Y H:i" }}
+  {% if operativo.creado_por %}por {{ operativo.creado_por.get_full_name|default:operativo.creado_por.email }}{% endif %}.
+  Última modificación: {{ operativo.actualizado_en|date:"d-m-Y H:i" }}.
+  Todos los cambios quedan en la <a href="{% url 'usuarios:auditoria' %}">bitácora de auditoría</a>.
+</p>
+
+{% endblock %}

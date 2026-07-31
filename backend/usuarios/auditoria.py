@@ -15,7 +15,7 @@ Es el mismo criterio que ya se aplicó en la HU-01 con seguridad.py.
 
 import logging
 
-from .models import AccionAuditoria, RegistroAuditoria
+from .models import AccionAuditoria, RegistroAuditoria, TipoObjetoAuditoria
 from .seguridad import obtener_ip, obtener_user_agent
 
 logger = logging.getLogger("usuarios")
@@ -28,33 +28,44 @@ def registrar_accion(
     detalle="",
     request=None,
     rol_afectado=None,
+    objeto_territorial=None,
+    tipo_objeto=None,
 ):
     """Escribe una fila en la bitácora de auditoría y la devuelve.
 
     Parámetros:
-        administrador    -> Usuario que ejecuta la acción (request.user).
-        accion           -> valor de AccionAuditoria.
-        usuario_afectado -> Usuario sobre el que se actuó (HU-03).
-        detalle          -> texto libre con el cambio exacto.
-        request          -> para obtener IP y navegador (contexto forense).
-        rol_afectado     -> Rol sobre el que se actuó (HU-04: permisos).
+        administrador      -> Usuario que ejecuta la acción (request.user).
+        accion             -> valor de AccionAuditoria.
+        usuario_afectado   -> Usuario sobre el que se actuó (HU-03).
+        detalle            -> texto libre con el cambio exacto.
+        request            -> para obtener IP y navegador (contexto forense).
+        rol_afectado       -> Rol sobre el que se actuó (HU-04: permisos).
+        objeto_territorial -> Operativo, Comuna, Sector o Zona (HU-05).
+        tipo_objeto        -> valor de TipoObjetoAuditoria. Opcional: si no se
+                              indica, se deduce del nombre de la clase del
+                              objeto, que es lo correcto en todos los casos
+                              reales y ahorra repetirlo en cada llamada.
 
-    Se indica UNO de los dos objetos afectados, no los dos: una acción recae
-    sobre una cuenta (deshabilitarla) o sobre un rol (cambiarle los permisos).
-    Si no se indica ninguno se levanta ValueError en vez de escribir una fila
-    incompleta: una bitácora que no dice sobre qué se actuó no sirve de nada, y
-    es mejor que el error salte en desarrollo que descubrir el hueco durante una
-    auditoría real.
+    Se indica UNO de los tres objetos afectados, no varios: una acción recae
+    sobre una cuenta (deshabilitarla), sobre un rol (cambiarle los permisos) o
+    sobre un registro territorial (crear un sector). Si no se indica ninguno se
+    levanta ValueError en vez de escribir una fila incompleta: una bitácora que
+    no dice sobre qué se actuó no sirve de nada, y es mejor que el error salte en
+    desarrollo que descubrir el hueco durante una auditoría real.
 
-    Se guardan el correo y el nombre como texto además de las claves foráneas: si
-    la cuenta o el rol se eliminaran físicamente algún día, la fila seguiría
+    Se guardan el correo y los nombres como texto además de las claves foráneas:
+    si la cuenta o el rol se eliminaran físicamente algún día, la fila seguiría
     siendo legible (ver la explicación en el modelo RegistroAuditoria).
     """
-    if usuario_afectado is None and rol_afectado is None:
+    if usuario_afectado is None and rol_afectado is None and objeto_territorial is None:
         raise ValueError(
-            "registrar_accion() necesita saber sobre qué se actuó: "
-            "hay que indicar usuario_afectado o rol_afectado."
+            "registrar_accion() necesita saber sobre qué se actuó: hay que "
+            "indicar usuario_afectado, rol_afectado u objeto_territorial."
         )
+
+    objeto_tipo, objeto_id, objeto_nombre = _describir_objeto_territorial(
+        objeto_territorial, tipo_objeto
+    )
 
     registro = RegistroAuditoria.objects.create(
         administrador=administrador if getattr(administrador, "pk", None) else None,
@@ -64,6 +75,9 @@ def registrar_accion(
         usuario_afectado_email=usuario_afectado.email if usuario_afectado else "",
         rol_afectado=rol_afectado,
         rol_afectado_nombre=rol_afectado.nombre if rol_afectado else "",
+        objeto_tipo=objeto_tipo,
+        objeto_id=objeto_id,
+        objeto_nombre=objeto_nombre,
         detalle=detalle,
         ip=obtener_ip(request),
         user_agent=obtener_user_agent(request),
@@ -79,6 +93,42 @@ def registrar_accion(
         detalle or "sin detalle",
     )
     return registro
+
+
+def _describir_objeto_territorial(objeto, tipo_objeto=None):
+    """Traduce un objeto territorial a la terna (tipo, id, nombre) de la bitácora.
+
+    Se aísla en su propia función por lo mismo que registrar_accion() existe:
+    para que la conversión se escriba UNA vez. Si cada vista armara la terna,
+    alguna guardaría `str(sector)` ("Los Boldos") en vez de
+    `sector.nombre_completo` ("Los Boldos · Concepción"), y la bitácora dejaría
+    de ser comparable entre filas.
+
+    El tipo se DEDUCE del nombre de la clase. Es deliberado: obliga a que
+    TipoObjetoAuditoria y los modelos de la app operativos usen los mismos
+    nombres, y así agregar una entidad territorial no requiere tocar esta
+    función. Si el nombre de la clase no está en el catálogo se levanta
+    ValueError, porque escribir una fila con el tipo vacío la dejaría fuera de
+    cualquier filtro por tipo sin que nadie lo note.
+    """
+    if objeto is None:
+        return "", None, ""
+
+    if tipo_objeto is None:
+        nombre_clase = objeto.__class__.__name__.upper()
+        if nombre_clase not in TipoObjetoAuditoria.values:
+            raise ValueError(
+                f"{objeto.__class__.__name__} no está en TipoObjetoAuditoria. "
+                "Agrégalo al catálogo o pasa tipo_objeto explícitamente."
+            )
+        tipo_objeto = nombre_clase
+
+    # nombre_completo cuando el modelo lo define (incluye el camino: la zona con
+    # su sector y su comuna); str() en los que no lo necesitan, como Operativo,
+    # cuyo nombre ya es único en todo el sistema.
+    nombre = getattr(objeto, "nombre_completo", None) or str(objeto)
+
+    return tipo_objeto, objeto.pk, nombre
 
 
 def describir_cambio_permisos(permisos_antes, permisos_despues):

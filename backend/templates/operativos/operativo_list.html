@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   LISTADO DE OPERATIVOS — /operativos/
+
+   Pantalla de entrada al módulo. Mismos cuatro elementos que el listado de
+   usuarios de la HU-03, porque resuelven el mismo problema de administración:
+   buscador, filtro, paginación y acciones a un clic.
+
+   Los contadores de sectores y zonas de cada fila NO se calculan aquí: llegan
+   como n_sectores y n_zonas, anotados por PostgreSQL en la misma consulta del
+   listado (ver OperativoListView.get_queryset). Si se calcularan en la
+   plantilla —{{ operativo.total_sectores }}— cada fila lanzaría dos consultas
+   más: el problema N+1 metido por la puerta de atrás de una plantilla.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Operativos{% endblock %}
+
+{% block contenido %}
+
+<div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+      Operativos
+    </h1>
+    <p class="text-secondary mb-0">
+      Cada operativo tiene sus fechas y su propia división del territorio en
+      sectores y zonas.
+    </p>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="{% url 'operativos:comuna_lista' %}" class="btn btn-outline-secondary btn-sm">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="16" height="16" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
+        <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+      </svg>
+      Comunas
+    </a>
+    {% if puede_gestionar %}
+      <a href="{% url 'operativos:operativo_crear' %}" class="btn btn-opso btn-sm">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="16" height="16" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+        </svg>
+        Nuevo operativo
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+{# ---------- Contadores ---------- #}
+<div class="row g-3 mb-3">
+  <div class="col-12 col-md-4">
+    <div class="card-opso p-3">
+      <div class="kpi-valor">{{ total_operativos }}</div>
+      <div class="kpi-etiqueta">Operativos registrados</div>
+    </div>
+  </div>
+  <div class="col-12 col-md-4">
+    <div class="card-opso p-3">
+      <div class="kpi-valor text-success">{{ total_en_curso }}</div>
+      <div class="kpi-etiqueta">En curso (hay gente en terreno)</div>
+    </div>
+  </div>
+  <div class="col-12 col-md-4">
+    <div class="card-opso p-3">
+      <div class="kpi-valor text-primary">{{ total_planificacion }}</div>
+      <div class="kpi-etiqueta">En planificación</div>
+    </div>
+  </div>
+</div>
+
+{# ---------- Buscador y filtro ---------- #}
+{% comment %} method="get" y sin token CSRF: una búsqueda solo LEE, no modifica
+   nada. Además los filtros quedan en la barra de direcciones y el enlace se
+   puede guardar o compartir. Todo lo que MODIFICA en este módulo va por POST con
+   token. {% endcomment %}
+<form method="get" class="card-opso p-3 mb-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-lg-7">
+      <label for="{{ filtro.q.id_for_label }}" class="form-label small fw-semibold mb-1">
+        {{ filtro.q.label }}
+      </label>
+      {{ filtro.q }}
+    </div>
+    <div class="col-12 col-sm-6 col-lg-3">
+      <label for="{{ filtro.estado.id_for_label }}" class="form-label small fw-semibold mb-1">
+        {{ filtro.estado.label }}
+      </label>
+      {{ filtro.estado }}
+    </div>
+    <div class="col-12 col-sm-6 col-lg-2 d-flex gap-2">
+      <button type="submit" class="btn btn-opso btn-sm w-100">Buscar</button>
+      {% if parametros %}
+        <a href="{% url 'operativos:operativo_lista' %}" class="btn btn-outline-secondary btn-sm"
+           title="Quitar todos los filtros">Limpiar</a>
+      {% endif %}
+    </div>
+  </div>
+</form>
+
+{# ---------- Tabla ---------- #}
+<div class="card-opso p-0 overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th scope="col">Operativo</th>
+          <th scope="col">Fechas</th>
+          <th scope="col">Estado</th>
+          <th scope="col" class="text-center">Sectores</th>
+          <th scope="col" class="text-center">Zonas</th>
+          <th scope="col" class="text-end">Acciones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for operativo in operativos %}
+          <tr>
+            <td>
+              <a href="{% url 'operativos:operativo_detalle' operativo.pk %}"
+                 class="fw-semibold text-decoration-none">{{ operativo.nombre }}</a>
+              {% if operativo.vigente %}
+                <span class="badge text-bg-success ms-1" title="Hoy cae dentro de las fechas">hoy</span>
+              {% endif %}
+              {% if operativo.descripcion %}
+                <div class="small text-secondary">{{ operativo.descripcion|truncatechars:70 }}</div>
+              {% endif %}
+            </td>
+            <td class="small">
+              {{ operativo.fecha_inicio|date:"d-m-Y" }} →
+              {{ operativo.fecha_termino|date:"d-m-Y" }}
+              <div class="text-secondary">{{ operativo.duracion_dias }} día{{ operativo.duracion_dias|pluralize }}</div>
+            </td>
+            <td>{% include "operativos/_estado_operativo.html" with estado=operativo %}</td>
+            <td class="text-center">{{ operativo.n_sectores }}</td>
+            <td class="text-center">{{ operativo.n_zonas }}</td>
+            <td class="text-end">
+              <div class="d-inline-flex gap-1">
+                <a href="{% url 'operativos:operativo_detalle' operativo.pk %}"
+                   class="btn btn-sm btn-outline-secondary" title="Ver su territorio">Ver</a>
+                {% if puede_gestionar %}
+                  <a href="{% url 'operativos:operativo_editar' operativo.pk %}"
+                     class="btn btn-sm btn-outline-primary" title="Editar datos">Editar</a>
+                  <a href="{% url 'operativos:operativo_estado' operativo.pk %}"
+                     class="btn btn-sm btn-outline-dark" title="Cambiar el estado">Estado</a>
+                {% endif %}
+              </div>
+            </td>
+          </tr>
+        {% empty %}
+          <tr>
+            <td colspan="6" class="text-center text-secondary py-5">
+              {% if parametros %}
+                No hay operativos que coincidan con la búsqueda.
+                <a href="{% url 'operativos:operativo_lista' %}">Quitar los filtros</a>.
+              {% else %}
+                Todavía no hay operativos.
+                {% if puede_gestionar %}
+                  <a href="{% url 'operativos:operativo_crear' %}">Crear el primero</a>.
+                {% endif %}
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% include "operativos/_paginacion.html" with etiqueta="operativo" %}
+</div>
+
+<p class="text-secondary small mt-3 mb-0">
+  <strong>Nota:</strong> la división territorial pertenece a cada operativo. Dos
+  operativos pueden dividir la misma comuna de formas distintas, y eso es
+  correcto: así el histórico de cada uno sigue reflejando cómo se trabajó
+  realmente.
+</p>
+
+{% endblock %}

@@ -69,6 +69,29 @@
   </div>
 </div>
 
+{# Organización territorial (HU-05) #}
+<div class="card-opso p-4 mb-4">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+    <div>
+      <h2 class="h5 fw-semibold mb-1">Operativos y territorio</h2>
+      <p class="text-secondary small mb-0">
+        Cada operativo tiene sus fechas y su propia división del terreno:
+        <strong>comuna → sector → zona</strong>. La división pertenece al
+        operativo, así que dos operativos pueden repartir la misma comuna de
+        formas distintas sin alterar el histórico del otro.
+      </p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{% url 'operativos:operativo_lista' %}" class="btn btn-opso btn-sm">
+        Ver operativos
+      </a>
+      <a href="{% url 'operativos:comuna_lista' %}" class="btn btn-outline-primary btn-sm">
+        Comunas
+      </a>
+    </div>
+  </div>
+</div>
+
 {# Últimas acciones administrativas: quién modificó a quién #}
 <div class="card-opso p-0 overflow-hidden mb-4">
   <div class="p-4 border-bottom">
@@ -159,7 +182,7 @@
     <div class="card-opso p-4 h-100">
       <h2 class="h6 fw-semibold">Próximas historias de usuario</h2>
       <ul class="text-secondary small mb-0 ps-3">
-        <li>Configurar los sectores y territorios del operativo.</li>
+        <li>Asignar censistas a los sectores y zonas ya definidos.</li>
         <li>Registrar la ficha de levantamiento de información familiar.</li>
         <li>Exportar reportes consolidados del censo.</li>
       </ul>

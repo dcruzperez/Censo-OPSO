@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   CONFIRMACIÓN: ACTIVAR O DESACTIVAR UNA ZONA
+   /operativos/zonas/<pk>/desactivar/  y  .../activar/
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}{% if activar %}Activar{% else %}Desactivar{% endif %} zona{% endblock %}
+
+{% block contenido %}
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-7">
+    <div class="card-opso p-4 p-lg-5">
+
+      {% if activar %}
+        <span class="badge text-bg-success mb-3">Activar zona</span>
+        <h1 class="h4 fw-bold mb-3">¿Volver a incluir esta zona?</h1>
+      {% else %}
+        <span class="badge text-bg-danger mb-3">Desactivar zona</span>
+        <h1 class="h4 fw-bold mb-3">¿Sacar esta zona del sector?</h1>
+      {% endif %}
+
+      <dl class="row small border rounded p-3 mb-4 bg-light">
+        <dt class="col-4 text-secondary fw-normal">Zona</dt>
+        <dd class="col-8 mb-1 fw-semibold">{{ zona.nombre }}</dd>
+
+        <dt class="col-4 text-secondary fw-normal">Sector</dt>
+        <dd class="col-8 mb-1">{{ sector.nombre }} · {{ sector.comuna.nombre }}</dd>
+
+        <dt class="col-4 text-secondary fw-normal">Operativo</dt>
+        <dd class="col-8 mb-1">{{ operativo.nombre }}</dd>
+
+        <dt class="col-4 text-secondary fw-normal">Viviendas estimadas</dt>
+        <dd class="col-8 mb-1">{{ zona.viviendas_estimadas|default:"sin estimar" }}</dd>
+
+        <dt class="col-4 text-secondary fw-normal">Estado actual</dt>
+        <dd class="col-8 mb-0">
+          {% if zona.activa %}
+            <span class="badge text-bg-success">Activa</span>
+          {% else %}
+            <span class="badge text-bg-secondary">Desactivada</span>
+          {% endif %}
+        </dd>
+      </dl>
+
+      {% if activar %}
+        <p class="small">Al activar la zona:</p>
+        <ul class="small text-secondary">
+          <li>Vuelve a contarse en el avance del sector.</li>
+          <li>La acción queda registrada en la bitácora de auditoría con tu nombre.</li>
+        </ul>
+      {% else %}
+        <p class="small">Al desactivar la zona:</p>
+        <ul class="small text-secondary">
+          <li>El campo <code>activa</code> pasa a <code>False</code>.
+            <strong>La fila NO se elimina</strong> de la base de datos.</li>
+          <li>Deja de contarse en el avance del sector.</li>
+        </ul>
+
+        <div class="alert alert-info small" role="alert">
+          <strong>Se conserva todo</strong>, incluidas las fichas levantadas en
+          ella. Es un <em>borrado lógico</em>, reversible desde esta misma pantalla.
+        </div>
+      {% endif %}
+
+      <form method="post" class="d-flex gap-2 flex-wrap">
+        {% csrf_token %}
+        {% if activar %}
+          <button type="submit" class="btn btn-success">Sí, activar la zona</button>
+        {% else %}
+          <button type="submit" class="btn btn-danger">Sí, desactivar la zona</button>
+        {% endif %}
+        <a href="{% url 'operativos:operativo_detalle' operativo.pk %}"
+           class="btn btn-outline-secondary">No, cancelar</a>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

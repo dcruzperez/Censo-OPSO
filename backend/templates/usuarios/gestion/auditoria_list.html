@@ -69,6 +69,12 @@
                 <span class="badge text-bg-warning">{{ registro.get_accion_display }}</span>
               {% elif registro.accion == "CAMBIAR_PERMISOS" %}
                 <span class="badge text-bg-info">{{ registro.get_accion_display }}</span>
+              {% comment %} HU-05: las cinco acciones territoriales comparten una
+                 etiqueta. Se pregunta por es_territorial y no por cada acción una
+                 por una, para no tener que volver aquí cada vez que se agregue
+                 una acción al módulo. {% endcomment %}
+              {% elif registro.es_territorial %}
+                <span class="badge text-bg-dark">{{ registro.get_accion_display }}</span>
               {% else %}
                 <span class="badge text-bg-light border">{{ registro.get_accion_display }}</span>
               {% endif %}
@@ -84,6 +90,11 @@
               {% elif registro.rol_afectado_nombre %}
                 <span class="badge text-bg-light border">Rol</span>
                 {{ registro.rol_afectado_nombre }}
+              {% elif registro.objeto_nombre %}
+                {# HU-05: el tipo va delante porque «Los Boldos» no dice si es un
+                   sector o una comuna, y en una bitácora esa diferencia importa. #}
+                <span class="badge text-bg-light border">{{ registro.etiqueta_objeto }}</span>
+                {{ registro.objeto_nombre }}
               {% else %}
                 {{ registro.objetivo }}
               {% endif %}

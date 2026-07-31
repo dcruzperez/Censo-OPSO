@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   ALTA Y EDICIÓN DE UNA ZONA
+   /operativos/sectores/<sector_pk>/zonas/nueva/  y  /operativos/zonas/<pk>/editar/
+
+   El SECTOR viaja en la URL, igual que el operativo en sector_form.html y por la
+   misma razón.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}{% if es_creacion %}Nueva zona{% else %}Editar zona{% endif %}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'operativos:operativo_lista' %}">Operativos</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'operativos:operativo_detalle' operativo.pk %}">{{ operativo.nombre }}</a>
+    </li>
+    <li class="breadcrumb-item">{{ sector.nombre }}</li>
+    <li class="breadcrumb-item active" aria-current="page">
+      {% if es_creacion %}Nueva zona{% else %}{{ form.instance.nombre }}{% endif %}
+    </li>
+  </ol>
+</nav>
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-7">
+    <div class="card-opso p-4 p-lg-5">
+
+      <h1 class="h4 fw-bold mb-1">
+        {% if es_creacion %}Nueva zona{% else %}Editar «{{ form.instance.nombre }}»{% endif %}
+      </h1>
+      <p class="text-secondary small mb-4">
+        En el sector <strong>{{ sector.nombre }}</strong>
+        ({{ sector.comuna.nombre }}). La zona es la unidad más pequeña del
+        territorio: el pedazo de sector que una persona puede recorrer en una
+        jornada.
+      </p>
+
+      {% if form.non_field_errors %}
+        <div class="alert alert-danger" role="alert">
+          {% for error in form.non_field_errors %}
+            <div class="small">{{ error }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+
+      <form method="post" novalidate>
+        {% csrf_token %}
+
+        <div class="row g-3">
+          {% include "usuarios/gestion/_campo.html" with campo=form.nombre %}
+          {% include "usuarios/gestion/_campo.html" with campo=form.viviendas_estimadas ancho="col-12 col-sm-5" %}
+          {% include "usuarios/gestion/_campo.html" with campo=form.descripcion %}
+        </div>
+
+        <div class="d-flex gap-2 flex-wrap mt-4">
+          <button type="submit" class="btn btn-opso">
+            {% if es_creacion %}Crear zona{% else %}Guardar cambios{% endif %}
+          </button>
+          <a href="{% url 'operativos:operativo_detalle' operativo.pk %}"
+             class="btn btn-outline-secondary">Cancelar</a>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

@@ -15,8 +15,9 @@ Proyecto de título · Ingeniería en Computación e Informática.
 | HU-02 · Recuperación de contraseña por correo electrónico | ✅ Implementada | [`docs/HU-02_recuperacion_contrasena.md`](docs/HU-02_recuperacion_contrasena.md) |
 | HU-03 · Administración de usuarios (crear, editar, deshabilitar) | ✅ Implementada | [`docs/HU-03_administracion_usuarios.md`](docs/HU-03_administracion_usuarios.md) |
 | HU-04 · Asignar roles y permisos (matriz configurable) | ✅ Implementada | — |
+| HU-05 · Comunas, sectores y zonas (organización territorial) | ✅ Implementada | [`docs/HU-05_organizacion_territorial.md`](docs/HU-05_organizacion_territorial.md) |
 
-**281 pruebas automáticas** en total (`python manage.py test` → OK).
+**422 pruebas automáticas** en total (`python manage.py test` → OK).
 
 ---
 
@@ -142,11 +143,12 @@ EMAIL_HOST_PASSWORD=contraseña-de-aplicacion-de-16-caracteres
 ## Pruebas
 
 ```bash
-python manage.py test                         # 281 pruebas
+python manage.py test                         # 422 pruebas
 python manage.py test -v 2                    # con el nombre de cada prueba
 python manage.py test usuarios.tests          # solo HU-01 y HU-02 (80)
 python manage.py test usuarios.tests_gestion  # solo HU-03 (69)
 python manage.py test usuarios.tests_permisos # solo HU-04 (132)
+python manage.py test operativos              # solo HU-05 (141)
 ```
 
 Si PostgreSQL no está disponible, se puede correr la batería sobre SQLite en memoria:
@@ -180,6 +182,7 @@ backend/
 ├── config/          configuración del proyecto (settings, urls, wsgi)
 ├── usuarios/        autenticación, roles, permisos y auditoría
 ├── dashboards/      paneles diferenciados por rol
+├── operativos/      operativos y organización territorial (comuna/sector/zona)
 ├── templates/       plantillas HTML
 ├── static/          CSS y Bootstrap local (funciona sin internet)
 ├── scripts/         script SQL de creación de la base de datos
