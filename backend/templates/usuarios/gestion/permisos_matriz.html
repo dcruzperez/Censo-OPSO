@@ -1,0 +1,174 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   MATRIZ DE PERMISOS — /roles/permisos/   (HU-04)
+
+   Permisos como FILAS, roles como COLUMNAS. Se eligió esta disposición porque la
+   pregunta habitual del administrador es "¿quién puede validar fichas?", y así se
+   responde leyendo una fila en vez de abriendo tres pantallas.
+
+   La estructura que se recorre (grupos -> filas -> celdas) la arma la vista en
+   Python. La plantilla no decide nada: solo escribe HTML. El motivo es que el
+   lenguaje de plantillas no puede resolver "¿tiene el rol 2 el permiso 7?" sin
+   inventar filtros propios, y preparar los datos en la vista es más simple y se
+   puede probar.
+
+   Las casillas se dibujan a mano en vez de usar {{ form.permisos }}, que
+   produciría una lista vertical por rol e impediría la disposición en matriz. El
+   atributo name= viene de form.nombre_campo_html, así que plantilla y formulario
+   no pueden desincronizarse.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Roles y permisos{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ruta de navegación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'dashboards:administrador' %}">Panel</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Roles y permisos</li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+      Roles y permisos
+    </h1>
+    <p class="text-secondary mb-0">
+      {{ total_permisos }} permiso{{ total_permisos|pluralize }} sobre
+      {{ roles|length }} rol{{ roles|length|pluralize:"es" }}. Marca lo que cada
+      perfil tiene autorizado; el cambio se aplica de inmediato.
+    </p>
+  </div>
+  <a href="{% url 'usuarios:auditoria' %}" class="btn btn-outline-secondary btn-sm">
+    Ver auditoría
+  </a>
+</div>
+
+<form method="post" novalidate>
+  {% csrf_token %}
+
+  <div class="card-opso p-0 overflow-hidden">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th scope="col" style="min-width: 22rem;">Permiso</th>
+            {% for rol in roles %}
+              <th scope="col" class="text-center" style="min-width: 8rem;">
+                {{ rol.nombre }}
+                {% if rol.concede_todo %}
+                  <span class="d-block fw-normal text-secondary" style="font-size: .7rem;">
+                    acceso total
+                  </span>
+                {% elif not rol.activo %}
+                  <span class="d-block fw-normal text-danger" style="font-size: .7rem;">
+                    rol desactivado
+                  </span>
+                {% endif %}
+              </th>
+            {% endfor %}
+          </tr>
+        </thead>
+
+        <tbody>
+          {% for grupo in grupos %}
+            {% comment %} Fila separadora con el nombre del módulo. Sin esta
+               agrupación la tabla serían veinte filas planas indistinguibles.
+               El colspan se calcula sumando la columna del permiso a las de los
+               roles. {% endcomment %}
+            <tr class="table-light">
+              <th scope="rowgroup" colspan="{{ roles|length|add:1 }}"
+                  class="small text-uppercase fw-semibold text-secondary py-2">
+                {{ grupo.modulo }}
+              </th>
+            </tr>
+
+            {% for fila in grupo.filas %}
+              <tr>
+                <td>
+                  <div class="fw-semibold small">{{ fila.permiso.nombre }}</div>
+                  {% if fila.permiso.descripcion %}
+                    <div class="text-secondary" style="font-size: .78rem;">
+                      {{ fila.permiso.descripcion }}
+                    </div>
+                  {% endif %}
+                  <code class="text-secondary" style="font-size: .7rem;">{{ fila.permiso.codigo }}</code>
+                </td>
+
+                {% for celda in fila.celdas %}
+                  <td class="text-center">
+                    {% if celda.editable %}
+                      <input type="checkbox"
+                             class="form-check-input"
+                             name="{{ celda.nombre_campo }}"
+                             value="{{ celda.valor }}"
+                             {% if celda.marcado %}checked{% endif %}
+                             aria-label="{{ fila.permiso.nombre }} para {{ celda.rol.nombre }}">
+                    {% else %}
+                      {% comment %} El rol Administrador concede todo de forma
+                         implícita (Rol.concede_todo). Se dibuja marcado y
+                         deshabilitado: una casilla editable haría creer que
+                         desmarcarla le retira el permiso, y no es así. {% endcomment %}
+                      <input type="checkbox" class="form-check-input" checked disabled
+                             aria-label="{{ fila.permiso.nombre }} para {{ celda.rol.nombre }}: concedido siempre">
+                    {% endif %}
+                  </td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          {% empty %}
+            <tr>
+              <td colspan="{{ roles|length|add:1 }}" class="text-center text-secondary py-5">
+                No hay permisos vigentes en el catálogo.
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 p-3 border-top">
+      <p class="text-secondary small mb-0">
+        Cada cambio queda registrado en la bitácora de auditoría con tu nombre,
+        la fecha y el detalle exacto.
+      </p>
+      <div class="d-flex gap-2">
+        <a href="{% url 'dashboards:administrador' %}" class="btn btn-outline-secondary btn-sm">
+          Cancelar
+        </a>
+        <button type="submit" class="btn btn-opso btn-sm">Guardar permisos</button>
+      </div>
+    </div>
+  </div>
+</form>
+
+<div class="row g-3 mt-3">
+  <div class="col-12 col-lg-6">
+    <div class="card-opso p-4 h-100">
+      <h2 class="h6 fw-semibold">Por qué el Administrador no se puede editar</h2>
+      <p class="text-secondary small mb-0">
+        El rol Administrador concede todos los permisos por definición del
+        negocio, igual que el superusuario técnico. Si se le pudieran quitar,
+        bastaría un clic para dejar el sistema sin nadie capaz de repararlo desde
+        la aplicación y habría que intervenir la base de datos a mano. Es la
+        misma salvaguarda que impide deshabilitar al último administrador activo.
+      </p>
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card-opso p-4 h-100">
+      <h2 class="h6 fw-semibold">Permisos de módulos aún no construidos</h2>
+      <p class="text-secondary small mb-0">
+        El catálogo incluye acciones sobre fichas, operativos y reportes, que
+        corresponden a historias de usuario todavía no implementadas. Están
+        modeladas de antemano para que, cuando esas pantallas existan, la
+        autorización ya esté decidida. Un permiso sin pantalla que lo compruebe
+        no autoriza nada por sí solo.
+      </p>
+    </div>
+  </div>
+</div>
+
+{% endblock %}

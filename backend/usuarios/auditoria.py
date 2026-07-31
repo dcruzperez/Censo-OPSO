@@ -21,26 +21,49 @@ from .seguridad import obtener_ip, obtener_user_agent
 logger = logging.getLogger("usuarios")
 
 
-def registrar_accion(administrador, accion, usuario_afectado, detalle="", request=None):
+def registrar_accion(
+    administrador,
+    accion,
+    usuario_afectado=None,
+    detalle="",
+    request=None,
+    rol_afectado=None,
+):
     """Escribe una fila en la bitácora de auditoría y la devuelve.
 
     Parámetros:
         administrador    -> Usuario que ejecuta la acción (request.user).
         accion           -> valor de AccionAuditoria.
-        usuario_afectado -> Usuario sobre el que se actuó.
+        usuario_afectado -> Usuario sobre el que se actuó (HU-03).
         detalle          -> texto libre con el cambio exacto.
         request          -> para obtener IP y navegador (contexto forense).
+        rol_afectado     -> Rol sobre el que se actuó (HU-04: permisos).
 
-    Se guardan los correos como texto además de las claves foráneas: si una
-    cuenta se eliminara físicamente algún día, la fila seguiría siendo legible
-    (ver la explicación en el modelo RegistroAuditoria).
+    Se indica UNO de los dos objetos afectados, no los dos: una acción recae
+    sobre una cuenta (deshabilitarla) o sobre un rol (cambiarle los permisos).
+    Si no se indica ninguno se levanta ValueError en vez de escribir una fila
+    incompleta: una bitácora que no dice sobre qué se actuó no sirve de nada, y
+    es mejor que el error salte en desarrollo que descubrir el hueco durante una
+    auditoría real.
+
+    Se guardan el correo y el nombre como texto además de las claves foráneas: si
+    la cuenta o el rol se eliminaran físicamente algún día, la fila seguiría
+    siendo legible (ver la explicación en el modelo RegistroAuditoria).
     """
+    if usuario_afectado is None and rol_afectado is None:
+        raise ValueError(
+            "registrar_accion() necesita saber sobre qué se actuó: "
+            "hay que indicar usuario_afectado o rol_afectado."
+        )
+
     registro = RegistroAuditoria.objects.create(
         administrador=administrador if getattr(administrador, "pk", None) else None,
         administrador_email=getattr(administrador, "email", "") or "",
         accion=accion,
         usuario_afectado=usuario_afectado,
-        usuario_afectado_email=usuario_afectado.email,
+        usuario_afectado_email=usuario_afectado.email if usuario_afectado else "",
+        rol_afectado=rol_afectado,
+        rol_afectado_nombre=rol_afectado.nombre if rol_afectado else "",
         detalle=detalle,
         ip=obtener_ip(request),
         user_agent=obtener_user_agent(request),
@@ -52,10 +75,43 @@ def registrar_accion(administrador, accion, usuario_afectado, detalle="", reques
         "AUDITORÍA | %s | admin=%s | afectado=%s | %s",
         AccionAuditoria(accion).label,
         registro.administrador_email or "(desconocido)",
-        registro.usuario_afectado_email,
+        registro.objetivo,
         detalle or "sin detalle",
     )
     return registro
+
+
+def describir_cambio_permisos(permisos_antes, permisos_despues):
+    """Arma el detalle de un cambio de permisos: qué se concedió y qué se revocó.
+
+    Recibe dos colecciones de objetos Permiso (el estado anterior y el nuevo) y
+    devuelve una cadena como:
+
+        concedidos: Validar fichas, Exportar reportes; revocados: Crear cuentas
+
+    ¿Por qué el nombre visible y no el código?
+    Porque la bitácora la lee una persona. "revocados: fichas.validar" obliga a
+    ir a buscar qué era eso; "revocados: Validar fichas levantadas" se entiende
+    solo. El código sigue estando en la base de datos si hace falta precisión.
+
+    Devuelve cadena vacía si no hubo ningún cambio. La vista usa ese valor para
+    NO escribir una fila de auditoría: guardar el formulario sin tocar nada no es
+    un hecho auditable, y una bitácora llena de filas "no cambió nada" esconde
+    las que sí importan.
+    """
+    antes = {permiso.codigo: permiso for permiso in permisos_antes}
+    despues = {permiso.codigo: permiso for permiso in permisos_despues}
+
+    concedidos = sorted(p.nombre for c, p in despues.items() if c not in antes)
+    revocados = sorted(p.nombre for c, p in antes.items() if c not in despues)
+
+    partes = []
+    if concedidos:
+        partes.append(f"concedidos: {', '.join(concedidos)}")
+    if revocados:
+        partes.append(f"revocados: {', '.join(revocados)}")
+
+    return "; ".join(partes)
 
 
 def _valor_legible(formulario, nombre_campo, valor):

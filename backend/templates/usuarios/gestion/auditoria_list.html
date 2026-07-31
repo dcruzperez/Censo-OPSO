@@ -42,7 +42,7 @@
           <th scope="col">Fecha y hora</th>
           <th scope="col">Administrador</th>
           <th scope="col">Acción</th>
-          <th scope="col">Usuario afectado</th>
+          <th scope="col">Sobre qué</th>
           <th scope="col">Detalle</th>
           <th scope="col">IP</th>
         </tr>
@@ -67,16 +67,25 @@
                 <span class="badge text-bg-primary">{{ registro.get_accion_display }}</span>
               {% elif registro.accion == "CAMBIAR_ROL" %}
                 <span class="badge text-bg-warning">{{ registro.get_accion_display }}</span>
+              {% elif registro.accion == "CAMBIAR_PERMISOS" %}
+                <span class="badge text-bg-info">{{ registro.get_accion_display }}</span>
               {% else %}
                 <span class="badge text-bg-light border">{{ registro.get_accion_display }}</span>
               {% endif %}
             </td>
             <td class="small">
+              {% comment %} Una fila apunta a una CUENTA o a un ROL, nunca a las
+                 dos. Se enlaza a la ficha solo cuando el objeto todavía existe;
+                 si se eliminó, la clave foránea es NULL pero la copia de texto
+                 sigue ahí y la bitácora no queda ilegible. {% endcomment %}
               {% if registro.usuario_afectado %}
                 <a href="{% url 'usuarios:detalle' registro.usuario_afectado.pk %}"
                    class="text-decoration-none">{{ registro.usuario_afectado_email }}</a>
+              {% elif registro.rol_afectado_nombre %}
+                <span class="badge text-bg-light border">Rol</span>
+                {{ registro.rol_afectado_nombre }}
               {% else %}
-                {{ registro.usuario_afectado_email }}
+                {{ registro.objetivo }}
               {% endif %}
             </td>
             <td class="small text-secondary">{{ registro.detalle|default:"—" }}</td>

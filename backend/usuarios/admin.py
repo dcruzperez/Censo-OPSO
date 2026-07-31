@@ -9,19 +9,55 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
 from .forms import UsuarioChangeForm, UsuarioCreationForm
-from .models import IntentoAcceso, RegistroAuditoria, Rol, Usuario
+from .models import IntentoAcceso, Permiso, RegistroAuditoria, Rol, Usuario
+
+
+@admin.register(Permiso)
+class PermisoAdmin(admin.ModelAdmin):
+    """Catálogo de permisos (HU-04).
+
+    El admin es el lugar correcto para AGREGAR un permiso nuevo al catálogo: es
+    una tarea técnica que acompaña a la implementación de una funcionalidad, no
+    una operación del día a día. Repartirlos entre los roles, en cambio, es una
+    decisión operativa y para eso está la matriz en /roles/permisos/, que valida
+    las reglas del negocio y deja auditoría.
+    """
+
+    list_display = ("nombre", "codigo", "modulo", "orden", "activo", "total_roles")
+    list_filter = ("modulo", "activo")
+    search_fields = ("codigo", "nombre", "descripcion")
+    readonly_fields = ("creado_en", "actualizado_en")
+    ordering = ("modulo", "orden", "nombre")
+
+    @admin.display(description="roles que lo tienen")
+    def total_roles(self, obj):
+        return obj.roles.count()
 
 
 @admin.register(Rol)
 class RolAdmin(admin.ModelAdmin):
-    list_display = ("nombre", "codigo", "dashboard_url_name", "activo", "total_usuarios")
+    list_display = (
+        "nombre",
+        "codigo",
+        "dashboard_url_name",
+        "activo",
+        "total_usuarios",
+        "total_permisos",
+    )
     list_filter = ("activo",)
     search_fields = ("nombre", "codigo")
     readonly_fields = ("creado_en", "actualizado_en")
+    # Selector de doble panel para los permisos: con veinte opciones, la lista de
+    # casillas por defecto ocupa toda la pantalla y no deja ver qué está elegido.
+    filter_horizontal = ("permisos",)
 
     @admin.display(description="usuarios asignados")
     def total_usuarios(self, obj):
         return obj.usuarios.count()
+
+    @admin.display(description="permisos concedidos")
+    def total_permisos(self, obj):
+        return obj.permisos.count()
 
 
 @admin.register(Usuario)
@@ -119,13 +155,19 @@ class RegistroAuditoriaAdmin(admin.ModelAdmin):
         "ocurrido_en",
         "administrador_email",
         "accion",
-        "usuario_afectado_email",
+        # "objetivo" resuelve si la fila apunta a una cuenta o a un rol (HU-04).
+        "objetivo",
         "ip",
     )
     list_filter = ("accion", "ocurrido_en")
-    search_fields = ("administrador_email", "usuario_afectado_email", "detalle")
+    search_fields = (
+        "administrador_email",
+        "usuario_afectado_email",
+        "rol_afectado_nombre",
+        "detalle",
+    )
     date_hierarchy = "ocurrido_en"
-    list_select_related = ("administrador", "usuario_afectado")
+    list_select_related = ("administrador", "usuario_afectado", "rol_afectado")
 
     def has_add_permission(self, request):
         return False

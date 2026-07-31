@@ -50,6 +50,25 @@
   </div>
 </div>
 
+{# Roles y permisos (HU-04) #}
+<div class="card-opso p-4 mb-4">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+    <div>
+      <h2 class="h5 fw-semibold mb-1">Roles y permisos</h2>
+      <p class="text-secondary small mb-0">
+        Definir qué puede hacer cada perfil dentro de OPSO. Los permisos se
+        conceden al <strong>rol</strong>, no a la persona: al cambiarlos, el
+        ajuste alcanza de inmediato a todas las cuentas que tengan ese rol.
+      </p>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{% url 'usuarios:permisos' %}" class="btn btn-opso btn-sm">
+        Ver matriz de permisos
+      </a>
+    </div>
+  </div>
+</div>
+
 {# Últimas acciones administrativas: quién modificó a quién #}
 <div class="card-opso p-0 overflow-hidden mb-4">
   <div class="p-4 border-bottom">
@@ -65,7 +84,7 @@
           <th scope="col">Fecha y hora</th>
           <th scope="col">Administrador</th>
           <th scope="col">Acción</th>
-          <th scope="col">Usuario afectado</th>
+          <th scope="col">Sobre qué</th>
         </tr>
       </thead>
       <tbody>
@@ -76,7 +95,8 @@
             <td class="small">
               <span class="badge text-bg-light border">{{ registro.get_accion_display }}</span>
             </td>
-            <td class="small">{{ registro.usuario_afectado_email }}</td>
+            {# objetivo resuelve si la fila apunta a una cuenta o a un rol #}
+            <td class="small">{{ registro.objetivo }}</td>
           </tr>
         {% empty %}
           <tr>

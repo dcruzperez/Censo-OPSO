@@ -9,7 +9,7 @@ las plantillas y vistas no se tocan, porque referencian el NOMBRE.
 from django.urls import path
 from django.views.generic import RedirectView
 
-from . import views, views_gestion
+from . import views, views_gestion, views_permisos
 
 app_name = "usuarios"
 
@@ -59,8 +59,11 @@ urlpatterns = [
         name="password_reset_complete",
     ),
     # ------------------------------------------------------------------
-    # ADMINISTRACIÓN DE USUARIOS (HU-03) — solo rol Administrador
+    # ADMINISTRACIÓN DE USUARIOS (HU-03) — por permiso desde la HU-04
     # ------------------------------------------------------------------
+    # Cada vista declara el permiso que exige (ver ModuloUsuariosMixin en
+    # views_gestion.py). Con el reparto inicial solo entra el administrador,
+    # igual que antes, pero ahora eso se puede cambiar desde /roles/permisos/.
     # Todas comparten el prefijo /usuarios/. Agrupar las rutas de un módulo
     # bajo un prefijo común no es solo orden: permite proteger el módulo
     # completo de una sola vez en el servidor web o en un firewall de
@@ -79,6 +82,23 @@ urlpatterns = [
         "usuarios/auditoria/",
         views_gestion.AuditoriaListView.as_view(),
         name="auditoria",
+    ),
+    # ------------------------------------------------------------------
+    # ROLES Y PERMISOS (HU-04) — solo rol Administrador, a propósito
+    # ------------------------------------------------------------------
+    # Esta ruta NO se protege por permiso: es la única del sistema que conserva
+    # el control por rol, para que nadie pueda revocarse el acceso a la pantalla
+    # que reparte los accesos (ver la docstring de MatrizPermisosView).
+    # Prefijo /roles/ y no /usuarios/roles/: los permisos se conceden a ROLES,
+    # no a personas, y la dirección debe reflejar sobre qué entidad se trabaja.
+    # Que además solo pueda entrar el administrador es una regla de acceso, no
+    # una razón para colgar la ruta bajo /usuarios/.
+    #
+    # /roles/permisos/ -> matriz rol × permiso (GET consulta, POST guarda)
+    path(
+        "roles/permisos/",
+        views_permisos.MatrizPermisosView.as_view(),
+        name="permisos",
     ),
     # /usuarios/5/          -> ficha del usuario 5 con su historial
     path(

@@ -16,11 +16,15 @@ quedarse sin administradores).
 
 CONTROL DE ACCESO — tres capas, no una:
   1. LoginRequiredMiddleware (settings): ninguna vista responde sin sesión.
-  2. RolRequeridoMixin (reutilizado de la HU-01): exige el rol Administrador.
+  2. ModuloUsuariosMixin (HU-04): exige el PERMISO que cada vista declara en
+     permisos_requeridos. Hasta la HU-03 esta capa exigía el ROL Administrador;
+     el reparto inicial de permisos reproduce ese mismo acceso, pero ahora se
+     puede reconfigurar desde la matriz sin tocar código.
   3. Reglas por objeto dentro de cada vista: qué puede hacer este administrador
      con ESTA cuenta concreta.
-La capa 3 es la que impide la "modificación por URL": no basta con ser
-administrador, la acción concreta también tiene que estar permitida.
+La capa 3 es la que impide la "modificación por URL": no basta con tener el
+permiso del módulo, la acción sobre esa cuenta concreta también tiene que estar
+permitida. Ningún permiso de la matriz puede saltarse esa comprobación.
 """
 
 from django.contrib import messages
@@ -33,26 +37,18 @@ from django.views.generic import CreateView, DetailView, ListView, UpdateView
 
 from .auditoria import describir_cambios, registrar_accion
 from .forms_gestion import CrearUsuarioForm, EditarUsuarioForm, FiltroUsuariosForm
-from .mixins import RolRequeridoMixin
+from .mixins import PermisoRequeridoMixin, RolRequeridoMixin
 from .models import AccionAuditoria, RegistroAuditoria, Rol, RolCodigo, Usuario
 from .seguridad import enviar_enlace_contrasena
 
 
-class SoloAdministradorMixin(RolRequeridoMixin):
-    """Puerta de entrada común a todo el módulo.
+class VerificarSuperusuarioMixin:
+    """Regla por objeto: no tocar cuentas de superusuario sin serlo.
 
-    Se declara una sola vez y todas las vistas heredan de aquí. Ventaja
-    concreta: es imposible agregar una vista nueva a este módulo y olvidar
-    protegerla, porque la protección viene en la clase base.
-
-    RolRequeridoMixin ya se escribió y se probó en la HU-01. No se reimplementa
-    nada: se reutiliza.
+    Se extrae en su propia clase porque es una regla sobre EL OBJETO, no sobre
+    quién entra. Así puede combinarse con cualquier puerta de acceso —la de rol
+    o la de permiso— sin quedar amarrada a una de las dos.
     """
-
-    roles_permitidos = (RolCodigo.ADMINISTRADOR,)
-    mensaje_sin_permiso = (
-        "Solo el rol Administrador puede acceder a la administración de usuarios."
-    )
 
     def verificar_superusuario(self, usuario):
         """Impide que un administrador común toque una cuenta de superusuario.
@@ -62,6 +58,10 @@ class SoloAdministradorMixin(RolRequeridoMixin):
         deshabilitarlo, podría escalar privilegios (cambiarle el correo y pedir
         un enlace de contraseña a una casilla propia). Es el principio de
         mínimo privilegio aplicado entre cuentas del mismo módulo.
+
+        Ningún permiso de la matriz puede saltarse esta comprobación: se evalúa
+        DENTRO de la vista, sobre la cuenta concreta, después de que el acceso al
+        módulo ya fue concedido.
         """
         if usuario.is_superuser and not self.request.user.is_superuser:
             raise PermissionDenied(
@@ -69,17 +69,52 @@ class SoloAdministradorMixin(RolRequeridoMixin):
             )
 
 
+class SoloAdministradorMixin(VerificarSuperusuarioMixin, RolRequeridoMixin):
+    """Puerta de acceso por ROL. Se conserva para lo que no debe reconfigurarse.
+
+    Ya no la usa el módulo de usuarios (ver ModuloUsuariosMixin), pero sigue
+    siendo la protección correcta para cualquier pantalla cuyo acceso no deba
+    depender de una casilla que alguien pueda desmarcar.
+    """
+
+    roles_permitidos = (RolCodigo.ADMINISTRADOR,)
+    mensaje_sin_permiso = (
+        "Solo el rol Administrador puede acceder a la administración de usuarios."
+    )
+
+
+class ModuloUsuariosMixin(VerificarSuperusuarioMixin, PermisoRequeridoMixin):
+    """Puerta de entrada común al módulo de administración de usuarios (HU-04).
+
+    Antes de la HU-04 esta clase exigía el ROL Administrador. Ahora exige el
+    PERMISO que cada vista declara. El acceso resultante es idéntico —el reparto
+    inicial de permisos reproduce exactamente el anterior— pero pasa a ser
+    CONFIGURABLE: el administrador puede delegar el listado de usuarios en el
+    rol Supervisor desde la matriz, sin que nadie edite ni despliegue código.
+
+    Se conserva la ventaja de la versión anterior: la protección vive en la clase
+    base, así que es imposible agregar una vista al módulo y olvidar protegerla.
+    Y si alguien la agrega sin declarar permisos_requeridos, PermisoRequeridoMixin
+    levanta ImproperlyConfigured en vez de dejar la vista abierta.
+    """
+
+    mensaje_sin_permiso = (
+        "No tienes permiso para acceder a la administración de usuarios."
+    )
+
+
 # ==========================================================================
 # 1. LISTAR
 # ==========================================================================
 
 
-class UsuarioListView(SoloAdministradorMixin, ListView):
+class UsuarioListView(ModuloUsuariosMixin, ListView):
     """Listado de usuarios con búsqueda, filtros y paginación.
 
     URL: /usuarios/
     """
 
+    permisos_requeridos = ("usuarios.ver",)
     model = Usuario
     template_name = "usuarios/gestion/usuarios_list.html"
     context_object_name = "usuarios"
@@ -148,12 +183,13 @@ class UsuarioListView(SoloAdministradorMixin, ListView):
 # ==========================================================================
 
 
-class UsuarioCreateView(SoloAdministradorMixin, CreateView):
+class UsuarioCreateView(ModuloUsuariosMixin, CreateView):
     """Creación de una cuenta nueva.
 
     URL: /usuarios/nuevo/
     """
 
+    permisos_requeridos = ("usuarios.crear",)
     model = Usuario
     form_class = CrearUsuarioForm
     template_name = "usuarios/gestion/usuario_create.html"
@@ -239,12 +275,13 @@ class UsuarioCreateView(SoloAdministradorMixin, CreateView):
 # ==========================================================================
 
 
-class UsuarioUpdateView(SoloAdministradorMixin, UpdateView):
+class UsuarioUpdateView(ModuloUsuariosMixin, UpdateView):
     """Edición de los datos de una cuenta.
 
     URL: /usuarios/<pk>/editar/
     """
 
+    permisos_requeridos = ("usuarios.editar",)
     model = Usuario
     form_class = EditarUsuarioForm
     template_name = "usuarios/gestion/usuario_edit.html"
@@ -362,7 +399,7 @@ class UsuarioUpdateView(SoloAdministradorMixin, UpdateView):
 # ==========================================================================
 
 
-class UsuarioDetailView(SoloAdministradorMixin, DetailView):
+class UsuarioDetailView(ModuloUsuariosMixin, DetailView):
     """Ficha completa de una cuenta, con su historial.
 
     URL: /usuarios/<pk>/
@@ -373,6 +410,10 @@ class UsuarioDetailView(SoloAdministradorMixin, DetailView):
     entrar?") sin abrir la base de datos.
     """
 
+    # El mismo permiso que el listado: el catálogo define "usuarios.ver" como
+    # "ver el listado Y las fichas de usuarios". Separarlos obligaría a marcar
+    # dos casillas para una sola capacidad que nadie reparte por mitades.
+    permisos_requeridos = ("usuarios.ver",)
     model = Usuario
     template_name = "usuarios/gestion/usuario_detail.html"
     context_object_name = "usuario"
@@ -404,7 +445,7 @@ class UsuarioDetailView(SoloAdministradorMixin, DetailView):
 # ==========================================================================
 
 
-class CambiarEstadoUsuarioView(SoloAdministradorMixin, View):
+class CambiarEstadoUsuarioView(ModuloUsuariosMixin, View):
     """Habilita o deshabilita una cuenta. NUNCA borra la fila.
 
     URLs: /usuarios/<pk>/deshabilitar/  y  /usuarios/<pk>/habilitar/
@@ -425,6 +466,8 @@ class CambiarEstadoUsuarioView(SoloAdministradorMixin, View):
     no como ventana emergente de JavaScript para que funcione igual con JS
     deshabilitado.
     """
+
+    permisos_requeridos = ("usuarios.cambiar_estado",)
 
     #: True = habilitar, False = deshabilitar. Se define en urls.py.
     activar = False
@@ -541,7 +584,7 @@ class CambiarEstadoUsuarioView(SoloAdministradorMixin, View):
 # ==========================================================================
 
 
-class EnviarEnlaceContrasenaView(SoloAdministradorMixin, View):
+class EnviarEnlaceContrasenaView(ModuloUsuariosMixin, View):
     """Reenvía el enlace para que la persona defina su contraseña.
 
     URL: /usuarios/<pk>/enviar-enlace/  (solo POST)
@@ -555,6 +598,8 @@ class EnviarEnlaceContrasenaView(SoloAdministradorMixin, View):
     la propiedad que hace creíble la auditoría ("esta acción la hizo esta
     persona, porque nadie más pudo autenticarse como ella").
     """
+
+    permisos_requeridos = ("usuarios.enviar_enlace",)
 
     def post(self, request, *args, **kwargs):
         usuario = get_object_or_404(Usuario, pk=self.kwargs["pk"])
@@ -596,7 +641,7 @@ class EnviarEnlaceContrasenaView(SoloAdministradorMixin, View):
 # ==========================================================================
 
 
-class AuditoriaListView(SoloAdministradorMixin, ListView):
+class AuditoriaListView(ModuloUsuariosMixin, ListView):
     """Historial completo de acciones administrativas.
 
     URL: /usuarios/auditoria/
@@ -604,8 +649,14 @@ class AuditoriaListView(SoloAdministradorMixin, ListView):
     Una bitácora que nadie puede leer no cumple su función. Esta pantalla la
     hace consultable desde la propia aplicación, sin depender de que alguien
     sepa SQL.
+
+    El permiso es del módulo AUDITORÍA y no del de usuarios, aunque la pantalla
+    viva en este archivo: leer la bitácora es una capacidad de control que tiene
+    sentido delegar por separado. Un supervisor puede necesitar revisar qué pasó
+    con una cuenta sin poder tocar ninguna.
     """
 
+    permisos_requeridos = ("auditoria.ver",)
     model = RegistroAuditoria
     template_name = "usuarios/gestion/auditoria_list.html"
     context_object_name = "registros"

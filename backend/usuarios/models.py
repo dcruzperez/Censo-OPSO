@@ -1,14 +1,23 @@
 """Modelos de la app "usuarios".
 
-Cuatro tablas:
+Seis tablas:
   1. usuarios_rol                 -> catálogo de roles (Administrador/Supervisor/Censista)
-  2. usuarios_usuario             -> personas que acceden al sistema
-  3. usuarios_intento_acceso      -> bitácora de intentos de inicio de sesión
-  4. usuarios_registro_auditoria  -> bitácora de acciones administrativas (HU-03)
+  2. usuarios_permiso             -> catálogo de acciones autorizables (HU-04)
+  3. usuarios_rol_permisos        -> qué permisos tiene cada rol (HU-04)
+  4. usuarios_usuario             -> personas que acceden al sistema
+  5. usuarios_intento_acceso      -> bitácora de intentos de inicio de sesión
+  6. usuarios_registro_auditoria  -> bitácora de acciones administrativas (HU-03/04)
 
 Las dos últimas son bitácoras y cumplen funciones distintas:
   - IntentoAcceso responde "¿quién entró al sistema?" (autenticación).
-  - RegistroAuditoria responde "¿quién modificó a quién?" (administración).
+  - RegistroAuditoria responde "¿quién modificó qué?" (administración).
+
+La cadena de autorización completa queda así:
+
+    Usuario --rol--> Rol --permisos--> Permiso
+
+Un usuario no tiene permisos propios: los hereda de su rol. Esa es la decisión
+central de la HU-04 y se explica en el modelo Permiso.
 """
 
 from django.contrib.auth.models import AbstractUser
@@ -37,6 +46,122 @@ class RolCodigo(models.TextChoices):
     ADMINISTRADOR = "ADMINISTRADOR", "Administrador"
     SUPERVISOR = "SUPERVISOR", "Supervisor"
     CENSISTA = "CENSISTA", "Censista"
+
+
+class ModuloPermiso(models.TextChoices):
+    """Módulos funcionales de OPSO, usados para AGRUPAR los permisos.
+
+    ¿Por qué agrupar? Porque una matriz plana de veinte casillas sin encabezados
+    es ilegible: el administrador tiene que poder ver "todo lo relativo a
+    fichas" de un vistazo antes de marcar nada. El módulo es una etiqueta de
+    presentación, no una entidad con datos propios, así que es un campo de
+    opciones y no una tabla (a diferencia del rol, ver más abajo).
+    """
+
+    USUARIOS = "USUARIOS", "Usuarios"
+    ROLES = "ROLES", "Roles y permisos"
+    AUDITORIA = "AUDITORIA", "Auditoría"
+    FICHAS = "FICHAS", "Fichas de familias"
+    OPERATIVOS = "OPERATIVOS", "Operativos y sectores"
+    REPORTES = "REPORTES", "Reportes"
+
+
+class Permiso(models.Model):
+    """Una acción concreta que un rol puede tener autorizada.
+
+    DECISIÓN DE DISEÑO — catálogo propio en vez de django.contrib.auth.Permission.
+
+    Django trae su propio sistema de permisos, y se evaluó usarlo. Se descartó
+    por una razón concreta: los permisos de Django se generan automáticamente a
+    partir de los modelos y son siempre los cuatro verbos de una tabla
+    (add_usuario, change_usuario, delete_usuario, view_usuario). Ese vocabulario
+    describe operaciones sobre FILAS, no las acciones del negocio.
+
+    OPSO necesita expresar cosas como "validar una ficha levantada por un
+    censista" o "asignar censistas a un sector". Eso no es "change_ficha": es
+    una acción funcional que un supervisor puede hacer y un censista no, sobre
+    la misma tabla y a veces sobre la misma fila. Forzarlo dentro del esquema de
+    Django obligaría a inventar modelos falsos solo para colgarles permisos, o a
+    crear permisos "personalizados" en el Meta de cada modelo, que es
+    precisamente lo que aquí se hace explícito y consultable.
+
+    Ventaja adicional, la misma que motivó que el rol sea una tabla: agregar el
+    permiso "fichas.reabrir" es INSERTAR UNA FILA. No hay que tocar el código,
+    ni generar una migración, ni redesplegar.
+
+    Los permisos de Django siguen existiendo y funcionando para /admin/ (los
+    usa el propio panel para decidir quién ve qué). Los dos sistemas conviven
+    sin estorbarse porque gobiernan cosas distintas: auth.Permission gobierna
+    /admin/, usuarios.Permiso gobierna OPSO.
+    """
+
+    codigo = models.CharField(
+        "código",
+        max_length=60,
+        unique=True,
+        help_text=(
+            "Identificador interno con el que el código comprueba el permiso. "
+            "Formato módulo.acción, ej.: fichas.validar"
+        ),
+    )
+    nombre = models.CharField(
+        "nombre visible",
+        max_length=120,
+        help_text="Cómo se lee el permiso en la matriz.",
+    )
+    modulo = models.CharField(
+        "módulo",
+        max_length=20,
+        choices=ModuloPermiso.choices,
+        db_index=True,
+        help_text="Sección de OPSO a la que pertenece. Solo agrupa la vista.",
+    )
+    descripcion = models.TextField(
+        "descripción",
+        blank=True,
+        help_text="Qué habilita exactamente. Se muestra como ayuda en la matriz.",
+    )
+    orden = models.PositiveSmallIntegerField(
+        "orden",
+        default=100,
+        help_text=(
+            "Posición dentro de su módulo. Permite listar los permisos de menos "
+            "a más poder (ver, crear, editar, borrar) en vez de alfabéticamente."
+        ),
+    )
+    activo = models.BooleanField(
+        "activo",
+        default=True,
+        help_text=(
+            "Si se desactiva, deja de concederse aunque siga marcado en la "
+            "matriz. Permite retirar un permiso sin borrar las filas que "
+            "documentan quién lo tenía."
+        ),
+    )
+    creado_en = models.DateTimeField("creado en", auto_now_add=True)
+    actualizado_en = models.DateTimeField("actualizado en", auto_now=True)
+
+    class Meta:
+        db_table = "usuarios_permiso"
+        verbose_name = "permiso"
+        verbose_name_plural = "permisos"
+        # El orden de la matriz: primero por módulo, y dentro de cada módulo por
+        # el campo "orden". Así la lista es estable y pedagógica.
+        ordering = ["modulo", "orden", "nombre"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(modulo__in=ModuloPermiso.values),
+                name="permiso_modulo_valido",
+            ),
+        ]
+
+    def __str__(self):
+        return self.nombre
+
+    @property
+    def etiqueta_modulo(self):
+        """Nombre legible del módulo (para plantillas y auditoría)."""
+        return ModuloPermiso(self.modulo).label
 
 
 class Rol(models.Model):
@@ -84,6 +209,26 @@ class Rol(models.Model):
         default=True,
         help_text="Si se desactiva, sus usuarios no podrán iniciar sesión.",
     )
+    # DECISIÓN DE DISEÑO: relación muchos-a-muchos SIN modelo intermedio propio.
+    #
+    # Se consideró un modelo "RolPermiso" explícito con columnas "concedido_en" y
+    # "concedido_por". Se descartó porque esa información ya la responde
+    # RegistroAuditoria, que además la conserva incluso después de que el
+    # permiso se revoque. Una tabla intermedia solo guarda el estado ACTUAL: si
+    # el permiso se quita, la fila desaparece y con ella el dato de quién lo
+    # había concedido. La bitácora, en cambio, es un registro histórico que no
+    # se borra. Duplicar el dato en la tabla intermedia daría una respuesta peor
+    # y obligaría a mantener dos fuentes coherentes.
+    permisos = models.ManyToManyField(
+        Permiso,
+        related_name="roles",
+        blank=True,  # un rol puede existir sin ningún permiso concedido
+        verbose_name="permisos",
+        # Nombre explícito de la tabla intermedia. Django la llamaría igual por
+        # convención, pero declararlo deja el esquema escrito en el código.
+        db_table="usuarios_rol_permisos",
+        help_text="Acciones que este rol tiene autorizadas dentro de OPSO.",
+    )
     creado_en = models.DateTimeField("creado en", auto_now_add=True)
     actualizado_en = models.DateTimeField("actualizado en", auto_now=True)
 
@@ -103,6 +248,22 @@ class Rol(models.Model):
 
     def __str__(self):
         return self.nombre
+
+    @property
+    def concede_todo(self):
+        """True si este rol tiene todos los permisos por definición del negocio.
+
+        Es la contraparte en el modelo Rol de la regla 1 de
+        Usuario.tiene_permiso(): el rol Administrador concede todo de forma
+        implícita. La matriz lo consulta para mostrar su columna marcada y no
+        editable, en vez de dejar creer que quitando una casilla se le retira
+        algo.
+        """
+        return self.codigo == RolCodigo.ADMINISTRADOR
+
+    def permisos_activos(self):
+        """Permisos concedidos y vigentes, ya ordenados por módulo."""
+        return self.permisos.filter(activo=True)
 
 
 class Usuario(AbstractUser):
@@ -231,6 +392,77 @@ class Usuario(AbstractUser):
         return self.rol.codigo in codigos
 
     # ------------------------------------------------------------------
+    # Ayudantes de la HU-04 (Roles y permisos)
+    # ------------------------------------------------------------------
+
+    def tiene_permiso(self, codigo):
+        """True si el rol de este usuario tiene concedido el permiso indicado.
+
+        Tres reglas, en este orden:
+
+        1. El ADMINISTRADOR (y el superusuario técnico) tienen todo concedido de
+           forma implícita. No es un atajo cómodo: es la MISMA regla que ya
+           aplica RolRequeridoMixin con permitir_administrador=True en todo el
+           sistema desde la HU-01. Si aquí se decidiera lo contrario, el
+           administrador podría quitarse a sí mismo el permiso que gobierna la
+           matriz y dejar el sistema sin nadie capaz de repararlo desde la
+           aplicación: el mismo bloqueo total que ya se previene con
+           es_ultimo_administrador_activo().
+
+        2. Sin rol, o con el rol desactivado, no hay ningún permiso. Desactivar
+           un rol tiene que cortar el acceso de golpe, sin recorrer sus filas.
+
+        3. En cualquier otro caso se consulta la matriz. Se exige activo=True
+           también en el permiso: un permiso retirado deja de concederse aunque
+           siga marcado, sin tener que limpiar la tabla intermedia.
+        """
+        if self.es_administrador:
+            return True
+
+        if not self.rol_id or not self.rol.activo:
+            return False
+
+        return self.rol.permisos.filter(codigo=codigo, activo=True).exists()
+
+    def tiene_algun_permiso(self, *codigos):
+        """True si tiene al menos uno de los permisos indicados.
+
+        Se resuelve en UNA consulta con __in en vez de llamar N veces a
+        tiene_permiso(): la diferencia importa en una vista que comprueba varios
+        permisos para decidir qué botones dibujar.
+        """
+        if self.es_administrador:
+            return True
+
+        if not self.rol_id or not self.rol.activo:
+            return False
+
+        return self.rol.permisos.filter(codigo__in=codigos, activo=True).exists()
+
+    def codigos_permisos(self):
+        """Conjunto de los códigos de permiso concedidos a este usuario.
+
+        Devuelve un set y no un QuerySet a propósito: quien lo llame va a hacer
+        varias comprobaciones de pertenencia seguidas (típicamente en una
+        plantilla) y un set las resuelve en memoria, con una sola consulta.
+
+        Para el administrador devuelve TODOS los códigos activos, coherente con
+        la regla 1 de tiene_permiso(): lo que se muestra tiene que coincidir con
+        lo que realmente se autoriza.
+        """
+        if self.es_administrador:
+            return set(
+                Permiso.objects.filter(activo=True).values_list("codigo", flat=True)
+            )
+
+        if not self.rol_id or not self.rol.activo:
+            return set()
+
+        return set(
+            self.rol.permisos.filter(activo=True).values_list("codigo", flat=True)
+        )
+
+    # ------------------------------------------------------------------
     # Ayudantes de la HU-03 (Administración de usuarios)
     # ------------------------------------------------------------------
 
@@ -357,6 +589,9 @@ class AccionAuditoria(models.TextChoices):
     DESHABILITAR = "DESHABILITAR", "Deshabilitó la cuenta"
     HABILITAR = "HABILITAR", "Habilitó la cuenta"
     ENVIAR_ENLACE = "ENVIAR_ENLACE", "Envió enlace de contraseña"
+    # HU-04: esta acción no recae sobre una cuenta sino sobre un ROL. Por eso la
+    # bitácora tiene, además de usuario_afectado, un rol_afectado.
+    CAMBIAR_PERMISOS = "CAMBIAR_PERMISOS", "Cambió los permisos del rol"
 
 
 class RegistroAuditoria(models.Model):
@@ -366,7 +601,13 @@ class RegistroAuditoria(models.Model):
         ¿QUIÉN?    -> administrador (+ administrador_email como copia fija)
         ¿CUÁNDO?   -> ocurrido_en
         ¿QUÉ hizo? -> accion + detalle
-        ¿A QUIÉN?  -> usuario_afectado (+ usuario_afectado_email)
+        ¿SOBRE QUÉ? -> usuario_afectado (+ email) o rol_afectado (+ nombre)
+
+    Desde la HU-04 el objeto afectado puede ser una cuenta o un rol: cambiar los
+    permisos de "Supervisor" no modifica a ninguna persona en particular, pero
+    altera lo que pueden hacer todas las que tengan ese rol, y por eso es
+    justamente lo más importante de auditar. La propiedad "objetivo" resuelve
+    cuál de los dos aplica.
 
     DECISIÓN DE DISEÑO 1 — tabla propia y no reutilizar django_admin_log.
     El log del admin de Django solo registra lo que ocurre DENTRO de /admin/.
@@ -421,6 +662,34 @@ class RegistroAuditoria(models.Model):
         max_length=254,
         blank=True,
     )
+    # ------------------------------------------------------------------
+    # HU-04: el objeto afectado también puede ser un ROL.
+    #
+    # ¿Por qué dos columnas y no una genérica del tipo "objeto_afectado"?
+    # Django ofrece claves foráneas genéricas (contenttypes + GenericForeignKey),
+    # que permitirían apuntar a cualquier modelo con un solo par de columnas. Se
+    # descartó: una clave genérica no la puede verificar la base de datos (no hay
+    # restricción de integridad posible cuando el destino es variable), obliga a
+    # una consulta extra por fila para resolver el tipo, y complica los filtros
+    # del listado. Con dos claves foráneas explícitas y nulas, PostgreSQL sigue
+    # garantizando la integridad y las consultas siguen siendo directas. Solo hay
+    # dos tipos de objeto auditables y no se prevén muchos más.
+    # ------------------------------------------------------------------
+    rol_afectado = models.ForeignKey(
+        "usuarios.Rol",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="acciones_auditoria",
+        verbose_name="rol afectado",
+        help_text="Sobre qué rol se ejecutó la acción (permisos).",
+    )
+    rol_afectado_nombre = models.CharField(
+        "nombre del rol afectado",
+        max_length=60,
+        blank=True,
+        help_text="Copia fija: sobrevive aunque el rol se elimine.",
+    )
     detalle = models.TextField(
         "detalle",
         blank=True,
@@ -446,8 +715,26 @@ class RegistroAuditoria(models.Model):
             ),
         ]
 
+    @property
+    def objetivo(self):
+        """Sobre qué se actuó, en una sola cadena legible.
+
+        Existe para que las plantillas y el admin no repitan el mismo
+        condicional: una fila de auditoría apunta a una cuenta o a un rol, nunca
+        a los dos, y quien la lee solo quiere saber "¿a quién o a qué?".
+
+        Se leen las COPIAS DE TEXTO y no las claves foráneas, por la misma razón
+        por la que esas copias existen: si el objeto se eliminó, la clave es
+        NULL pero el texto sigue ahí y la bitácora no queda ilegible.
+        """
+        if self.usuario_afectado_email:
+            return self.usuario_afectado_email
+        if self.rol_afectado_nombre:
+            return f"Rol: {self.rol_afectado_nombre}"
+        return "—"
+
     def __str__(self):
         return (
             f"{self.ocurrido_en:%d-%m-%Y %H:%M} · {self.administrador_email} "
-            f"· {self.get_accion_display()} · {self.usuario_afectado_email}"
+            f"· {self.get_accion_display()} · {self.objetivo}"
         )
