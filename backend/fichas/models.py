@@ -1380,6 +1380,75 @@ class Encuesta(models.Model):
 
 
     # ------------------------------------------------------------------
+    # LA REVISIÓN DEL SUPERVISOR (HU-13)
+    #
+    # Todo lo de aquí abajo lo consulta quien revisa, no quien levanta. Vive en el
+    # modelo y no en la vista de supervisión porque son preguntas sobre UNA
+    # encuesta, y quien las hará después —la pantalla de aprobar, los reportes— no
+    # puede tener que reimplementarlas.
+    # ------------------------------------------------------------------
+
+    @property
+    def esta_en_revision(self):
+        """True si está esperando que alguien la revise.
+
+        Es COMPLETADA y solo COMPLETADA. Una validada ya se revisó; una observada
+        volvió al encuestador y todavía no ha regresado.
+        """
+        return self.estado == EstadoEncuesta.COMPLETADA
+
+    def dias_esperando(self, a_fecha=None):
+        """Días que lleva esperando revisión, o None si no está esperando.
+
+        Es el dato que ordena la bandeja del supervisor, y por eso se calcula aquí
+        y no en la plantilla: una cuenta de días hecha en HTML no se puede ordenar
+        ni probar.
+
+        Se mide desde `cerrada_en`, que para una encuesta COMPLETADA es el momento
+        en que el encuestador la envió. Devuelve None cuando no está en revisión,
+        que es distinto de cero: cero significa «llegó hoy».
+        """
+        if not self.esta_en_revision or self.cerrada_en is None:
+            return None
+
+        referencia = a_fecha or timezone.localdate()
+
+        return (referencia - timezone.localtime(self.cerrada_en).date()).days
+
+    @property
+    def espera_prolongada(self):
+        """True si lleva demasiado tiempo sin revisar.
+
+        El umbral no es una opinión sobre la diligencia del supervisor: es el punto
+        a partir del cual devolver la ficha deja de servir. Si se observa una
+        encuesta tres semanas después, el encuestador ya no se acuerda de esa casa y
+        probablemente ya no está en esa zona, así que corregirla cuesta otra visita
+        completa en vez de cinco minutos.
+        """
+        dias = self.dias_esperando()
+
+        return dias is not None and dias >= self.DIAS_ESPERA_PROLONGADA
+
+    def resumen_para_revision(self):
+        """Los números que el supervisor necesita ver de un vistazo.
+
+        Un diccionario y no varias propiedades sueltas, porque la bandeja los
+        muestra juntos en una fila y así se piden una vez. Todos leen relaciones que
+        la vista trae con select_related y prefetch_related, así que recorrer la
+        lista no dispara consultas.
+        """
+        hogar = getattr(self, "grupo_familiar", None)
+
+        return {
+            "personas": hogar.total_integrantes() if hogar else 0,
+            "declaradas": hogar.integrantes_declarados if hogar else 0,
+            "tiene_hogar": hogar is not None,
+            "vivienda_descrita": self.vivienda.datos_completos,
+            "tiene_ubicacion": self.vivienda.tiene_ubicacion,
+            "fotografias": self.vivienda.fotografias.count(),
+        }
+
+    # ------------------------------------------------------------------
     def clean(self):
         """Validación de modelo: coherencia entre el estado y sus fechas.
 

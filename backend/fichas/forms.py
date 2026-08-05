@@ -1260,3 +1260,119 @@ class FotografiaForm(forms.ModelForm):
         return fotografia
 
 
+# ==========================================================================
+# HU-13 — LA BANDEJA DE REVISIÓN DEL SUPERVISOR
+# ==========================================================================
+
+
+class FiltroRevisionForm(forms.Form):
+    """Filtros de la bandeja de revisión.
+
+    Es el primer formulario del módulo pensado para el SUPERVISOR, y por eso
+    ofrece cosas que el del encuestador no necesitaba: filtrar por operativo y por
+    persona. El encuestador solo tiene lo suyo; quien revisa mira el trabajo de
+    varias personas repartidas en varios sectores, y sin poder acotar no puede
+    trabajar.
+
+    ----------------------------------------------------------------------
+    LOS DESPLEGABLES SE CONSTRUYEN CON LO QUE HAY, NO CON TODO EL CATÁLOGO
+    ----------------------------------------------------------------------
+    Solo aparecen los operativos, sectores y encuestadores que TIENEN encuestas
+    revisables. Es la misma decisión que FiltroAsignacionesForm tomó en la HU-06 al
+    ofrecer solo los censistas desplegados, y que FiltroMisEncuestasForm repitió en
+    la HU-07: una opción que siempre devuelve una lista vacía es una opción que
+    estorba.
+    """
+
+    #: Valores que agrupan estados en vez de nombrar uno.
+    GRUPO_RECIBIDAS = "RECIBIDAS"
+    GRUPO_REVISADAS = "REVISADAS"
+    GRUPO_TODAS = "TODAS"
+
+    ESTADOS = (
+        (GRUPO_RECIBIDAS, "Esperando revisión"),
+        (EstadoEncuesta.VALIDADA, "Ya validadas"),
+        (EstadoEncuesta.OBSERVADA, "Devueltas con observaciones"),
+        (EstadoEncuesta.ANULADA, "Anuladas"),
+        (GRUPO_REVISADAS, "Ya revisadas (validadas, devueltas y anuladas)"),
+        (GRUPO_TODAS, "Todas las levantadas"),
+    )
+
+    q = forms.CharField(
+        label="Buscar",
+        required=False,
+        max_length=120,
+        widget=forms.TextInput(
+            attrs={
+                "class": CLASE_TEXTO,
+                "placeholder": "Dirección o jefe de hogar",
+                "autocomplete": "off",
+            }
+        ),
+    )
+    estado = forms.ChoiceField(
+        label="Estado",
+        required=False,
+        choices=ESTADOS,
+        widget=forms.Select(attrs={"class": CLASE_SELECT}),
+    )
+    operativo = forms.ModelChoiceField(
+        label="Operativo",
+        required=False,
+        queryset=Operativo.objects.none(),  # se ajusta en __init__
+        empty_label="Todos los operativos",
+        widget=forms.Select(attrs={"class": CLASE_SELECT}),
+    )
+    sector = CampoSector(
+        label="Sector",
+        required=False,
+        queryset=Sector.objects.none(),  # se ajusta en __init__
+        empty_label="Todos los sectores",
+        widget=forms.Select(attrs={"class": CLASE_SELECT}),
+    )
+    censista = forms.ModelChoiceField(
+        label="Encuestador",
+        required=False,
+        queryset=Usuario.objects.none(),  # se ajusta en __init__
+        empty_label="Cualquier encuestador",
+        widget=forms.Select(attrs={"class": CLASE_SELECT}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Solo lo que tiene encuestas ya levantadas: lo demás no se puede revisar.
+        levantadas = Encuesta.objects.exclude(estado=EstadoEncuesta.PENDIENTE)
+
+        self.fields["operativo"].queryset = (
+            Operativo.objects.filter(
+                sectores__zonas__viviendas__encuestas__in=levantadas
+            )
+            .distinct()
+            .order_by("-fecha_inicio")
+        )
+        self.fields["sector"].queryset = (
+            Sector.objects.filter(zonas__viviendas__encuestas__in=levantadas)
+            .select_related("comuna")
+            .distinct()
+            .order_by("comuna__nombre", "nombre")
+        )
+        self.fields["censista"].queryset = (
+            Usuario.objects.filter(encuestas__in=levantadas)
+            .distinct()
+            .order_by("first_name", "last_name")
+        )
+
+    def clean_q(self):
+        return (self.cleaned_data.get("q") or "").strip()
+
+    def clean_estado(self):
+        """Sin elección, se muestran las que esperan revisión.
+
+        Es el valor por defecto porque es la razón por la que alguien abre esta
+        pantalla. Mostrar «todas» obligaría a filtrar cada vez para llegar al
+        trabajo pendiente.
+        """
+        return self.cleaned_data.get("estado") or self.GRUPO_RECIBIDAS
+
+

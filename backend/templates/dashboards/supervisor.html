@@ -64,6 +64,76 @@
   </div>
 </div>
 
+{# La cola de revisión (HU-13): lo primero que el supervisor necesita al entrar. #}
+<div class="card-opso p-4 mb-4">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
+    <h2 class="h5 fw-semibold mb-0">Encuestas por revisar</h2>
+    <a href="{% url 'fichas:bandeja_revision' %}" class="btn btn-opso btn-sm">
+      Ir a la bandeja
+    </a>
+  </div>
+
+  <div class="row g-3 mb-3">
+    <div class="col-6 col-lg-3">
+      <div class="kpi-valor {% if resumen_revision.recibidas %}text-primary{% else %}text-success{% endif %}">
+        {{ resumen_revision.recibidas }}
+      </div>
+      <div class="kpi-etiqueta">Esperando revisión</div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="kpi-valor text-success">{{ resumen_revision.validadas }}</div>
+      <div class="kpi-etiqueta">Validadas</div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="kpi-valor {% if resumen_revision.observadas %}text-danger{% endif %}">
+        {{ resumen_revision.observadas }}
+      </div>
+      <div class="kpi-etiqueta">Devueltas</div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="kpi-valor">{{ resumen_revision.sin_levantar }}</div>
+      <div class="kpi-etiqueta">Cerradas sin levantar</div>
+    </div>
+  </div>
+
+  {% if cola_revision %}
+    {% comment %} Las cinco más antiguas: la cola se atiende por orden de llegada,
+       así que el panel muestra su cabeza. {% endcomment %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr class="small text-secondary">
+            <th scope="col" class="fw-normal ps-0">Dirección</th>
+            <th scope="col" class="fw-normal">Encuestador</th>
+            <th scope="col" class="fw-normal text-center">Espera</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for encuesta in cola_revision %}
+            <tr>
+              <td class="ps-0">
+                <a href="{% url 'fichas:revisar_encuesta' encuesta.pk %}"
+                   class="fw-semibold text-decoration-none">{{ encuesta.direccion }}</a>
+              </td>
+              <td class="small text-secondary">
+                {{ encuesta.censista.get_full_name|default:encuesta.censista.email }}
+              </td>
+              <td class="text-center small {% if encuesta.espera_prolongada %}text-warning-emphasis fw-semibold{% endif %}">
+                {{ encuesta.dias_esperando }} d
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="text-secondary small mb-0">
+      No hay encuestas esperando revisión. Todo lo que han enviado los
+      encuestadores está revisado.
+    </p>
+  {% endif %}
+</div>
+
 <div class="card-opso p-4">
   <h2 class="h6 fw-semibold">Alcance de este rol</h2>
   <ul class="text-secondary small mb-0 ps-3">

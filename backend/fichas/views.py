@@ -1834,3 +1834,265 @@ class ServirFotografiaView(PermisoRequeridoMixin, View):
         return respuesta
 
 
+# ==========================================================================
+# HU-13 — LA REVISIÓN DEL SUPERVISOR
+# ==========================================================================
+
+# --------------------------------------------------------------------------
+# EL ORDEN DE LA BANDEJA: LA QUE LLEVA MÁS ESPERANDO, PRIMERO
+#
+# Es el criterio OPUESTO al de «Mis encuestas» (HU-07), donde manda la urgencia. No
+# es una incoherencia: son dos colas distintas.
+#
+# El encuestador elige a qué puerta va y le conviene atacar primero lo que bloquea a
+# otros. El supervisor no elige: recibe una cola, y la única política justa para una
+# cola es atenderla en orden de llegada. Ordenarla por «lo más fácil» o «lo más
+# nuevo» produce fichas antiguas que no se revisan nunca, y una ficha revisada tres
+# semanas tarde ya no se puede corregir: el encuestador no recuerda esa casa y
+# probablemente ya no trabaja esa zona.
+# --------------------------------------------------------------------------
+
+
+class RevisionMixin(PermisoRequeridoMixin):
+    """Puerta de las pantallas de supervisión.
+
+    `fichas.ver_todas` es el permiso correcto y no `fichas.validar`: estas dos
+    pantallas solo LEEN. Quien puede ver el trabajo de todos puede revisarlo; poder
+    aprobarlo o devolverlo es otra cosa y llega con las historias siguientes, que
+    sí exigirán `fichas.validar`.
+
+    Separarlos permite algo real: un coordinador que necesita mirar cómo va el
+    operativo puede recibir `ver_todas` sin quedar habilitado para validar fichas.
+    """
+
+    permisos_requeridos = ("fichas.ver_todas",)
+    mensaje_sin_permiso = (
+        "No tienes permiso para revisar las encuestas de otras personas."
+    )
+
+    def encuestas_revisables(self):
+        """Todas las encuestas ya levantadas, con lo necesario para juzgarlas.
+
+        Se excluyen las PENDIENTES: una puerta que nadie ha tocado no es trabajo
+        recibido y llenaría la bandeja de ruido. Las cerradas sin levantar
+        —no ubicada, rechazada— SÍ entran: el supervisor tiene que poder leer el
+        motivo y decidir si manda a otra persona.
+        """
+        return (
+            Encuesta.objects.exclude(estado=EstadoEncuesta.PENDIENTE)
+            .select_related(
+                "vivienda",
+                "vivienda__zona",
+                "vivienda__zona__sector",
+                "vivienda__zona__sector__comuna",
+                "vivienda__zona__sector__operativo",
+                "censista",
+                "grupo_familiar",
+            )
+        )
+
+
+class BandejaRevisionView(RevisionMixin, ListView):
+    """Las encuestas recibidas, en orden de llegada.
+
+    URL: /encuestas/revision/
+
+    ----------------------------------------------------------------------
+    ESTA ES «LA EXCEPCIÓN» QUE LA HU-07 DEJÓ ANUNCIADA
+    ----------------------------------------------------------------------
+    Cuando se escribieron las URL del módulo, la HU-07 justificó que el listado
+    propio del encuestador fuera la raíz `/encuestas/` con esta frase:
+
+        «Cuando la historia de supervisión agregue el listado de TODAS las
+        encuestas del operativo, esa irá en su propia subruta, porque será la
+        excepción.»
+
+    Esta es esa pantalla y esa subruta.
+
+    ----------------------------------------------------------------------
+    LO QUE MUESTRA CADA FILA, Y POR QUÉ
+    ----------------------------------------------------------------------
+    Revisar no es leer una ficha entera: es decidir CUÁL abrir. Por eso la fila
+    lleva los cuatro números que permiten sospechar antes de entrar —personas
+    registradas contra declaradas, si la vivienda está descrita, si tiene ubicación
+    y cuántas fotos— más los días que lleva esperando.
+
+    Con eso, una bandeja de cuarenta fichas se recorre en un minuto y se entra solo
+    a las que lo piden.
+    """
+
+    permisos_requeridos = ("fichas.ver_todas",)
+    model = Encuesta
+    template_name = "fichas/revision_bandeja.html"
+    context_object_name = "encuestas"
+    paginate_by = 25
+
+    def get_queryset(self):
+        consulta = self.encuestas_revisables().prefetch_related(
+            "grupo_familiar__integrantes", "vivienda__fotografias"
+        )
+
+        self.filtro = FiltroRevisionForm(self.request.GET or None)
+
+        if self.filtro.is_valid():
+            consulta = self.aplicar_filtros(consulta, self.filtro.cleaned_data)
+        else:
+            # Sin filtros válidos se muestra lo que espera revisión, que es la
+            # razón por la que alguien abre esta pantalla.
+            consulta = consulta.filter(estado=EstadoEncuesta.COMPLETADA)
+
+        # Orden de llegada: nulls al final, para que una fila sin fecha —que no
+        # debería existir— no encabece la cola.
+        return consulta.order_by(F("cerrada_en").asc(nulls_last=True), "id")
+
+    def aplicar_filtros(self, consulta, datos):
+        estado = datos.get("estado")
+
+        if estado == FiltroRevisionForm.GRUPO_RECIBIDAS:
+            consulta = consulta.filter(estado=EstadoEncuesta.COMPLETADA)
+        elif estado == FiltroRevisionForm.GRUPO_REVISADAS:
+            # El grupo «ya revisadas» se arma con ESTADOS_RESUELTOS y no a mano,
+            # para que una cuarta resolución futura aparezca aquí sola.
+            consulta = consulta.filter(estado__in=ESTADOS_RESUELTOS)
+        elif estado != FiltroRevisionForm.GRUPO_TODAS:
+            consulta = consulta.filter(estado=estado)
+
+        if texto := datos.get("q"):
+            consulta = consulta.filter(
+                Q(vivienda__direccion__icontains=texto)
+                | Q(grupo_familiar__jefe_hogar_nombre__icontains=texto)
+            )
+
+        if operativo := datos.get("operativo"):
+            consulta = consulta.filter(vivienda__zona__sector__operativo=operativo)
+
+        if sector := datos.get("sector"):
+            consulta = consulta.filter(vivienda__zona__sector=sector)
+
+        if censista := datos.get("censista"):
+            consulta = consulta.filter(censista=censista)
+
+        return consulta
+
+    def get_context_data(self, **kwargs):
+        contexto = super().get_context_data(**kwargs)
+
+        contexto["titulo_pagina"] = "Revisión de encuestas"
+        contexto["filtro"] = self.filtro
+
+        parametros = self.request.GET.copy()
+        parametros.pop("page", None)
+        contexto["parametros"] = parametros.urlencode()
+
+        contexto["resumen"] = self.resumen()
+        contexto["mas_antigua"] = self.mas_antigua()
+        return contexto
+
+    def resumen(self):
+        """Los contadores de la cola, en una sola consulta.
+
+        Se calculan sobre TODAS las encuestas revisables y no sobre lo filtrado, por
+        lo mismo que en la HU-07: un contador que cambia al filtrar responde «cuánto
+        hay de lo que estoy mirando», que ya se ve en la lista.
+        """
+        return self.encuestas_revisables().aggregate(
+            recibidas=Count("id", filter=Q(estado=EstadoEncuesta.COMPLETADA)),
+            validadas=Count("id", filter=Q(estado=EstadoEncuesta.VALIDADA)),
+            observadas=Count("id", filter=Q(estado=EstadoEncuesta.OBSERVADA)),
+            anuladas=Count("id", filter=Q(estado=EstadoEncuesta.ANULADA)),
+            sin_levantar=Count("id", filter=Q(estado__in=ESTADOS_SIN_LEVANTAR)),
+        )
+
+    def mas_antigua(self):
+        """La encuesta que lleva más tiempo esperando, o None si no hay ninguna.
+
+        Se muestra aparte de la lista porque es el indicador de salud de la cola: si
+        la más antigua lleva tres semanas, el problema no es esa ficha, es el ritmo
+        de revisión. Y es lo que hace visible que devolver una encuesta tarde ya no
+        sirve de nada.
+        """
+        return (
+            self.encuestas_revisables()
+            .filter(estado=EstadoEncuesta.COMPLETADA, cerrada_en__isnull=False)
+            .order_by("cerrada_en")
+            .first()
+        )
+
+
+class RevisarEncuestaView(RevisionMixin, DetailView):
+    """La encuesta completa en una sola pantalla, para poder juzgarla.
+
+    URL: /encuestas/<pk>/revisar/
+
+    ----------------------------------------------------------------------
+    POR QUÉ NO SIRVE LA FICHA QUE YA EXISTÍA
+    ----------------------------------------------------------------------
+    `EncuestaDetailView` (HU-07) está pensada para el encuestador: le dice dónde
+    queda la casa y qué le falta por hacer. Para revisar hace falta lo contrario:
+    ver TODO lo levantado junto —la vivienda con sus seis características, el hogar,
+    las personas una por una, la ubicación y las fotografías— sin abrir cinco
+    pantallas.
+
+    Reutilizar aquella habría significado llenarla de bloques que al encuestador no
+    le sirven, y aun así obligar al supervisor a navegar. Son dos lecturas distintas
+    del mismo dato, y cada una merece su pantalla.
+
+    ----------------------------------------------------------------------
+    SOLO LEE
+    ----------------------------------------------------------------------
+    No hay ningún botón que cambie el estado. Aprobar, rechazar y devolver con
+    observaciones son las historias siguientes del sprint y exigirán
+    `fichas.validar`, que esta vista no pide.
+    """
+
+    permisos_requeridos = ("fichas.ver_todas",)
+    model = Encuesta
+    template_name = "fichas/revision_encuesta.html"
+    context_object_name = "encuesta"
+
+    def get_queryset(self):
+        return self.encuestas_revisables().select_related(
+            "vivienda__zona__sector__comuna__region", "asignada_por"
+        )
+
+    def get_context_data(self, **kwargs):
+        contexto = super().get_context_data(**kwargs)
+        encuesta = self.object
+        hogar = getattr(encuesta, "grupo_familiar", None)
+
+        contexto["titulo_pagina"] = f"Revisar {encuesta.direccion}"
+        contexto["hogar"] = hogar
+        contexto["integrantes"] = (
+            hogar.integrantes_ordenados() if hogar is not None else []
+        )
+        contexto["fotografias"] = encuesta.vivienda.fotografias.all()
+        contexto["resumen"] = encuesta.resumen_para_revision()
+
+        # Los otros hogares de la misma vivienda: al revisar importa saber si esa
+        # casa tiene una segunda familia, porque explica un ingreso por persona
+        # extraño o una cantidad de gente que no cuadra con la fachada.
+        contexto["otros_hogares"] = (
+            encuesta.vivienda.encuestas.exclude(pk=encuesta.pk)
+            .select_related("censista", "grupo_familiar")
+            .order_by("id")
+        )
+
+        # HU-14: los botones de resolver. Se dibujan con `fichas.validar` y la
+        # pantalla se abre con `fichas.ver_todas`, así que quien solo puede mirar
+        # ve la ficha completa sin acciones. Cuando no se puede resolver se explica
+        # el motivo en vez de esconder los botones en silencio: un supervisor
+        # mirando su propia ficha necesita saber que es la separación de funciones y
+        # no un fallo.
+        puede, motivo = encuesta.puede_resolverla(self.request.user)
+
+        contexto["puede_validar"] = puede and self.request.user.tiene_permiso(
+            "fichas.validar"
+        )
+        contexto["motivo_no_resoluble"] = (
+            motivo
+            if not puede and self.request.user.tiene_permiso("fichas.validar")
+            else ""
+        )
+        return contexto
+
+

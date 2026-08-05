@@ -37,6 +37,18 @@ app_name = "fichas"
 urlpatterns = [
     path("", views.MisEncuestasView.as_view(), name="mis_encuestas"),
     # ------------------------------------------------------------------
+    # SUPERVISIÓN (HU-13) — ruta fija, antes de las que llevan <int:pk>
+    #
+    # Es «la excepción» que esta misma cabecera dejó anunciada en la HU-07: el
+    # listado propio del encuestador es la raíz porque el módulo nace para él, y el
+    # listado de TODAS las encuestas —el de quien supervisa— va en su subruta.
+    # ------------------------------------------------------------------
+    path(
+        "revision/",
+        views.BandejaRevisionView.as_view(),
+        name="bandeja_revision",
+    ),
+    # ------------------------------------------------------------------
     # VIVIENDAS (HU-08) — rutas fijas antes de las que llevan <int:pk>
     #
     # /encuestas/viviendas/nueva/ tiene que declararse antes de
@@ -162,6 +174,13 @@ urlpatterns = [
     # HU-05: la acción se nombra en la dirección, y el objeto sobre el que actúa la
     # identifica el <pk> que ya está delante.
     # ------------------------------------------------------------------
+    # La revisión de UNA encuesta (HU-13). Va con sufijo bajo su <pk>, como las
+    # tres acciones de la HU-10: la pantalla es otra lectura del mismo objeto.
+    path(
+        "<int:pk>/revisar/",
+        views.RevisarEncuestaView.as_view(),
+        name="revisar_encuesta",
+    ),
         name="guardar_borrador",
     ),
     path(

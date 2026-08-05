@@ -1,0 +1,413 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   REVISAR UNA ENCUESTA — /encuestas/<pk>/revisar/
+
+   Todo lo levantado en UNA pantalla: la vivienda con sus seis características, la
+   ubicación, las fotografías, el hogar y las personas una por una.
+
+   No reutiliza la ficha del encuestador (HU-07) porque son dos lecturas distintas
+   del mismo dato: aquella dice «dónde queda la casa y qué te falta»; esta dice «qué
+   levantó esta persona, y cuadra». Reutilizarla habría significado llenarla de
+   bloques que al encuestador no le sirven y aun así obligar al supervisor a navegar
+   por cinco pantallas.
+
+   DESDE LA HU-14 TAMBIÉN RESUELVE. Al pie aparecen «Validar» y «Anular», pero solo
+   para quien tiene `fichas.validar` y solo si la encuesta está esperando revisión.
+   Leer y resolver siguen siendo permisos distintos: esta pantalla se abre con
+   `ver_todas` y los botones se dibujan con `validar`.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Revisar {{ encuesta.direccion }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:bandeja_revision' %}">Revisión de encuestas</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">{{ encuesta.direccion }}</li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+      {{ encuesta.direccion }}
+    </h1>
+    <p class="text-secondary mb-0">
+      {{ encuesta.zona.nombre }} · {{ encuesta.zona.sector.nombre }} ·
+      {{ encuesta.zona.sector.comuna.nombre }}
+    </p>
+  </div>
+  <div class="text-end">
+    {% include "fichas/_estado_encuesta.html" with encuesta=encuesta %}
+    <div class="text-secondary small mt-1">
+      {{ encuesta.censista.get_full_name|default:encuesta.censista.email }}
+    </div>
+    {% if encuesta.dias_esperando is not None %}
+      <div class="small {% if encuesta.espera_prolongada %}text-warning-emphasis fw-semibold{% else %}text-secondary{% endif %}">
+        esperando hace {{ encuesta.dias_esperando }} día{{ encuesta.dias_esperando|pluralize }}
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if encuesta.motivo_cierre %}
+  {% comment %} Si se cerró sin levantar, el motivo es lo único que hay que leer: es
+     lo que permite decidir si se manda a otra persona a esa dirección. {% endcomment %}
+  <div class="alert alert-dark small" role="alert">
+    <strong>No se pudo levantar ({{ encuesta.get_estado_display|lower }}):</strong>
+    {{ encuesta.motivo_cierre|linebreaksbr }}
+  </div>
+{% endif %}
+
+{% if otros_hogares %}
+  {% comment %} Al revisar importa saber si la casa tiene una segunda familia:
+     explica un ingreso por persona extraño o una cantidad de gente que no cuadra
+     con la fachada. {% endcomment %}
+  <div class="alert alert-info small" role="alert">
+    Esta vivienda tiene <strong>{{ otros_hogares|length }} hogar{{ otros_hogares|length|pluralize:"es" }} más</strong>:
+    {% for otro in otros_hogares %}
+      <a href="{% url 'fichas:revisar_encuesta' otro.pk %}">
+        {{ otro.grupo_familiar.jefe_hogar_nombre|default:"sin registrar" }}</a>{% if not forloop.last %}, {% endif %}
+    {% endfor %}.
+  </div>
+{% endif %}
+
+<div class="row g-3">
+
+  {# ---------- La vivienda ---------- #}
+  <div class="col-12 col-lg-6">
+    <div class="card-opso p-4 h-100">
+      <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
+        <h2 class="h6 fw-semibold mb-0">La vivienda</h2>
+        {% if encuesta.vivienda.datos_completos %}
+          <span class="badge text-bg-success">descrita</span>
+        {% else %}
+          <span class="badge text-bg-warning">sin describir</span>
+        {% endif %}
+      </div>
+
+      <dl class="row mb-0 small">
+        <dt class="col-5 text-secondary fw-normal">Referencia</dt>
+        <dd class="col-7">{{ encuesta.vivienda.referencia|default:"—" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Tipo</dt>
+        <dd class="col-7">{{ encuesta.vivienda.get_tipo_display|default:"—" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Muros</dt>
+        <dd class="col-7">{{ encuesta.vivienda.get_materialidad_muros_display|default:"—" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Tenencia</dt>
+        <dd class="col-7">{{ encuesta.vivienda.get_tenencia_display|default:"—" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Agua</dt>
+        <dd class="col-7">{{ encuesta.vivienda.get_origen_agua_display|default:"—" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Sanitario</dt>
+        <dd class="col-7">{{ encuesta.vivienda.get_sistema_sanitario_display|default:"—" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Electricidad</dt>
+        <dd class="col-7 mb-0">
+          {% if encuesta.vivienda.tiene_electricidad is None %}—
+          {% elif encuesta.vivienda.tiene_electricidad %}Sí{% else %}No{% endif %}
+        </dd>
+      </dl>
+
+      <hr class="my-3">
+      <h3 class="h6 fw-semibold mb-2">Ubicación</h3>
+      {% if encuesta.vivienda.tiene_ubicacion %}
+        <p class="small mb-0">
+          <span class="font-monospace">{{ encuesta.vivienda.coordenadas }}</span>
+          {% if encuesta.vivienda.precision_aceptable %}
+            <span class="badge text-bg-success">±{{ encuesta.vivienda.precision_metros }} m</span>
+          {% else %}
+            <span class="badge text-bg-warning">
+              {% if encuesta.vivienda.precision_metros %}±{{ encuesta.vivienda.precision_metros }} m, {% endif %}poco precisa
+            </span>
+          {% endif %}
+          {% if encuesta.vivienda.ubicacion_manual %}
+            <span class="badge text-bg-secondary">escrita a mano</span>
+          {% endif %}
+        </p>
+      {% else %}
+        <p class="small text-secondary mb-0">Sin ubicación capturada.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ---------- El hogar ---------- #}
+  <div class="col-12 col-lg-6">
+    <div class="card-opso p-4 h-100">
+      <h2 class="h6 fw-semibold mb-3">El hogar</h2>
+
+      {% if hogar %}
+        <dl class="row mb-0 small">
+          <dt class="col-5 text-secondary fw-normal">Jefatura</dt>
+          <dd class="col-7 fw-semibold">{{ hogar.jefe_hogar_nombre }}</dd>
+
+          <dt class="col-5 text-secondary fw-normal">RUT</dt>
+          <dd class="col-7">{{ hogar.jefe_hogar_rut|default:"No entregado" }}</dd>
+
+          <dt class="col-5 text-secondary fw-normal">Teléfono</dt>
+          <dd class="col-7">{{ hogar.telefono_contacto|default:"—" }}</dd>
+
+          <dt class="col-5 text-secondary fw-normal">Personas</dt>
+          <dd class="col-7">
+            {{ hogar.total_integrantes }} registrada{{ hogar.total_integrantes|pluralize }}
+            de {{ hogar.integrantes_declarados }} declarada{{ hogar.integrantes_declarados|pluralize }}
+            {% if hogar.hay_discrepancia %}
+              <span class="badge text-bg-warning">hay más</span>
+            {% elif not hogar.esta_completo %}
+              <span class="badge text-bg-warning">faltan {{ hogar.integrantes_pendientes }}</span>
+            {% endif %}
+          </dd>
+
+          <dt class="col-5 text-secondary fw-normal">Ingreso</dt>
+          <dd class="col-7">
+            {% if hogar.ingreso_mensual %}
+              ${{ hogar.ingreso_mensual|floatformat:"0" }}
+            {% else %}
+              No entregado
+            {% endif %}
+          </dd>
+
+          <dt class="col-5 text-secondary fw-normal">Por persona</dt>
+          <dd class="col-7 mb-0">
+            {% if hogar.ingreso_por_persona %}
+              ${{ hogar.ingreso_por_persona|floatformat:"0" }}
+            {% else %}—{% endif %}
+          </dd>
+        </dl>
+
+        {% if not hogar.nombre_del_jefe_coincide %}
+          <div class="alert alert-info small mt-3 mb-0" role="alert">
+            El hogar se registró a nombre de <strong>{{ hogar.jefe_hogar_nombre }}</strong>
+            y la persona marcada como jefa es
+            <strong>{{ hogar.jefe_hogar_registrado.nombre_completo }}</strong>.
+          </div>
+        {% endif %}
+
+        {% if hogar.observaciones %}
+          <p class="small mt-3 mb-0">{{ hogar.observaciones|linebreaksbr }}</p>
+        {% endif %}
+      {% else %}
+        <p class="small text-secondary mb-0">
+          No se registraron los datos del hogar.
+        </p>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ---------- Las personas ---------- #}
+  <div class="col-12">
+    <div class="card-opso p-4">
+      <h2 class="h6 fw-semibold mb-3">
+        Las personas
+        <span class="badge text-bg-light border">{{ integrantes|length }}</span>
+      </h2>
+
+      {% if integrantes %}
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr class="small text-secondary">
+                <th scope="col" class="fw-normal ps-0">Persona</th>
+                <th scope="col" class="fw-normal">Parentesco</th>
+                <th scope="col" class="fw-normal text-center">Edad</th>
+                <th scope="col" class="fw-normal">Escolaridad</th>
+                <th scope="col" class="fw-normal">Ocupación</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for integrante in integrantes %}
+                <tr>
+                  <td class="ps-0">
+                    {{ integrante.nombre_completo }}
+                    {% if integrante.tiene_discapacidad %}
+                      <span class="badge text-bg-info">discapacidad</span>
+                    {% endif %}
+                    {% if integrante.rut %}
+                      <div class="text-secondary small">{{ integrante.rut }}</div>
+                    {% endif %}
+                  </td>
+                  <td class="small">
+                    {% if integrante.es_jefe_hogar %}
+                      <span class="badge text-bg-primary">{{ integrante.get_parentesco_display }}</span>
+                    {% else %}
+                      {{ integrante.get_parentesco_display }}
+                    {% endif %}
+                  </td>
+                  <td class="text-center small">{{ integrante.edad }}</td>
+                  <td class="small text-secondary">
+                    {{ integrante.get_nivel_educacional_display|default:"—" }}
+                  </td>
+                  <td class="small text-secondary">
+                    {{ integrante.get_situacion_ocupacional_display|default:"—" }}
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      {% else %}
+        <p class="small text-secondary mb-0">No se registró ninguna persona.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ---------- Las fotografías ---------- #}
+  {% if fotografias %}
+    <div class="col-12">
+      <div class="card-opso p-4">
+        <h2 class="h6 fw-semibold mb-3">
+          Fotografías
+          <span class="badge text-bg-light border">{{ fotografias|length }}</span>
+        </h2>
+        <div class="row g-3">
+          {% for foto in fotografias %}
+            <div class="col-6 col-md-4 col-lg-3">
+              {% comment %} Por la vista que comprueba permisos, nunca por MEDIA_URL:
+                 el supervisor las ve porque tiene `fichas.ver_todas`. {% endcomment %}
+              <a href="{% url 'fichas:ver_fotografia' foto.pk %}" target="_blank" rel="noopener">
+                <img src="{% url 'fichas:ver_fotografia' foto.pk %}"
+                     alt="{{ foto.descripcion }}"
+                     class="img-fluid rounded border" loading="lazy">
+              </a>
+              <div class="small mt-1">{{ foto.get_tipo_display }}</div>
+              <div class="small text-secondary">{{ foto.descripcion }}</div>
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+  {% endif %}
+
+  {# ---------- La trazabilidad ---------- #}
+  <div class="col-12">
+    <div class="card-opso p-4">
+      <h2 class="h6 fw-semibold mb-3">Trazabilidad</h2>
+      <dl class="row mb-0 small">
+        <dt class="col-6 col-sm-3 text-secondary fw-normal">Levantó</dt>
+        <dd class="col-6 col-sm-3">
+          {{ encuesta.censista.get_full_name|default:encuesta.censista.email }}
+        </dd>
+
+        <dt class="col-6 col-sm-3 text-secondary fw-normal">Primera visita</dt>
+        <dd class="col-6 col-sm-3">{{ encuesta.iniciada_en|date:"d-m-Y H:i"|default:"—" }}</dd>
+
+        <dt class="col-6 col-sm-3 text-secondary fw-normal">Enviada</dt>
+        <dd class="col-6 col-sm-3">{{ encuesta.cerrada_en|date:"d-m-Y H:i"|default:"—" }}</dd>
+
+        <dt class="col-6 col-sm-3 text-secondary fw-normal">Operativo</dt>
+        <dd class="col-6 col-sm-3 mb-0">{{ encuesta.zona.sector.operativo.nombre }}</dd>
+      </dl>
+
+      {% if encuesta.nota_avance %}
+        <p class="text-secondary small mt-3 mb-0">
+          <strong>Nota del encuestador:</strong> {{ encuesta.nota_avance }}
+        </p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# ---------- Las acciones de la resolución (HU-14) ---------- #}
+{% comment %} Solo aparecen si la encuesta está esperando revisión y quien mira puede
+   resolverla. `puede_resolver` viene de Encuesta.puede_resolverla(), que además de
+   comprobar el estado impide validar la PROPIA encuesta: quien levanta no valida.
+
+   Cuando no se puede, se dice por qué en vez de esconder los botones sin
+   explicación: un supervisor que ve su propia ficha sin acciones necesita saber que
+   es por la separación de funciones y no por un fallo. {% endcomment %}
+{% if puede_validar %}
+  <div class="card-opso p-4 mt-3">
+    <h2 class="h6 fw-semibold mb-2">Resolver</h2>
+    {% comment %} Las tres salidas, descritas por su consecuencia y no por su verbo:
+       quien decide necesita saber qué le pasa a la ficha después, no cómo se llama la
+       acción. El orden no es casual —validar, devolver, anular— porque va de la menos
+       a la más grave. {% endcomment %}
+    <p class="text-secondary small">
+      Valídala si la información está correcta, devuélvela si se puede corregir, o
+      anúlala solo si la ficha no sirve y no hay nada que arreglar.
+    </p>
+    <div class="d-flex gap-2 flex-wrap">
+      <a href="{% url 'fichas:validar_encuesta' encuesta.pk %}" class="btn btn-opso">
+        Validar
+      </a>
+      <a href="{% url 'fichas:devolver_encuesta' encuesta.pk %}" class="btn btn-outline-warning">
+        Devolver con observaciones
+      </a>
+      <a href="{% url 'fichas:anular_encuesta' encuesta.pk %}" class="btn btn-outline-danger">
+        Anular
+      </a>
+    </div>
+
+    {% comment %} La reincidencia se avisa AQUÍ, donde se toma la decisión, y no en la
+       bandeja: es aquí donde el supervisor está a punto de devolverla por cuarta vez
+       sin saber que ya van tres. El umbral lo pone el modelo
+       (DEVOLUCIONES_PARA_ALERTAR). {% endcomment %}
+    {% if encuesta.devuelta_repetidamente %}
+      <div class="alert alert-warning small mt-3 mb-0" role="alert">
+        <strong>Esta ficha ya se devolvió {{ encuesta.veces_devuelta }} veces.</strong>
+        Si vuelve con los mismos errores, el problema probablemente no está en la
+        ficha: conviene hablar con
+        {{ encuesta.censista.get_full_name|default:encuesta.censista.email }} antes de
+        devolverla otra vez.
+      </div>
+    {% endif %}
+  </div>
+{% elif motivo_no_resoluble %}
+  <div class="alert alert-secondary small mt-3" role="alert">
+    {{ motivo_no_resoluble }}
+  </div>
+{% endif %}
+
+{# ---------- La resolución, si ya se tomó ---------- #}
+{% if encuesta.esta_resuelta %}
+  <div class="card-opso p-4 mt-3">
+    <h2 class="h6 fw-semibold mb-2">Resolución</h2>
+    <dl class="row mb-0 small">
+      <dt class="col-5 col-sm-3 text-secondary fw-normal">Resultado</dt>
+      <dd class="col-7 col-sm-9">
+        {% include "fichas/_estado_encuesta.html" with encuesta=encuesta %}
+      </dd>
+
+      <dt class="col-5 col-sm-3 text-secondary fw-normal">Resolvió</dt>
+      <dd class="col-7 col-sm-9">
+        {% if encuesta.revisada_por %}
+          {{ encuesta.revisada_por.get_full_name|default:encuesta.revisada_por.email }}
+        {% else %}—{% endif %}
+      </dd>
+
+      <dt class="col-5 col-sm-3 text-secondary fw-normal">Cuándo</dt>
+      <dd class="col-7 col-sm-9{% if not encuesta.fue_devuelta %} mb-0{% endif %}">
+        {{ encuesta.revisada_en|date:"d-m-Y H:i"|default:"—" }}
+      </dd>
+
+      {% comment %} El historial de devoluciones se muestra aunque la ficha ya esté
+         validada: que costara tres intentos es información de calidad del operativo, y
+         desaparecería justo cuando la ficha se cierra bien. {% endcomment %}
+      {% if encuesta.fue_devuelta %}
+        <dt class="col-5 col-sm-3 text-secondary fw-normal">Devoluciones</dt>
+        <dd class="col-7 col-sm-9 mb-0">
+          {{ encuesta.veces_devuelta }} vez{{ encuesta.veces_devuelta|pluralize:"es" }}
+        </dd>
+      {% endif %}
+    </dl>
+
+    {% if encuesta.comentario_revision %}
+      <p class="small mt-3 mb-0">{{ encuesta.comentario_revision|linebreaksbr }}</p>
+    {% endif %}
+  </div>
+{% endif %}
+
+<div class="mt-4">
+  <a href="{% url 'fichas:bandeja_revision' %}" class="btn btn-outline-secondary btn-sm">
+    Volver a la bandeja
+  </a>
+</div>
+
+{% endblock %}

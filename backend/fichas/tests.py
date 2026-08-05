@@ -5891,3 +5891,623 @@ class IntegracionHU12Test(BaseFotografiaTest):
         self.assertFalse(ruta.exists())
 
 
+# ==========================================================================
+# HU-13 — 57. LA REVISIÓN DEL SUPERVISOR
+# ==========================================================================
+
+
+class BaseRevisionTest(BaseEncuestaTest):
+    """Escenario común: encuestas de dos personas en varios estados."""
+
+    def setUp(self):
+        super().setUp()
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
+        self.url_bandeja = reverse("fichas:bandeja_revision")
+
+    def url_revisar(self, encuesta):
+        return reverse("fichas:revisar_encuesta", kwargs={"pk": encuesta.pk})
+
+    def recibida(self, direccion="Av. Central 100", hace_dias=0, censista=None, **extra):
+        """Una encuesta COMPLETADA, enviada hace N días."""
+        encuesta = self.crear(
+            direccion=direccion,
+            censista=censista,
+            estado=EstadoEncuesta.COMPLETADA,
+            **extra,
+        )
+        encuesta.cerrada_en = timezone.now() - timedelta(days=hace_dias)
+        encuesta.save(update_fields=["cerrada_en"])
+        return encuesta
+
+    def con_hogar(self, encuesta, declarados=2, personas=0):
+        hogar = GrupoFamiliar.objects.create(
+            encuesta=encuesta,
+            jefe_hogar_nombre="Rosa Elena Millán",
+            integrantes_declarados=declarados,
+        )
+        for numero in range(personas):
+            Integrante.objects.create(
+                grupo_familiar=hogar,
+                parentesco=(
+                    Parentesco.JEFE_HOGAR if numero == 0 else Parentesco.HIJO
+                ),
+                nombres=f"Persona {numero}",
+                apellidos="Millán",
+                sexo=Sexo.FEMENINO,
+                fecha_nacimiento=timezone.localdate() - timedelta(days=30 * 365),
+                nivel_educacional=NivelEducacional.MEDIA_COMPLETA,
+                situacion_ocupacional=SituacionOcupacional.TRABAJA,
+            )
+        return hogar
+
+
+class EsperaDeRevisionTest(BaseRevisionTest):
+    def test_solo_las_completadas_estan_en_revision(self):
+        for estado in EstadoEncuesta.values:
+            with self.subTest(estado=estado):
+                encuesta = self.crear(direccion=f"Calle {estado}", estado=estado)
+                self.assertEqual(
+                    encuesta.esta_en_revision, estado == EstadoEncuesta.COMPLETADA
+                )
+
+    def test_cuenta_los_dias_desde_que_se_envio(self):
+        encuesta = self.recibida(hace_dias=4)
+
+        self.assertEqual(encuesta.dias_esperando(), 4)
+
+    def test_una_recien_enviada_lleva_cero_dias(self):
+        """Cero es «llegó hoy», que es distinto de «no está esperando»."""
+        self.assertEqual(self.recibida().dias_esperando(), 0)
+
+    def test_una_que_no_espera_no_tiene_dias(self):
+        encuesta = self.crear(estado=EstadoEncuesta.BORRADOR)
+
+        self.assertIsNone(encuesta.dias_esperando())
+
+    def test_una_validada_tampoco(self):
+        encuesta = self.crear(direccion="Calle 2", estado=EstadoEncuesta.VALIDADA)
+
+        self.assertIsNone(encuesta.dias_esperando())
+
+    def test_la_espera_se_puede_medir_a_una_fecha_dada(self):
+        encuesta = self.recibida(hace_dias=2)
+        futuro = timezone.localdate() + timedelta(days=5)
+
+        self.assertEqual(encuesta.dias_esperando(a_fecha=futuro), 7)
+
+    def test_una_espera_corta_no_es_prolongada(self):
+        self.assertFalse(self.recibida(hace_dias=2).espera_prolongada)
+
+    def test_una_espera_larga_si_lo_es(self):
+        """Pasado el umbral, devolverla cuesta otra visita completa."""
+        self.assertTrue(self.recibida(hace_dias=10).espera_prolongada)
+
+    def test_el_umbral_es_inclusivo(self):
+        self.assertTrue(
+            self.recibida(hace_dias=Encuesta.DIAS_ESPERA_PROLONGADA).espera_prolongada
+        )
+
+    def test_una_que_no_espera_nunca_es_prolongada(self):
+        encuesta = self.crear(estado=EstadoEncuesta.BORRADOR)
+
+        self.assertFalse(encuesta.espera_prolongada)
+
+
+class ResumenParaRevisionTest(BaseRevisionTest):
+    def test_una_encuesta_sin_hogar_lo_dice(self):
+        datos = self.recibida().resumen_para_revision()
+
+        self.assertFalse(datos["tiene_hogar"])
+        self.assertEqual(datos["personas"], 0)
+
+    def test_cuenta_personas_registradas_y_declaradas(self):
+        encuesta = self.recibida()
+        self.con_hogar(encuesta, declarados=4, personas=2)
+
+        datos = encuesta.resumen_para_revision()
+
+        self.assertEqual(datos["personas"], 2)
+        self.assertEqual(datos["declaradas"], 4)
+
+    def test_informa_si_la_vivienda_esta_descrita(self):
+        self.assertTrue(self.recibida().resumen_para_revision()["vivienda_descrita"])
+
+    def test_informa_si_falta_la_descripcion(self):
+        vivienda = Vivienda.objects.create(zona=self.zona1, direccion="Sin describir")
+        encuesta = self.recibida(vivienda=vivienda, direccion="Sin describir")
+
+        self.assertFalse(encuesta.resumen_para_revision()["vivienda_descrita"])
+
+    def test_informa_si_falta_la_ubicacion(self):
+        self.assertFalse(self.recibida().resumen_para_revision()["tiene_ubicacion"])
+
+    def test_cuenta_las_fotografias(self):
+        self.assertEqual(self.recibida().resumen_para_revision()["fotografias"], 0)
+
+
+# ==========================================================================
+# HU-13 — 58. LA BANDEJA
+# ==========================================================================
+
+
+class BandejaRevisionTest(BaseRevisionTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.supervisor)
+
+    def test_el_supervisor_entra(self):
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_el_administrador_entra(self):
+        self.client.force_login(self.admin)
+
+        self.assertEqual(self.client.get(self.url_bandeja).status_code, 200)
+
+    def test_el_encuestador_no_entra(self):
+        """Tiene `ver_propias` pero no `ver_todas`: la bandeja no es para él."""
+        self.client.force_login(self.marta)
+
+        self.assertEqual(self.client.get(self.url_bandeja).status_code, 302)
+
+    def test_un_visitante_anonimo_va_al_login(self):
+        self.client.logout()
+
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertIn(reverse("usuarios:login"), respuesta.url)
+
+    def test_muestra_las_recibidas_por_defecto(self):
+        self.recibida(direccion="Av. Central 100")
+
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertContains(respuesta, "Av. Central 100")
+
+    def test_no_muestra_las_pendientes(self):
+        """Una puerta que nadie tocó no es trabajo recibido."""
+        self.crear(direccion="Nunca visitada")
+
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertNotContains(respuesta, "Nunca visitada")
+
+    def test_no_muestra_los_borradores(self):
+        self.crear(direccion="A medias", estado=EstadoEncuesta.BORRADOR)
+
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertNotContains(respuesta, "A medias")
+
+    def test_muestra_las_de_todos_los_encuestadores(self):
+        """Es la diferencia con «Mis encuestas»: aquí se ve el trabajo de todos."""
+        self.recibida(direccion="De Marta", censista=self.marta)
+        self.recibida(direccion="De Juan", censista=self.juan)
+
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertContains(respuesta, "De Marta")
+        self.assertContains(respuesta, "De Juan")
+
+    # -- el orden ----------------------------------------------------------
+
+    def test_la_que_lleva_mas_esperando_va_primero(self):
+        """Orden de llegada: es la única política justa para una cola."""
+        self.recibida(direccion="Reciente", hace_dias=1)
+        self.recibida(direccion="Antigua", hace_dias=9)
+
+        respuesta = self.client.get(self.url_bandeja)
+        direcciones = [e.direccion for e in respuesta.context["encuestas"]]
+
+        self.assertEqual(direcciones, ["Antigua", "Reciente"])
+
+    def test_destaca_la_mas_antigua_si_lleva_demasiado(self):
+        self.recibida(direccion="Antigua", hace_dias=12)
+
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertContains(respuesta, "12 días")
+        self.assertContains(respuesta, "devolverla con observaciones")
+
+    def test_no_avisa_si_la_cola_esta_al_dia(self):
+        self.recibida(hace_dias=1)
+
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertNotContains(respuesta, "devolverla con observaciones")
+
+    # -- los contadores ----------------------------------------------------
+
+    def test_cuenta_cada_estado(self):
+        self.recibida(direccion="A")
+        self.crear(direccion="B", estado=EstadoEncuesta.VALIDADA)
+        self.crear(direccion="C", estado=EstadoEncuesta.OBSERVADA)
+        self.crear(direccion="D", estado=EstadoEncuesta.NO_UBICADA)
+
+        resumen = self.client.get(self.url_bandeja).context["resumen"]
+
+        self.assertEqual(resumen["recibidas"], 1)
+        self.assertEqual(resumen["validadas"], 1)
+        self.assertEqual(resumen["observadas"], 1)
+        self.assertEqual(resumen["sin_levantar"], 1)
+
+    def test_los_contadores_no_cambian_al_filtrar(self):
+        self.recibida(direccion="A")
+        self.crear(direccion="B", estado=EstadoEncuesta.VALIDADA)
+
+        resumen = self.client.get(
+            self.url_bandeja, {"estado": EstadoEncuesta.VALIDADA}
+        ).context["resumen"]
+
+        self.assertEqual(resumen["recibidas"], 1)
+
+    def test_sin_nada_por_revisar_lo_dice(self):
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertContains(respuesta, "Todo lo recibido está revisado")
+
+    # -- las señales de la fila -------------------------------------------
+
+    def test_avisa_de_una_encuesta_sin_hogar(self):
+        self.recibida()
+
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertContains(respuesta, "sin hogar")
+
+    def test_avisa_de_personas_faltantes(self):
+        encuesta = self.recibida()
+        self.con_hogar(encuesta, declarados=4, personas=1)
+
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertContains(respuesta, "1 de 4 personas")
+
+    def test_avisa_de_una_vivienda_sin_describir(self):
+        vivienda = Vivienda.objects.create(zona=self.zona1, direccion="Sin describir")
+        self.recibida(vivienda=vivienda, direccion="Sin describir")
+
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertContains(respuesta, "vivienda sin describir")
+
+    def test_avisa_de_la_falta_de_gps(self):
+        self.recibida()
+
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertContains(respuesta, "sin GPS")
+
+
+class FiltrosRevisionTest(BaseRevisionTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.supervisor)
+        self.de_marta = self.recibida(direccion="Av. Central 100", censista=self.marta)
+        self.de_juan = self.crear(
+            direccion="Calle Juan 1",
+            censista=self.juan,
+            estado=EstadoEncuesta.VALIDADA,
+        )
+
+    def direcciones(self, **filtros):
+        respuesta = self.client.get(self.url_bandeja, filtros)
+        return [e.direccion for e in respuesta.context["encuestas"]]
+
+    def test_por_defecto_solo_las_recibidas(self):
+        self.assertEqual(self.direcciones(), ["Av. Central 100"])
+
+    def test_filtra_por_validadas(self):
+        self.assertEqual(
+            self.direcciones(estado=EstadoEncuesta.VALIDADA), ["Calle Juan 1"]
+        )
+
+    def test_el_grupo_revisadas_junta_validadas_y_devueltas(self):
+        self.crear(direccion="Devuelta 1", estado=EstadoEncuesta.OBSERVADA)
+
+        direcciones = self.direcciones(estado="REVISADAS")
+
+        self.assertEqual(set(direcciones), {"Calle Juan 1", "Devuelta 1"})
+
+    def test_el_grupo_todas_incluye_lo_cerrado_sin_levantar(self):
+        self.crear(direccion="No ubicada 1", estado=EstadoEncuesta.NO_UBICADA)
+
+        self.assertEqual(len(self.direcciones(estado="TODAS")), 3)
+
+    def test_filtra_por_encuestador(self):
+        self.assertEqual(
+            self.direcciones(estado="TODAS", censista=self.juan.pk), ["Calle Juan 1"]
+        )
+
+    def test_filtra_por_sector(self):
+        self.assertEqual(
+            len(self.direcciones(estado="TODAS", sector=self.boldos.pk)), 2
+        )
+
+    def test_filtra_por_operativo(self):
+        self.assertEqual(
+            len(self.direcciones(estado="TODAS", operativo=self.operativo.pk)), 2
+        )
+
+    def test_busca_por_direccion(self):
+        self.assertEqual(self.direcciones(q="central"), ["Av. Central 100"])
+
+    def test_busca_por_jefe_de_hogar(self):
+        self.con_hogar(self.de_marta)
+
+        self.assertEqual(self.direcciones(q="Rosa Elena"), ["Av. Central 100"])
+
+    def test_un_estado_inventado_no_rompe_la_pantalla(self):
+        respuesta = self.client.get(self.url_bandeja, {"estado": "INVENTADO"})
+
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_los_desplegables_solo_ofrecen_lo_que_tiene_encuestas(self):
+        """Una opción que siempre devuelve una lista vacía es una opción que estorba."""
+        formulario = FiltroRevisionForm()
+
+        self.assertEqual(list(formulario.fields["operativo"].queryset), [self.operativo])
+        self.assertEqual(
+            set(formulario.fields["censista"].queryset), {self.marta, self.juan}
+        )
+
+    def test_los_filtros_sobreviven_al_cambiar_de_pagina(self):
+        respuesta = self.client.get(self.url_bandeja, {"q": "central"})
+
+        self.assertIn("q=central", respuesta.context["parametros"])
+
+
+class ConsultasBandejaTest(BaseRevisionTest):
+    """La bandeja no debe pagar una consulta por fila."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.supervisor)
+
+    def poblar(self, cuantas, desde=0):
+        for numero in range(desde, desde + cuantas):
+            encuesta = self.recibida(direccion=f"Calle {numero:02d}")
+            self.con_hogar(encuesta, declarados=2, personas=1)
+
+    def contar(self):
+        with CaptureQueriesContext(connection) as captura:
+            self.client.get(self.url_bandeja)
+        return len(captura.captured_queries)
+
+    def test_el_numero_de_consultas_no_crece_con_las_encuestas(self):
+        self.poblar(2)
+        con_dos = self.contar()
+
+        self.poblar(5, desde=2)
+        con_siete = self.contar()
+
+        self.assertEqual(con_dos, con_siete)
+
+
+# ==========================================================================
+# HU-13 — 59. LA PANTALLA DE REVISIÓN
+# ==========================================================================
+
+
+class RevisarEncuestaTest(BaseRevisionTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.supervisor)
+        self.encuesta = self.recibida(direccion="Av. Central 100", hace_dias=3)
+        self.hogar = self.con_hogar(self.encuesta, declarados=2, personas=2)
+        self.url = self.url_revisar(self.encuesta)
+
+    def test_el_supervisor_abre_cualquier_encuesta(self):
+        respuesta = self.client.get(self.url)
+
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_el_encuestador_no_entra_aunque_sea_suya(self):
+        """Su lectura es la ficha de la HU-07; esta pantalla es para supervisar."""
+        self.client.force_login(self.marta)
+
+        self.assertEqual(self.client.get(self.url).status_code, 302)
+
+    def test_muestra_la_vivienda_completa(self):
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, "Albañilería")
+        self.assertContains(respuesta, "Arrendada")
+
+    def test_muestra_el_hogar(self):
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, "Rosa Elena Millán")
+
+    def test_muestra_a_las_personas_una_por_una(self):
+        respuesta = self.client.get(self.url)
+
+        self.assertEqual(len(respuesta.context["integrantes"]), 2)
+        self.assertContains(respuesta, "Persona 0")
+
+    def test_muestra_los_dias_de_espera(self):
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, "esperando hace 3 días")
+
+    def test_avisa_si_faltan_personas(self):
+        otra = self.recibida(direccion="Calle 2")
+        self.con_hogar(otra, declarados=5, personas=1)
+
+        respuesta = self.client.get(self.url_revisar(otra))
+
+        self.assertContains(respuesta, "faltan 4")
+
+    def test_avisa_si_el_nombre_del_jefe_no_coincide(self):
+        otra = self.recibida(direccion="Calle 3")
+        hogar = self.con_hogar(otra, declarados=1, personas=0)
+        Integrante.objects.create(
+            grupo_familiar=hogar,
+            parentesco=Parentesco.JEFE_HOGAR,
+            nombres="Otro",
+            apellidos="Nombre",
+            sexo=Sexo.MASCULINO,
+            fecha_nacimiento=timezone.localdate() - timedelta(days=30 * 365),
+            nivel_educacional=NivelEducacional.MEDIA_COMPLETA,
+            situacion_ocupacional=SituacionOcupacional.TRABAJA,
+        )
+
+        respuesta = self.client.get(self.url_revisar(otra))
+
+        self.assertContains(respuesta, "se registró a nombre de")
+
+    def test_muestra_el_motivo_de_un_cierre_sin_datos(self):
+        cerrada = self.crear(
+            direccion="No ubicada 1",
+            estado=EstadoEncuesta.NO_UBICADA,
+            motivo_cierre="La dirección no existe en ese pasaje.",
+        )
+
+        respuesta = self.client.get(self.url_revisar(cerrada))
+
+        self.assertContains(respuesta, "no existe en ese pasaje")
+
+    def test_avisa_de_los_otros_hogares_de_la_vivienda(self):
+        """Explica un ingreso por persona extraño o gente que no cuadra."""
+        self.recibida(vivienda=self.encuesta.vivienda, direccion="Av. Central 100")
+
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, "hogar")
+        self.assertEqual(len(respuesta.context["otros_hogares"]), 1)
+
+    def test_muestra_la_nota_del_encuestador(self):
+        self.encuesta.nota_avance = "Volví tres veces hasta encontrarlos."
+        self.encuesta.save()
+
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, "Volví tres veces")
+
+    def test_ofrece_resolver_a_quien_puede_validar(self):
+        """Hasta la HU-13 esta pantalla no ofrecía acciones; la HU-14 las agregó."""
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, reverse("fichas:validar_encuesta", args=[self.encuesta.pk]))
+        self.assertContains(respuesta, reverse("fichas:anular_encuesta", args=[self.encuesta.pk]))
+
+    def test_no_ofrece_resolver_a_quien_solo_puede_mirar(self):
+        """Leer y firmar son permisos distintos: es el corte que la HU-13 preparó."""
+        self.rol_supervisor.permisos.remove(
+            Permiso.objects.get(codigo="fichas.validar")
+        )
+
+        respuesta = self.client.get(self.url)
+
+        self.assertNotContains(
+            respuesta, reverse("fichas:validar_encuesta", args=[self.encuesta.pk])
+        )
+
+    def test_una_encuesta_pendiente_no_se_puede_revisar(self):
+        pendiente = self.crear(direccion="Nunca visitada")
+
+        respuesta = self.client.get(self.url_revisar(pendiente))
+
+        self.assertEqual(respuesta.status_code, 404)
+
+
+# ==========================================================================
+# HU-13 — 60. EL MENÚ Y EL PANEL DEL SUPERVISOR
+# ==========================================================================
+
+
+class SupervisionEnElPanelTest(BaseRevisionTest):
+    def setUp(self):
+        super().setUp()
+        self.url_panel = reverse("dashboards:supervisor")
+
+    def test_el_enlace_a_la_bandeja_aparece_para_el_supervisor(self):
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_panel)
+
+        self.assertContains(respuesta, self.url_bandeja)
+
+    def test_el_encuestador_no_ve_el_enlace(self):
+        self.client.force_login(self.marta)
+
+        respuesta = self.client.get(reverse("dashboards:censista"))
+
+        self.assertNotContains(respuesta, self.url_bandeja)
+
+    def test_el_panel_cuenta_lo_que_espera_revision(self):
+        self.recibida()
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_panel)
+
+        self.assertEqual(respuesta.context["resumen_revision"]["recibidas"], 1)
+
+    def test_el_panel_muestra_la_cabeza_de_la_cola(self):
+        self.recibida(direccion="Antigua", hace_dias=9)
+        self.recibida(direccion="Reciente", hace_dias=1)
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_panel)
+
+        self.assertEqual(respuesta.context["cola_revision"][0].direccion, "Antigua")
+
+    def test_el_panel_muestra_como_maximo_cinco(self):
+        for numero in range(8):
+            self.recibida(direccion=f"Calle {numero}", hace_dias=numero)
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_panel)
+
+        self.assertEqual(len(respuesta.context["cola_revision"]), 5)
+
+    def test_sin_cola_el_panel_lo_dice(self):
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_panel)
+
+        self.assertContains(respuesta, "No hay encuestas esperando revisión")
+
+
+# ==========================================================================
+# HU-13 — 61. RECORRIDO COMPLETO
+# ==========================================================================
+
+
+class IntegracionHU13Test(BaseRevisionTest):
+    def test_del_envio_del_encuestador_a_la_bandeja_del_supervisor(self):
+        # 1. Marta envía dos encuestas, una antigua y una de hoy.
+        antigua = self.recibida(direccion="Av. Central 100", hace_dias=10)
+        self.con_hogar(antigua, declarados=3, personas=1)
+        self.recibida(direccion="Av. Central 118", hace_dias=0)
+
+        # 2. El supervisor abre la bandeja y ve las dos, la antigua primero.
+        self.client.force_login(self.supervisor)
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertEqual(respuesta.context["resumen"]["recibidas"], 2)
+        self.assertEqual(
+            respuesta.context["encuestas"][0].direccion, "Av. Central 100"
+        )
+
+        # 3. La bandeja avisa de que la más antigua lleva demasiado.
+        self.assertContains(respuesta, "10 días")
+
+        # 4. Y muestra, sin abrirla, que a esa le faltan personas.
+        self.assertContains(respuesta, "1 de 3 personas")
+
+        # 5. Al abrirla, ve todo lo levantado en una pantalla.
+        respuesta = self.client.get(self.url_revisar(antigua))
+        self.assertContains(respuesta, "Rosa Elena Millán")
+        self.assertContains(respuesta, "faltan 2")
+
+        # 6. Marta, que la levantó, no entra a la pantalla de revisión.
+        self.client.force_login(self.marta)
+        self.assertEqual(self.client.get(self.url_revisar(antigua)).status_code, 302)
+
+        # 7. Pero sigue viendo su propia ficha, que es otra lectura del mismo dato.
+        self.assertEqual(self.client.get(self.url_detalle(antigua)).status_code, 200)
+
+

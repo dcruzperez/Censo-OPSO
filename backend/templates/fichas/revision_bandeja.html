@@ -1,0 +1,215 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   BANDEJA DE REVISIÓN — /encuestas/revision/
+
+   La primera pantalla del sprint de supervisión, y la primera del módulo que no es
+   para el encuestador.
+
+   ORDEN DE LLEGADA, no de urgencia. Es el criterio opuesto al de «Mis encuestas», y
+   no es una incoherencia: el encuestador elige a qué puerta va y le conviene atacar
+   lo que bloquea a otros; el supervisor recibe una cola, y la única política justa
+   para una cola es atenderla en orden de llegada. Ordenarla por «lo más nuevo»
+   produce fichas antiguas que no se revisan nunca.
+
+   CADA FILA LLEVA CUATRO NÚMEROS para poder sospechar antes de entrar: personas
+   registradas contra declaradas, si la vivienda está descrita, si tiene ubicación y
+   cuántas fotos. Revisar no es leer cuarenta fichas: es decidir cuáles abrir.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Revisión de encuestas{% endblock %}
+
+{% block contenido %}
+
+<div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+      Revisión de encuestas
+    </h1>
+    <p class="text-secondary mb-0">
+      Las fichas que los encuestadores enviaron, en orden de llegada.
+    </p>
+  </div>
+</div>
+
+{# ---------- El estado de la cola ---------- #}
+<div class="row g-3 mb-3">
+  <div class="col-6 col-lg-3">
+    <div class="card-opso p-3">
+      <div class="kpi-valor {% if resumen.recibidas %}text-primary{% else %}text-success{% endif %}">
+        {{ resumen.recibidas }}
+      </div>
+      <div class="kpi-etiqueta">
+        {% if resumen.recibidas %}Esperando revisión{% else %}Nada por revisar{% endif %}
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-opso p-3">
+      <div class="kpi-valor text-success">{{ resumen.validadas }}</div>
+      <div class="kpi-etiqueta">Validadas</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-opso p-3">
+      <div class="kpi-valor {% if resumen.observadas %}text-danger{% endif %}">
+        {{ resumen.observadas }}
+      </div>
+      <div class="kpi-etiqueta">Devueltas</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-opso p-3">
+      <div class="kpi-valor">{{ resumen.sin_levantar }}</div>
+      <div class="kpi-etiqueta">Cerradas sin levantar</div>
+    </div>
+  </div>
+</div>
+
+{% comment %} El indicador de salud de la cola. Si la más antigua lleva tres semanas,
+   el problema no es esa ficha: es el ritmo de revisión. Y devolverla a esas alturas
+   ya no sirve, porque el encuestador no recuerda esa casa. {% endcomment %}
+{% if mas_antigua and mas_antigua.espera_prolongada %}
+  <div class="alert alert-warning small d-flex gap-2" role="alert">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+    <div>
+      La encuesta más antigua lleva <strong>{{ mas_antigua.dias_esperando }} días</strong>
+      esperando. Pasado ese punto, devolverla con observaciones cuesta otra visita
+      completa: el encuestador ya no recuerda esa casa y puede que no siga en esa
+      zona.
+      <a href="{% url 'fichas:revisar_encuesta' mas_antigua.pk %}" class="fw-semibold">
+        Revisarla ahora</a>.
+    </div>
+  </div>
+{% endif %}
+
+{# ---------- Filtros ---------- #}
+<form method="get" class="card-opso p-3 mb-3">
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-lg-3">
+      <label for="{{ filtro.q.id_for_label }}" class="form-label small fw-semibold mb-1">{{ filtro.q.label }}</label>
+      {{ filtro.q }}
+    </div>
+    <div class="col-12 col-sm-6 col-lg-2">
+      <label for="{{ filtro.estado.id_for_label }}" class="form-label small fw-semibold mb-1">{{ filtro.estado.label }}</label>
+      {{ filtro.estado }}
+    </div>
+    <div class="col-12 col-sm-6 col-lg-2">
+      <label for="{{ filtro.operativo.id_for_label }}" class="form-label small fw-semibold mb-1">{{ filtro.operativo.label }}</label>
+      {{ filtro.operativo }}
+    </div>
+    <div class="col-12 col-sm-6 col-lg-2">
+      <label for="{{ filtro.sector.id_for_label }}" class="form-label small fw-semibold mb-1">{{ filtro.sector.label }}</label>
+      {{ filtro.sector }}
+    </div>
+    <div class="col-12 col-sm-6 col-lg-2">
+      <label for="{{ filtro.censista.id_for_label }}" class="form-label small fw-semibold mb-1">{{ filtro.censista.label }}</label>
+      {{ filtro.censista }}
+    </div>
+    <div class="col-12 col-lg-1 d-flex gap-2">
+      <button type="submit" class="btn btn-opso btn-sm w-100">Filtrar</button>
+    </div>
+  </div>
+  {% if parametros %}
+    <a href="{% url 'fichas:bandeja_revision' %}" class="small mt-2 d-inline-block">
+      Quitar los filtros
+    </a>
+  {% endif %}
+</form>
+
+{# ---------- La cola ---------- #}
+<div class="card-opso p-0 overflow-hidden">
+  <div class="table-responsive">
+    <table class="table table-hover align-middle mb-0">
+      <thead class="table-light">
+        <tr>
+          <th scope="col">Dirección</th>
+          <th scope="col">Encuestador</th>
+          <th scope="col">Estado</th>
+          <th scope="col" class="text-center">Espera</th>
+          <th scope="col">Señales</th>
+          <th scope="col" class="text-end">Revisar</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for encuesta in encuestas %}
+          {% with datos=encuesta.resumen_para_revision %}
+            <tr {% if encuesta.espera_prolongada %}class="table-warning"{% endif %}>
+              <td>
+                <a href="{% url 'fichas:revisar_encuesta' encuesta.pk %}" class="fw-semibold text-decoration-none">
+                  {{ encuesta.direccion }}
+                </a>
+                <div class="text-secondary small">
+                  {{ encuesta.zona.nombre }} · {{ encuesta.zona.sector.nombre }}
+                </div>
+              </td>
+              <td class="small">
+                {{ encuesta.censista.get_full_name|default:encuesta.censista.email }}
+              </td>
+              <td>{% include "fichas/_estado_encuesta.html" with encuesta=encuesta %}</td>
+              <td class="text-center small">
+                {% if encuesta.dias_esperando is not None %}
+                  {{ encuesta.dias_esperando }} d
+                {% else %}
+                  —
+                {% endif %}
+              </td>
+              <td>
+                {% comment %} Las señales que permiten sospechar sin abrir la ficha.
+                   No juzgan: describen. Quien decide es quien revisa. {% endcomment %}
+                <div class="d-flex flex-wrap gap-1 small">
+                  {% if not datos.tiene_hogar %}
+                    <span class="badge text-bg-danger">sin hogar</span>
+                  {% elif datos.personas < datos.declaradas %}
+                    <span class="badge text-bg-warning">
+                      {{ datos.personas }} de {{ datos.declaradas }} personas
+                    </span>
+                  {% else %}
+                    <span class="badge text-bg-light border">
+                      {{ datos.personas }} persona{{ datos.personas|pluralize }}
+                    </span>
+                  {% endif %}
+
+                  {% if not datos.vivienda_descrita %}
+                    <span class="badge text-bg-warning">vivienda sin describir</span>
+                  {% endif %}
+
+                  {% if not datos.tiene_ubicacion %}
+                    <span class="badge text-bg-secondary">sin GPS</span>
+                  {% endif %}
+
+                  {% if datos.fotografias %}
+                    <span class="badge text-bg-light border">
+                      {{ datos.fotografias }} foto{{ datos.fotografias|pluralize }}
+                    </span>
+                  {% endif %}
+                </div>
+              </td>
+              <td class="text-end">
+                <a href="{% url 'fichas:revisar_encuesta' encuesta.pk %}"
+                   class="btn btn-outline-secondary btn-sm">Abrir</a>
+              </td>
+            </tr>
+          {% endwith %}
+        {% empty %}
+          <tr>
+            <td colspan="6" class="text-center text-secondary py-4">
+              {% if parametros %}
+                Ninguna encuesta coincide con lo que buscaste.
+                <a href="{% url 'fichas:bandeja_revision' %}">Ver la cola completa</a>.
+              {% else %}
+                No hay encuestas esperando revisión. Todo lo recibido está revisado.
+              {% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% include "operativos/_paginacion.html" with etiqueta="encuesta" genero="a" %}
+</div>
+
+{% endblock %}
