@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   CAPTURAR LA UBICACIÓN — /encuestas/viviendas/<pk>/ubicacion/
+
+   Es la ÚNICA pantalla del proyecto con JavaScript propio, y conviene decir por qué
+   y con qué límites.
+
+   POR QUÉ HACE FALTA JAVASCRIPT AQUÍ Y EN NINGÚN OTRO SITIO
+   La historia pide capturar la ubicación AUTOMÁTICAMENTE. La posición del aparato
+   solo la puede pedir el navegador, con navigator.geolocation, y eso es JavaScript
+   por definición: no existe forma de obtenerla desde el servidor.
+
+   PROGRESSIVE ENHANCEMENT, NO DEPENDENCIA
+   Los tres campos son visibles y editables. Sin JavaScript, sin permiso de
+   ubicación o bajo techo sin señal, la pantalla SIGUE SIRVIENDO: se escriben las
+   coordenadas a mano y la encuesta no se queda sin punto. El botón de capturar es
+   una comodidad que rellena campos, no el único camino.
+
+   SIN MAPA, Y ES DELIBERADO
+   Dibujar el punto sobre un mapa sería más bonito y exigiría pedir las imágenes a
+   un servidor ajeno (OpenStreetMap, Google, Mapbox), lo que significa dos cosas que
+   el proyecto no acepta: que OPSO deje de funcionar sin internet —hasta Bootstrap
+   está servido localmente— y que las COORDENADAS DE LA CASA DE UNA FAMILIA viajen a
+   un tercero cada vez que alguien abre la ficha. Si el mapa hiciera falta, la forma
+   correcta sería un servidor de teselas propio.
+
+   EL SCRIPT VA EN LA PÁGINA Y NO EN UN ARCHIVO APARTE porque son treinta líneas que
+   solo sirven aquí, y un archivo en static/ obligaría a recordar
+   `collectstatic` para una pantalla.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Ubicación de {{ vivienda.direccion }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'fichas:mis_encuestas' %}">Mis encuestas</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:vivienda_detalle' vivienda.pk %}">{{ vivienda.direccion }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Ubicación</li>
+  </ol>
+</nav>
+
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+    Ubicación de la vivienda
+  </h1>
+  <p class="text-secondary mb-0">
+    {{ vivienda.direccion }} · {{ vivienda.zona.nombre }} ·
+    {{ vivienda.zona.sector.nombre }}
+  </p>
+</div>
+
+{% if vivienda.tiene_ubicacion %}
+  <div class="alert alert-light border small" role="alert">
+    <strong>Ya tiene un punto guardado:</strong> {{ vivienda.coordenadas }}
+    {% if vivienda.precision_metros %}
+      · precisión {{ vivienda.precision_metros }} m
+      {% if not vivienda.precision_aceptable %}
+        <span class="badge text-bg-warning">poco precisa</span>
+      {% endif %}
+    {% endif %}
+    {% if vivienda.ubicacion_manual %}
+      <span class="badge text-bg-secondary">escrita a mano</span>
+    {% endif %}
+    <div class="text-secondary">
+      Capturada el {{ vivienda.ubicacion_capturada_en|date:"d-m-Y H:i" }}. Volver a
+      capturar la reemplaza.
+    </div>
+  </div>
+{% endif %}
+
+{# ---------- El botón que hace el trabajo ---------- #}
+<div class="card-opso p-4 mb-3">
+  <h2 class="h6 fw-semibold mb-2">Capturar con el aparato</h2>
+  <p class="text-secondary small">
+    Ponte <strong>en la puerta de la vivienda y al aire libre</strong>: bajo techo el
+    error puede ser de cien metros o más. Espera unos segundos a que el punto se
+    afine antes de guardar.
+  </p>
+
+  <button type="button" id="boton-capturar" class="btn btn-opso">
+    Capturar mi ubicación
+  </button>
+
+  {# Los avisos del script. Empiezan ocultos y con aria-live para que un lector de
+     pantalla anuncie el resultado, que si no sería un cambio invisible. #}
+  <div id="estado-captura" class="small mt-3 d-none" role="status" aria-live="polite"></div>
+</div>
+
+{% if form.non_field_errors %}
+  <div class="alert alert-danger small" role="alert">
+    {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+  </div>
+{% endif %}
+
+<form method="post" novalidate id="formulario-ubicacion">
+  {% csrf_token %}
+
+  {# Marca si el punto vino del aparato o se escribió. Lo pone el script a "1"; si
+     no hay JavaScript se queda en "0" y el formulario lo guarda como manual, que es
+     la suposición prudente. #}
+  <input type="hidden" name="capturada" id="campo-capturada" value="0">
+
+  <div class="card-opso p-4 mb-3">
+    <h2 class="h6 fw-semibold mb-3">Coordenadas</h2>
+    <div class="row g-3">
+      {% include "usuarios/gestion/_campo.html" with campo=form.latitud ancho="col-12 col-md-4" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.longitud ancho="col-12 col-md-4" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.precision_metros ancho="col-12 col-md-4" %}
+    </div>
+
+    <p class="text-secondary small mb-0 mt-2">
+      En Chile las dos son <strong>negativas</strong>. Si el aparato no consigue
+      ubicarte, puedes escribirlas a mano: quedarán marcadas como tales.
+    </p>
+
+    {% if form.confirmar_lejania.errors or distancia_al_resto %}
+      {% comment %} La tercera capa de validación: el punto está lejos del resto de
+         la zona. Solo AVISA, no bloquea, porque una parcela apartada puede
+         pertenecer de verdad a la zona y bloquearla haría perder un dato
+         verdadero. Mismo patrón que el aviso de dirección duplicada de la HU-08.
+         {% endcomment %}
+      <div class="alert alert-warning small mt-3 mb-0" role="alert">
+        <strong>Este punto está lejos del resto de la zona.</strong>
+        Suele significar que el aparato entregó una posición antigua: la que tenía
+        guardada de donde estuviste antes.
+        <div class="form-check mt-2">
+          {{ form.confirmar_lejania }}
+          <label class="form-check-label" for="{{ form.confirmar_lejania.id_for_label }}">
+            {{ form.confirmar_lejania.label }}
+          </label>
+        </div>
+        {% for error in form.confirmar_lejania.errors %}
+          <div class="text-danger mt-1">{{ error }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="alert alert-info small d-flex gap-2" role="alert">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+    </svg>
+    <div>
+      Las coordenadas de una vivienda son <strong>un dato personal de la familia</strong>:
+      dicen dónde vive. Se guardan solo en OPSO y no se envían a ningún servicio
+      externo, ni siquiera para dibujar un mapa.
+    </div>
+  </div>
+
+  <div class="d-flex gap-2 flex-wrap">
+    <button type="submit" class="btn btn-opso">Guardar la ubicación</button>
+    <a href="{% url 'fichas:vivienda_detalle' vivienda.pk %}" class="btn btn-outline-secondary">
+      Cancelar
+    </a>
+  </div>
+</form>
+
+{% endblock %}
+
+{% block js_extra %}
+<script>
+(function () {
+  "use strict";
+
+  var boton = document.getElementById("boton-capturar");
+  var aviso = document.getElementById("estado-captura");
+  var campoLatitud = document.getElementById("{{ form.latitud.auto_id }}");
+  var campoLongitud = document.getElementById("{{ form.longitud.auto_id }}");
+  var campoPrecision = document.getElementById("{{ form.precision_metros.auto_id }}");
+  var campoCapturada = document.getElementById("campo-capturada");
+
+  // Umbral de precisión aceptable. Llega desde el modelo para que la pantalla y el
+  // servidor no puedan discrepar sobre qué es un punto bueno.
+  var PRECISION_ACEPTABLE = {{ vivienda.PRECISION_ACEPTABLE }};
+
+  function mostrar(mensaje, clase) {
+    aviso.className = "small mt-3 " + clase;
+    aviso.textContent = mensaje;
+  }
+
+  // Si el navegador no sabe geolocalizar, se dice y se deja el formulario en paz:
+  // los campos se pueden escribir a mano.
+  if (!("geolocation" in navigator)) {
+    boton.disabled = true;
+    mostrar(
+      "Este navegador no puede entregar la ubicación. Escribe las coordenadas a mano.",
+      "text-secondary mt-3"
+    );
+    return;
+  }
+
+  boton.addEventListener("click", function () {
+    boton.disabled = true;
+    mostrar("Buscando la señal… puede tardar unos segundos.", "text-secondary mt-3");
+
+    navigator.geolocation.getCurrentPosition(
+      function (posicion) {
+        var precision = Math.round(posicion.coords.accuracy);
+
+        campoLatitud.value = posicion.coords.latitude.toFixed(6);
+        campoLongitud.value = posicion.coords.longitude.toFixed(6);
+        campoPrecision.value = precision;
+        campoCapturada.value = "1";
+
+        boton.disabled = false;
+
+        if (precision > PRECISION_ACEPTABLE) {
+          mostrar(
+            "Punto capturado, pero con " + precision + " m de error. Sal a la calle" +
+              " y vuelve a intentarlo: así no distingue una casa de la de enfrente.",
+            "text-warning-emphasis fw-semibold mt-3"
+          );
+        } else {
+          mostrar(
+            "Punto capturado con " + precision + " m de precisión. Revísalo y guarda.",
+            "text-success fw-semibold mt-3"
+          );
+        }
+      },
+      function (error) {
+        boton.disabled = false;
+
+        // Cada fallo tiene una salida distinta, así que se dicen por separado en
+        // vez de un «no se pudo» que no ayuda a nadie.
+        var mensajes = {
+          1: "No diste permiso para usar la ubicación. Actívalo en el navegador o" +
+             " escribe las coordenadas a mano.",
+          2: "El aparato no consigue señal aquí. Prueba al aire libre.",
+          3: "La búsqueda tardó demasiado. Vuelve a intentarlo al aire libre."
+        };
+
+        mostrar(
+          mensajes[error.code] || "No se pudo obtener la ubicación.",
+          "text-danger mt-3"
+        );
+      },
+      // enableHighAccuracy pide el GPS de verdad y no la posición aproximada por
+      // red, que en terreno puede errar por kilómetros. Gasta más batería y aquí
+      // vale la pena: el punto es el dato.
+      // maximumAge en 0 prohíbe devolver una posición guardada de antes, que es
+      // justamente el error que la validación de lejanía persigue.
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 }
+    );
+  });
+})();
+</script>
+{% endblock %}

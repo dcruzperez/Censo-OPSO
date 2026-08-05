@@ -315,6 +315,74 @@ class Vivienda(models.Model):
         help_text="Lo que el formulario no previó y conviene dejar anotado.",
     )
     # ------------------------------------------------------------------
+    # LA UBICACIÓN GEOGRÁFICA (HU-11)
+    #
+    # Cuelga de la VIVIENDA y no de la encuesta, y es la consecuencia directa del
+    # corte que hizo la HU-08: unas coordenadas describen un lugar físico, no un
+    # trabajo. Dos hogares de la misma casa comparten el punto, y el operativo del
+    # año que viene lo hereda sin volver a medirlo.
+    #
+    # Se guardan como DECIMAL y no como float. Un float binario no puede
+    # representar exactamente 0,1, y aunque el error sea minúsculo, en coordenadas
+    # se traduce en metros y en comparaciones que fallan por el último dígito.
+    # DecimalField guarda el número que se escribió.
+    #
+    # Seis decimales es la precisión de ~11 cm en el ecuador, muy por debajo de lo
+    # que da el GPS de un teléfono (5-20 m en el mejor caso). Guardar más dígitos
+    # sería fingir una exactitud que el aparato no tiene.
+    # ------------------------------------------------------------------
+    latitud = models.DecimalField(
+        "latitud",
+        max_digits=9,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text="Grados decimales. En Chile siempre es negativa.",
+    )
+    longitud = models.DecimalField(
+        "longitud",
+        max_digits=9,
+        decimal_places=6,
+        null=True,
+        blank=True,
+        help_text="Grados decimales. En Chile siempre es negativa.",
+    )
+    precision_metros = models.PositiveIntegerField(
+        "precisión",
+        null=True,
+        blank=True,
+        help_text=(
+            "Radio de error en metros que informó el aparato. Sin este dato, un "
+            "punto tomado dentro de una casa parece tan bueno como uno tomado en la "
+            "calle."
+        ),
+    )
+    ubicacion_capturada_en = models.DateTimeField(
+        "ubicación capturada en",
+        null=True,
+        blank=True,
+        help_text="Cuándo se tomó el punto.",
+    )
+    ubicacion_manual = models.BooleanField(
+        "ubicación escrita a mano",
+        default=False,
+        help_text=(
+            "True si las coordenadas se escribieron en vez de capturarlas del "
+            "aparato. Un punto escrito a mano no tiene la misma confianza."
+        ),
+    )
+    registrada_por = models.ForeignKey(
+        "usuarios.Usuario",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="viviendas_registradas",
+        verbose_name="registrada por",
+        help_text="Quién la dio de alta en terreno.",
+    )
+    creada_en = models.DateTimeField("creada en", auto_now_add=True)
+    actualizada_en = models.DateTimeField("actualizada en", auto_now=True)
+
     class Meta:
         db_table = "fichas_vivienda"
         verbose_name = "vivienda"
@@ -432,6 +500,124 @@ class Vivienda(models.Model):
             return False
 
         return all(getattr(self, campo) for campo in self.CARACTERISTICAS)
+
+    # -- la ubicación (HU-11) -----------------------------------------------
+
+    #: Precisión a partir de la cual el punto se marca como poco fiable, en metros.
+    #: Veinte metros es aproximadamente el ancho de una calle con sus dos veredas:
+    #: por debajo de eso, el punto distingue una casa de la de enfrente; por encima,
+    #: ya no.
+    PRECISION_ACEPTABLE = 20
+
+    #: A partir de esta distancia al resto de la zona, el sistema pregunta. En una
+    #: zona urbana caben pocas manzanas, así que medio kilómetro de separación es
+    #: casi siempre un error de captura y no una casa lejana.
+    DISTANCIA_SOSPECHOSA_METROS = 500
+
+    # Atajos a los límites del módulo, para que quien tenga una vivienda a mano no
+    # necesite importarlos aparte. Apuntan a los mismos objetos: no son una copia.
+    LATITUD_MINIMA = LATITUD_MINIMA
+    LATITUD_MAXIMA = LATITUD_MAXIMA
+    LONGITUD_MINIMA = LONGITUD_MINIMA
+    LONGITUD_MAXIMA = LONGITUD_MAXIMA
+
+    @property
+    def tiene_ubicacion(self):
+        return self.latitud is not None and self.longitud is not None
+
+    @property
+    def coordenadas(self):
+        """«-36.826700, -73.049700», o None si no se ha capturado.
+
+        Existe para que las plantillas no repitan el formato y para que el número
+        se muestre siempre con los mismos decimales: media pantalla con seis
+        decimales y la otra media con cuatro parece dos datos distintos.
+        """
+        if not self.tiene_ubicacion:
+            return None
+
+        return f"{self.latitud:.6f}, {self.longitud:.6f}"
+
+    @property
+    def precision_aceptable(self):
+        """True si el aparato informó una precisión suficiente.
+
+        Sin dato de precisión devuelve False: un punto del que no se sabe cuánto
+        error tiene no se puede dar por bueno. Es la misma lógica con la que
+        `datos_completos` trata el vacío en la HU-08.
+        """
+        if self.precision_metros is None:
+            return False
+
+        return self.precision_metros <= self.PRECISION_ACEPTABLE
+
+    def distancia_a(self, latitud, longitud):
+        """Metros en línea recta hasta otro punto, por la fórmula del haversine.
+
+        ¿POR QUÉ NO SE USA GeoDjango / PostGIS?
+
+        Porque haría falta instalar la extensión PostGIS en el servidor y las
+        bibliotecas GEOS y PROJ en cada equipo, y todo lo que OPSO necesita de la
+        geometría es esta única función. Es una dependencia grande, difícil de
+        instalar en Windows y que complicaría la puesta en marcha del proyecto
+        —que hoy es `pip install -r requirements.txt`— para ahorrarse doce líneas.
+
+        Si algún día hicieran falta consultas espaciales de verdad —«las viviendas
+        dentro de este polígono», «las diez más cercanas ordenadas por distancia»—
+        PostGIS sería lo correcto y esta función habría que tirarla. Mientras la
+        pregunta sea «¿está este punto lejos de aquel?», el haversine sobra.
+
+        Devuelve metros y no kilómetros porque las distancias que interesan aquí
+        son de decenas o cientos de metros, y trabajar en kilómetros obligaría a
+        leer «0,08» donde se quiere leer «80».
+        """
+        if not self.tiene_ubicacion:
+            return None
+
+        radio_tierra = 6_371_000  # metros
+
+        lat1, lon1 = radians(float(self.latitud)), radians(float(self.longitud))
+        lat2, lon2 = radians(float(latitud)), radians(float(longitud))
+
+        seno_lat = sin((lat2 - lat1) / 2) ** 2
+        seno_lon = sin((lon2 - lon1) / 2) ** 2
+        a = seno_lat + cos(lat1) * cos(lat2) * seno_lon
+
+        return radio_tierra * 2 * atan2(sqrt(a), sqrt(1 - a))
+
+    @classmethod
+    def centro_de_la_zona(cls, zona, excluir=None):
+        """Punto medio de las viviendas ya ubicadas de una zona, o None si no hay.
+
+        Es la referencia contra la que se comprueba si una ubicación nueva es
+        plausible. La idea es simple y funciona: **las casas de una zona están
+        cerca unas de otras**, así que un punto a tres kilómetros del resto casi
+        siempre es un error de captura —el teléfono devolvió la última posición
+        conocida, o alguien escribió mal un dígito—.
+
+        Se usa el promedio y no el centroide geodésico correcto porque la
+        diferencia entre ambos, en un área de unas manzanas, es de centímetros; y
+        porque el resultado no se muestra a nadie: solo sirve para decidir si
+        preguntar.
+
+        Devuelve None cuando la zona todavía no tiene ninguna vivienda ubicada, que
+        es el caso de la primera casa de la jornada. Sin referencia no se compara
+        nada: inventar una sería peor que no comprobar.
+        """
+        consulta = cls.objects.filter(zona=zona, latitud__isnull=False)
+
+        if excluir is not None:
+            consulta = consulta.exclude(pk=excluir)
+
+        puntos = list(consulta.values_list("latitud", "longitud"))
+
+        if not puntos:
+            return None
+
+        return (
+            sum(lat for lat, _ in puntos) / len(puntos),
+            sum(lon for _, lon in puntos) / len(puntos),
+        )
 
     # -- hogares ------------------------------------------------------------
 

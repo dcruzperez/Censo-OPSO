@@ -4666,3 +4666,647 @@ class IntegracionHU10Test(BaseEncuestaTest):
         self.assertContains(respuesta, "deshabitada")
 
 
+# ==========================================================================
+# HU-11 — 45. LA UBICACIÓN EN EL MODELO
+# ==========================================================================
+
+
+class BaseUbicacionTest(BaseEncuestaTest):
+    """Escenario común: Marta con su sector y una vivienda a la que ubicar."""
+
+    #: Un punto real dentro de Concepción, para no inventar coordenadas.
+    LAT = Decimal("-36.826700")
+    LON = Decimal("-73.049700")
+
+    def setUp(self):
+        super().setUp()
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
+        self.vivienda = self.crear_vivienda(direccion="Av. Central 100")
+        self.encuesta = self.crear(
+            vivienda=self.vivienda, estado=EstadoEncuesta.BORRADOR
+        )
+        self.url_ubicacion = reverse(
+            "fichas:capturar_ubicacion", kwargs={"pk": self.vivienda.pk}
+        )
+
+    def ubicar(self, vivienda, lat=None, lon=None, precision=8, manual=False):
+        vivienda.latitud = self.LAT if lat is None else Decimal(str(lat))
+        vivienda.longitud = self.LON if lon is None else Decimal(str(lon))
+        vivienda.precision_metros = precision
+        vivienda.ubicacion_capturada_en = timezone.now()
+        vivienda.ubicacion_manual = manual
+        vivienda.save()
+        return vivienda
+
+
+class UbicacionModeloTest(BaseUbicacionTest):
+    def test_una_vivienda_nace_sin_ubicacion(self):
+        self.assertFalse(self.vivienda.tiene_ubicacion)
+        self.assertIsNone(self.vivienda.coordenadas)
+
+    def test_con_las_dos_coordenadas_tiene_ubicacion(self):
+        self.ubicar(self.vivienda)
+
+        self.assertTrue(self.vivienda.tiene_ubicacion)
+
+    def test_las_coordenadas_se_muestran_con_seis_decimales(self):
+        """Media pantalla con cuatro y la otra con seis parece dos datos distintos."""
+        self.ubicar(self.vivienda)
+
+        self.assertEqual(self.vivienda.coordenadas, "-36.826700, -73.049700")
+
+    def test_una_precision_pequena_es_aceptable(self):
+        self.ubicar(self.vivienda, precision=8)
+
+        self.assertTrue(self.vivienda.precision_aceptable)
+
+    def test_una_precision_grande_no_lo_es(self):
+        self.ubicar(self.vivienda, precision=150)
+
+        self.assertFalse(self.vivienda.precision_aceptable)
+
+    def test_el_limite_de_precision_es_inclusivo(self):
+        self.ubicar(self.vivienda, precision=Vivienda.PRECISION_ACEPTABLE)
+
+        self.assertTrue(self.vivienda.precision_aceptable)
+
+    def test_sin_dato_de_precision_no_se_da_por_buena(self):
+        """De un punto del que no se sabe el error no se puede decir que sirve."""
+        self.vivienda.latitud = self.LAT
+        self.vivienda.longitud = self.LON
+        self.vivienda.save()
+
+        self.assertFalse(self.vivienda.precision_aceptable)
+
+    def test_marca_las_ubicaciones_escritas_a_mano(self):
+        self.ubicar(self.vivienda, manual=True)
+
+        self.assertTrue(self.vivienda.ubicacion_manual)
+
+
+class DistanciaTest(BaseUbicacionTest):
+    def test_la_distancia_a_si_misma_es_cero(self):
+        self.ubicar(self.vivienda)
+
+        self.assertAlmostEqual(
+            self.vivienda.distancia_a(self.LAT, self.LON), 0, places=3
+        )
+
+    def test_un_grado_de_latitud_son_unos_111_kilometros(self):
+        """Comprobación contra un valor conocido: el haversine no puede ir a ojo."""
+        self.ubicar(self.vivienda)
+
+        metros = self.vivienda.distancia_a(self.LAT + Decimal("1"), self.LON)
+
+        self.assertAlmostEqual(metros / 1000, 111.2, delta=0.5)
+
+    def test_una_diezmilesima_de_grado_son_unos_once_metros(self):
+        self.ubicar(self.vivienda)
+
+        metros = self.vivienda.distancia_a(self.LAT + Decimal("0.0001"), self.LON)
+
+        self.assertAlmostEqual(metros, 11.1, delta=1)
+
+    def test_sin_ubicacion_no_hay_distancia(self):
+        self.assertIsNone(self.vivienda.distancia_a(self.LAT, self.LON))
+
+    def test_el_centro_de_una_zona_sin_ubicadas_es_none(self):
+        """La primera casa de la jornada no tiene contra qué compararse."""
+        self.assertIsNone(Vivienda.centro_de_la_zona(self.zona1))
+
+    def test_el_centro_promedia_las_ubicadas(self):
+        self.ubicar(self.vivienda, lat="-36.800000", lon="-73.000000")
+        self.ubicar(
+            self.crear_vivienda(direccion="Otra 1"),
+            lat="-36.900000",
+            lon="-73.100000",
+        )
+
+        lat, lon = Vivienda.centro_de_la_zona(self.zona1)
+
+        self.assertAlmostEqual(float(lat), -36.85, places=4)
+        self.assertAlmostEqual(float(lon), -73.05, places=4)
+
+    def test_el_centro_puede_excluir_una_vivienda(self):
+        """Al recolocar una casa, ella misma no puede ser su propia referencia."""
+        self.ubicar(self.vivienda, lat="-36.800000", lon="-73.000000")
+        otra = self.ubicar(
+            self.crear_vivienda(direccion="Otra 1"),
+            lat="-36.900000",
+            lon="-73.100000",
+        )
+
+        lat, lon = Vivienda.centro_de_la_zona(self.zona1, excluir=otra.pk)
+
+        self.assertAlmostEqual(float(lat), -36.80, places=4)
+
+    def test_el_centro_no_mezcla_zonas(self):
+        self.ubicar(self.vivienda)
+        self.ubicar(self.crear_vivienda(direccion="En otra zona", zona=self.zona2))
+
+        puntos = Vivienda.objects.filter(zona=self.zona1, latitud__isnull=False)
+
+        self.assertEqual(puntos.count(), 1)
+
+
+# ==========================================================================
+# HU-11 — 46. LO QUE GARANTIZA LA BASE DE DATOS
+# ==========================================================================
+
+
+class RestriccionesUbicacionTest(BaseUbicacionTest):
+    def crear_con(self, **extra):
+        return Vivienda.objects.create(
+            zona=self.zona1, direccion="Prueba 1", **extra
+        )
+
+    def test_no_se_puede_guardar_media_coordenada(self):
+        """Una latitud sin longitud es una línea que cruza el planeta."""
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self.crear_con(latitud=self.LAT)
+
+    def test_tampoco_al_reves(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self.crear_con(longitud=self.LON)
+
+    def test_las_dos_vacias_si_se_admiten(self):
+        vivienda = self.crear_con()
+
+        self.assertFalse(vivienda.tiene_ubicacion)
+
+    def test_una_latitud_positiva_se_rechaza(self):
+        """El error más común al escribir a mano: olvidar el signo."""
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self.crear_con(latitud=Decimal("36.826700"), longitud=self.LON)
+
+    def test_una_longitud_fuera_de_chile_se_rechaza(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self.crear_con(latitud=self.LAT, longitud=Decimal("-3.700000"))
+
+    def test_intercambiar_latitud_y_longitud_se_rechaza(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self.crear_con(latitud=self.LON, longitud=self.LAT)
+
+    def test_rapa_nui_se_acepta(self):
+        """Si el rango fuera solo el continental, quedaría fuera territorio chileno."""
+        vivienda = self.crear_con(
+            latitud=Decimal("-27.150000"), longitud=Decimal("-109.433300")
+        )
+
+        self.assertTrue(vivienda.tiene_ubicacion)
+
+    def test_el_extremo_norte_se_acepta(self):
+        vivienda = self.crear_con(
+            latitud=Decimal("-17.500000"), longitud=Decimal("-70.100000")
+        )
+
+        self.assertTrue(vivienda.tiene_ubicacion)
+
+    def test_el_extremo_sur_se_acepta(self):
+        vivienda = self.crear_con(
+            latitud=Decimal("-56.500000"), longitud=Decimal("-68.700000")
+        )
+
+        self.assertTrue(vivienda.tiene_ubicacion)
+
+
+# ==========================================================================
+# HU-11 — 47. EL FORMULARIO
+# ==========================================================================
+
+
+class UbicacionFormTest(BaseUbicacionTest):
+    def datos(self, **extra):
+        base = {
+            "latitud": "-36.826700",
+            "longitud": "-73.049700",
+            "precision_metros": 8,
+        }
+        base.update(extra)
+        return base
+
+    def formulario(self, datos=None, vivienda=None):
+        return UbicacionForm(datos, instance=vivienda or self.vivienda)
+
+    def test_un_punto_valido_se_acepta(self):
+        formulario = self.formulario(self.datos())
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_las_coordenadas_son_obligatorias_en_esta_pantalla(self):
+        """Una pantalla que se llama «capturar ubicación» sin ubicación no hizo nada."""
+        for campo in ("latitud", "longitud"):
+            with self.subTest(campo=campo):
+                formulario = self.formulario(self.datos(**{campo: ""}))
+                self.assertFalse(formulario.is_valid())
+                self.assertIn(campo, formulario.errors)
+
+    def test_la_precision_es_opcional(self):
+        formulario = self.formulario(self.datos(precision_metros=""))
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_una_latitud_positiva_se_rechaza_con_mensaje(self):
+        formulario = self.formulario(self.datos(latitud="36.826700"))
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("latitud", formulario.errors)
+        self.assertIn("signo", str(formulario.errors["latitud"]))
+
+    def test_una_longitud_fuera_de_chile_se_rechaza_con_mensaje(self):
+        formulario = self.formulario(self.datos(longitud="-3.700000"))
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("longitud", formulario.errors)
+
+    def test_marca_como_manual_si_no_vino_del_aparato(self):
+        """La suposición prudente: sin la marca del script, se escribió a mano."""
+        formulario = self.formulario(self.datos())
+        formulario.is_valid()
+        vivienda = formulario.save()
+
+        self.assertTrue(vivienda.ubicacion_manual)
+
+    def test_no_la_marca_como_manual_si_la_capturo_el_aparato(self):
+        formulario = self.formulario(self.datos(capturada="1"))
+        formulario.is_valid()
+        vivienda = formulario.save()
+
+        self.assertFalse(vivienda.ubicacion_manual)
+
+    def test_registra_cuando_se_capturo(self):
+        formulario = self.formulario(self.datos())
+        formulario.is_valid()
+        vivienda = formulario.save()
+
+        self.assertIsNotNone(vivienda.ubicacion_capturada_en)
+
+    # -- la tercera capa: la lejanía --------------------------------------
+
+    def test_sin_otras_viviendas_ubicadas_no_hay_nada_que_comparar(self):
+        formulario = self.formulario(self.datos())
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+        self.assertIsNone(formulario.distancia_al_resto)
+
+    def test_un_punto_cercano_al_resto_pasa_sin_preguntar(self):
+        self.ubicar(self.crear_vivienda(direccion="Vecina 1"))
+
+        formulario = self.formulario(self.datos(latitud="-36.826800"))
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_un_punto_lejano_pide_confirmacion(self):
+        """El caso real: el teléfono devolvió la posición de hace media hora."""
+        self.ubicar(self.crear_vivienda(direccion="Vecina 1"))
+
+        formulario = self.formulario(self.datos(latitud="-36.900000"))
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("confirmar_lejania", formulario.errors)
+
+    def test_con_la_casilla_marcada_el_punto_lejano_se_acepta(self):
+        """Una parcela apartada puede pertenecer de verdad a la zona."""
+        self.ubicar(self.crear_vivienda(direccion="Vecina 1"))
+
+        formulario = self.formulario(
+            self.datos(latitud="-36.900000", confirmar_lejania=True)
+        )
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_el_aviso_dice_a_cuantos_metros_esta(self):
+        self.ubicar(self.crear_vivienda(direccion="Vecina 1"))
+
+        formulario = self.formulario(self.datos(latitud="-36.900000"))
+        formulario.is_valid()
+
+        self.assertIn("m del resto", str(formulario.errors["confirmar_lejania"]))
+
+    def test_recolocar_una_vivienda_no_la_compara_consigo_misma(self):
+        """Si se comparara, mover una casa 600 m siempre pediría confirmación."""
+        self.ubicar(self.vivienda)
+
+        formulario = self.formulario(self.datos(latitud="-36.900000"))
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+
+# ==========================================================================
+# HU-11 — 48. LA PANTALLA DE CAPTURA
+# ==========================================================================
+
+
+class CapturarUbicacionTest(BaseUbicacionTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.marta)
+
+    def datos(self, **extra):
+        base = {
+            "latitud": "-36.826700",
+            "longitud": "-73.049700",
+            "precision_metros": 8,
+        }
+        base.update(extra)
+        return base
+
+    def test_muestra_el_formulario(self):
+        respuesta = self.client.get(self.url_ubicacion)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "Capturar mi ubicación")
+
+    def test_incluye_el_script_de_geolocalizacion(self):
+        """Es la única pantalla del proyecto con JavaScript propio."""
+        respuesta = self.client.get(self.url_ubicacion)
+
+        self.assertContains(respuesta, "navigator.geolocation")
+
+    def test_los_campos_son_editables_sin_javascript(self):
+        """Progressive enhancement: el script mejora la pantalla, no la sostiene."""
+        respuesta = self.client.get(self.url_ubicacion)
+
+        self.assertContains(respuesta, 'name="latitud"')
+        self.assertContains(respuesta, 'name="longitud"')
+
+    def test_no_pide_nada_a_un_servidor_externo(self):
+        """Ni mapas ni teselas: las coordenadas de una familia no salen de OPSO."""
+        respuesta = self.client.get(self.url_ubicacion)
+        html = respuesta.content.decode()
+
+        self.assertNotIn("openstreetmap", html.lower())
+        self.assertNotIn("googleapis", html.lower())
+        self.assertNotIn("mapbox", html.lower())
+
+    def test_guarda_la_ubicacion(self):
+        self.client.post(self.url_ubicacion, self.datos())
+
+        self.vivienda.refresh_from_db()
+        self.assertTrue(self.vivienda.tiene_ubicacion)
+
+    def test_vuelve_a_la_ficha_de_la_vivienda(self):
+        respuesta = self.client.post(self.url_ubicacion, self.datos())
+
+        self.assertRedirects(
+            respuesta,
+            reverse("fichas:vivienda_detalle", kwargs={"pk": self.vivienda.pk}),
+        )
+
+    def test_el_mensaje_confirma_la_precision(self):
+        respuesta = self.client.post(self.url_ubicacion, self.datos(), follow=True)
+        mensajes = [str(m) for m in respuesta.context["messages"]]
+
+        self.assertTrue(any("Precisión: 8 m" in m for m in mensajes))
+
+    def test_el_mensaje_avisa_si_la_precision_es_mala(self):
+        """«Guardado» a secas escondería que el punto no sirve."""
+        respuesta = self.client.post(
+            self.url_ubicacion, self.datos(precision_metros=300), follow=True
+        )
+        mensajes = [str(m) for m in respuesta.context["messages"]]
+
+        self.assertTrue(any("mucho" in m for m in mensajes))
+
+    def test_el_mensaje_avisa_si_no_hay_dato_de_precision(self):
+        respuesta = self.client.post(
+            self.url_ubicacion, self.datos(precision_metros=""), follow=True
+        )
+        mensajes = [str(m) for m in respuesta.context["messages"]]
+
+        self.assertTrue(any("precisión" in m for m in mensajes))
+
+    def test_un_punto_invalido_no_guarda_nada(self):
+        self.client.post(self.url_ubicacion, self.datos(latitud="36.826700"))
+
+        self.vivienda.refresh_from_db()
+        self.assertFalse(self.vivienda.tiene_ubicacion)
+
+    def test_volver_a_capturar_reemplaza_el_punto(self):
+        self.ubicar(self.vivienda)
+
+        self.client.post(self.url_ubicacion, self.datos(latitud="-36.826800"))
+
+        self.vivienda.refresh_from_db()
+        self.assertEqual(str(self.vivienda.latitud), "-36.826800")
+
+    # -- acceso ------------------------------------------------------------
+
+    def test_una_vivienda_fuera_de_mi_territorio_responde_404(self):
+        ajena = Vivienda.objects.create(zona=self.zona_norte, direccion="Otra 1")
+
+        respuesta = self.client.get(
+            reverse("fichas:capturar_ubicacion", kwargs={"pk": ajena.pk})
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_un_companero_del_mismo_sector_si_puede(self):
+        """La ubicación describe el inmueble, no el trabajo de nadie."""
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.juan)
+        self.client.force_login(self.juan)
+
+        self.assertEqual(self.client.get(self.url_ubicacion).status_code, 200)
+
+    def test_el_supervisor_no_puede_capturar(self):
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_ubicacion)
+
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_con_el_operativo_cerrado_no_se_puede(self):
+        self.operativo.estado = EstadoOperativo.CERRADO
+        self.operativo.save()
+
+        self.client.post(self.url_ubicacion, self.datos())
+
+        self.vivienda.refresh_from_db()
+        self.assertFalse(self.vivienda.tiene_ubicacion)
+
+
+# ==========================================================================
+# HU-11 — 49. LA UBICACIÓN EN LAS DEMÁS PANTALLAS
+# ==========================================================================
+
+
+class UbicacionEnLasPantallasTest(BaseUbicacionTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.marta)
+        self.url_vivienda = reverse(
+            "fichas:vivienda_detalle", kwargs={"pk": self.vivienda.pk}
+        )
+        self.url_completar = reverse(
+            "fichas:completar_encuesta", kwargs={"pk": self.encuesta.pk}
+        )
+
+    def completar_datos(self):
+        """Deja la encuesta lista para terminarse, sin tocar la ubicación."""
+        hogar = GrupoFamiliar.objects.create(
+            encuesta=self.encuesta,
+            jefe_hogar_nombre="Rosa Elena Millán",
+            integrantes_declarados=1,
+        )
+        Integrante.objects.create(
+            grupo_familiar=hogar,
+            parentesco=Parentesco.JEFE_HOGAR,
+            nombres="Rosa Elena",
+            apellidos="Millán",
+            sexo=Sexo.FEMENINO,
+            fecha_nacimiento=timezone.localdate() - timedelta(days=40 * 365),
+            nivel_educacional=NivelEducacional.MEDIA_COMPLETA,
+            situacion_ocupacional=SituacionOcupacional.TRABAJA,
+        )
+
+    def test_la_ficha_de_la_vivienda_dice_que_no_hay_ubicacion(self):
+        respuesta = self.client.get(self.url_vivienda)
+
+        self.assertContains(respuesta, "Sin ubicación capturada")
+
+    def test_la_ficha_muestra_las_coordenadas(self):
+        self.ubicar(self.vivienda)
+
+        respuesta = self.client.get(self.url_vivienda)
+
+        self.assertContains(respuesta, "-36.826700, -73.049700")
+
+    def test_la_ficha_marca_una_precision_mala(self):
+        self.ubicar(self.vivienda, precision=300)
+
+        respuesta = self.client.get(self.url_vivienda)
+
+        self.assertContains(respuesta, "poco precisa")
+
+    def test_la_ficha_marca_las_escritas_a_mano(self):
+        self.ubicar(self.vivienda, manual=True)
+
+        respuesta = self.client.get(self.url_vivienda)
+
+        self.assertContains(respuesta, "escrita a mano")
+
+    def test_la_ubicacion_no_es_un_paso_pendiente(self):
+        """Depende de la señal, y eso no lo controla el encuestador."""
+        self.completar_datos()
+
+        self.assertTrue(self.encuesta.puede_completarse)
+
+    def test_terminar_avisa_si_no_hay_ubicacion(self):
+        self.completar_datos()
+
+        respuesta = self.client.get(self.url_completar)
+
+        self.assertContains(respuesta, "no tiene ubicación capturada")
+
+    def test_terminar_avisa_si_la_precision_es_mala(self):
+        self.completar_datos()
+        self.ubicar(self.vivienda, precision=300)
+
+        respuesta = self.client.get(self.url_completar)
+
+        self.assertContains(respuesta, "poca precisión")
+
+    def test_se_puede_terminar_sin_ubicacion(self):
+        """El aviso no bloquea: una ficha correcta no se queda atrapada por el GPS."""
+        self.completar_datos()
+
+        self.client.post(self.url_completar)
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.COMPLETADA)
+
+
+# ==========================================================================
+# HU-11 — 50. RECORRIDO COMPLETO
+# ==========================================================================
+
+
+class IntegracionHU11Test(BaseUbicacionTest):
+    def test_recorrido_completo(self):
+        self.client.force_login(self.marta)
+
+        # 1. La vivienda todavía no tiene punto.
+        respuesta = self.client.get(
+            reverse("fichas:vivienda_detalle", kwargs={"pk": self.vivienda.pk})
+        )
+        self.assertContains(respuesta, "Sin ubicación capturada")
+
+        # 2. Se captura desde el aparato (el script marca `capturada=1`).
+        self.client.post(
+            self.url_ubicacion,
+            {
+                "latitud": "-36.826700",
+                "longitud": "-73.049700",
+                "precision_metros": 7,
+                "capturada": "1",
+            },
+        )
+        self.vivienda.refresh_from_db()
+        self.assertTrue(self.vivienda.tiene_ubicacion)
+        self.assertFalse(self.vivienda.ubicacion_manual)
+        self.assertTrue(self.vivienda.precision_aceptable)
+
+        # 3. La casa de al lado se captura cerca y no molesta a nadie.
+        vecina = self.crear_vivienda(direccion="Av. Central 118")
+        respuesta = self.client.post(
+            reverse("fichas:capturar_ubicacion", kwargs={"pk": vecina.pk}),
+            {
+                "latitud": "-36.826810",
+                "longitud": "-73.049700",
+                "precision_metros": 9,
+                "capturada": "1",
+            },
+        )
+        vecina.refresh_from_db()
+        self.assertTrue(vecina.tiene_ubicacion)
+
+        # 4. Una tercera, con el teléfono devolviendo la posición de hace rato:
+        #    el sistema lo detecta y pide confirmar.
+        lejana = self.crear_vivienda(direccion="Av. Central 132")
+        url_lejana = reverse("fichas:capturar_ubicacion", kwargs={"pk": lejana.pk})
+        self.client.post(
+            url_lejana,
+            {
+                "latitud": "-36.900000",
+                "longitud": "-73.049700",
+                "precision_metros": 9,
+                "capturada": "1",
+            },
+        )
+        lejana.refresh_from_db()
+        self.assertFalse(lejana.tiene_ubicacion)
+
+        # 5. Confirmando, se guarda: puede ser una parcela apartada de verdad.
+        self.client.post(
+            url_lejana,
+            {
+                "latitud": "-36.900000",
+                "longitud": "-73.049700",
+                "precision_metros": 9,
+                "capturada": "1",
+                "confirmar_lejania": "on",
+            },
+        )
+        lejana.refresh_from_db()
+        self.assertTrue(lejana.tiene_ubicacion)
+
+        # 6. Y un punto imposible se rechaza siempre, con o sin confirmación.
+        self.client.post(
+            url_lejana,
+            {
+                "latitud": "36.900000",
+                "longitud": "-73.049700",
+                "precision_metros": 9,
+                "capturada": "1",
+                "confirmar_lejania": "on",
+            },
+        )
+        lejana.refresh_from_db()
+        self.assertEqual(str(lejana.latitud), "-36.900000")
+
+

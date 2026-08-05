@@ -1456,3 +1456,117 @@ class CerrarSinDatosView(EncuestaPropiaMixin, View):
         }
 
 
+# ==========================================================================
+# HU-11 — LA UBICACIÓN GEOGRÁFICA
+# ==========================================================================
+
+
+class CapturarUbicacionView(RegistroEnTerrenoMixin, View):
+    """Captura o corrige el punto GPS de una vivienda. GET muestra, POST guarda.
+
+    URL: /encuestas/viviendas/<pk>/ubicacion/
+
+    ----------------------------------------------------------------------
+    POR QUÉ ES UNA PANTALLA APARTE Y NO UN CAMPO DEL FORMULARIO DE VIVIENDA
+    ----------------------------------------------------------------------
+    Porque la ubicación se toma EN OTRO MOMENTO y a veces EN OTRO SITIO. El
+    formulario de la vivienda se llena conversando con la familia, muchas veces
+    dentro de la casa —donde el GPS es peor— o después de la visita. El punto se
+    toma en la puerta, de pie en la calle, y son diez segundos.
+
+    Mezclarlos obligaría a capturar el GPS en el instante exacto en que se registra
+    la casa, y en la práctica se acabaría guardando el punto de donde estuviera el
+    teléfono en ese momento.
+
+    Hay además un caso que solo esta pantalla resuelve: las viviendas que ya
+    existían antes de la HU-11 no tienen punto, y hay que poder capturárselo al
+    volver a pasar sin editar todo lo demás.
+
+    ----------------------------------------------------------------------
+    QUIÉN PUEDE
+    ----------------------------------------------------------------------
+    Las mismas reglas que editar la vivienda: la zona tiene que estar entre las
+    asignadas (`zonas_disponibles`) y el territorio tiene que admitir trabajo. No se
+    exige que la encuesta sea propia, por lo mismo que en EditarViviendaView: el
+    sector puede estar repartido entre varias personas y la casa es la misma para
+    todas. La ubicación describe el inmueble, no el trabajo de nadie.
+    """
+
+    template_name = "fichas/ubicacion_form.html"
+
+    @cached_property
+    def vivienda(self):
+        return get_object_or_404(
+            Vivienda.objects.filter(
+                zona__in=zonas_disponibles(self.request.user)
+            ).select_related("zona", "zona__sector", "zona__sector__comuna"),
+            pk=self.kwargs["pk"],
+        )
+
+    def comprobar_abierta(self):
+        permitido, motivo = self.vivienda.puede_registrarse_trabajo()
+
+        if permitido:
+            return None
+
+        messages.error(self.request, motivo)
+        return redirect("fichas:vivienda_detalle", pk=self.vivienda.pk)
+
+    def formulario(self, datos=None):
+        return UbicacionForm(datos, instance=self.vivienda)
+
+    def get(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_abierta()) is not None:
+            return respuesta
+
+        return render(request, self.template_name, self.contexto(self.formulario()))
+
+    def post(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_abierta()) is not None:
+            return respuesta
+
+        formulario = self.formulario(request.POST)
+
+        if not formulario.is_valid():
+            return render(request, self.template_name, self.contexto(formulario))
+
+        vivienda = formulario.save()
+
+        messages.success(request, self.confirmacion(vivienda))
+        return redirect("fichas:vivienda_detalle", pk=vivienda.pk)
+
+    def confirmacion(self, vivienda):
+        """Confirma el punto Y su calidad, no solo que se guardó.
+
+        Decir «ubicación guardada» esconde el caso que importa: un punto con 300
+        metros de error se guardó igual y no sirve para distinguir una casa de la
+        de enfrente. Si la precisión es mala, el mensaje lo dice y sugiere repetir
+        la captura afuera.
+        """
+        base = f"Ubicación de «{vivienda.direccion}» guardada."
+
+        if vivienda.precision_metros is None:
+            return f"{base} No quedó registrada la precisión del aparato."
+
+        if not vivienda.precision_aceptable:
+            return (
+                f"{base} La precisión es de {vivienda.precision_metros} m, que es "
+                "mucho: si puedes, repite la captura en la calle y con el cielo "
+                "despejado."
+            )
+
+        return f"{base} Precisión: {vivienda.precision_metros} m."
+
+    def contexto(self, formulario):
+        return {
+            "titulo_pagina": f"Ubicación de {self.vivienda.direccion}",
+            "form": formulario,
+            "vivienda": self.vivienda,
+            "distancia_al_resto": getattr(formulario, "distancia_al_resto", None),
+            "hay_referencia": Vivienda.centro_de_la_zona(
+                self.vivienda.zona, excluir=self.vivienda.pk
+            )
+            is not None,
+        }
+
+

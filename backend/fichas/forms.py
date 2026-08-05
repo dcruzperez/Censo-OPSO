@@ -949,3 +949,172 @@ class CerrarSinDatosForm(forms.Form):
         return motivo
 
 
+# ==========================================================================
+# HU-11 — LA UBICACIÓN GEOGRÁFICA
+# ==========================================================================
+
+
+class UbicacionForm(forms.ModelForm):
+    """Captura o corrige el punto GPS de una vivienda.
+
+    ----------------------------------------------------------------------
+    LOS CAMPOS LOS RELLENA EL NAVEGADOR, NO LA PERSONA
+    ----------------------------------------------------------------------
+    La historia pide capturar la ubicación AUTOMÁTICAMENTE, y eso lo hace la API de
+    geolocalización del navegador (ver la plantilla). El formulario recibe lo que el
+    aparato entregó: latitud, longitud y el radio de error que él mismo informa.
+
+    Aun así los tres campos son editables y no ocultos, por dos motivos:
+
+      - Sin JavaScript —o sin permiso de ubicación, o bajo techo sin señal— el
+        formulario TIENE QUE SEGUIR SIRVIENDO. Se escriben las coordenadas a mano
+        desde otro aparato y la encuesta no se queda sin punto. Es progressive
+        enhancement: el JavaScript mejora la pantalla, no la sostiene.
+      - Un campo oculto que se rellena solo es imposible de revisar. Verlos permite
+        notar que el teléfono devolvió la posición de hace media hora.
+
+    Lo que sí distingue el sistema es CÓMO se obtuvo: `ubicacion_manual` marca los
+    puntos escritos a mano, porque no merecen la misma confianza que los capturados.
+
+    ----------------------------------------------------------------------
+    LA VALIDACIÓN GEOGRÁFICA: TRES CAPAS
+    ----------------------------------------------------------------------
+      1. Las dos coordenadas juntas o ninguna  -> restricción de la tabla
+      2. El punto cae dentro de Chile          -> restricción de la tabla + aquí
+      3. El punto está cerca del resto de la zona -> aquí, y solo AVISA
+
+    Las dos primeras rechazan; la tercera pregunta. La diferencia es que un punto
+    fuera de Chile es imposible, y un punto lejos del resto de la zona es
+    improbable: puede ser una parcela apartada que de verdad pertenece a la zona.
+    Bloquearlo haría perder un dato verdadero, así que se pide confirmar. Es el
+    mismo patrón del aviso de dirección duplicada de la HU-08.
+    """
+
+    #: Límites del territorio nacional, insular incluido. Mismos valores que la
+    #: restricción `vivienda_coordenadas_en_chile`, y por eso están en el modelo
+    #: como constantes: dos copias con números distintos darían dos veredictos.
+    confirmar_lejania = forms.BooleanField(
+        label="Confirmo que la ubicación es correcta aunque esté lejos del resto de la zona",
+        required=False,
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+    )
+
+    class Meta:
+        model = Vivienda
+        fields = ("latitud", "longitud", "precision_metros")
+        widgets = {
+            "latitud": forms.NumberInput(
+                attrs={"class": CLASE_TEXTO, "step": "0.000001", "placeholder": "-36.826700"}
+            ),
+            "longitud": forms.NumberInput(
+                attrs={"class": CLASE_TEXTO, "step": "0.000001", "placeholder": "-73.049700"}
+            ),
+            "precision_metros": forms.NumberInput(
+                attrs={"class": CLASE_TEXTO, "min": 0, "placeholder": "metros"}
+            ),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Las coordenadas son obligatorias en ESTE formulario aunque la columna
+        # admita nulos: una pantalla que se llama «capturar ubicación» y se envía
+        # sin ubicación no hizo nada. Misma asimetría que ViviendaForm con las
+        # características, y por el mismo motivo: la columna admite el vacío porque
+        # hay viviendas anteriores sin punto.
+        self.fields["latitud"].required = True
+        self.fields["longitud"].required = True
+
+    # -- validación ---------------------------------------------------------
+
+    def clean_latitud(self):
+        return self.comprobar_rango("latitud", Vivienda.LATITUD_MINIMA, Vivienda.LATITUD_MAXIMA)
+
+    def clean_longitud(self):
+        return self.comprobar_rango(
+            "longitud", Vivienda.LONGITUD_MINIMA, Vivienda.LONGITUD_MAXIMA
+        )
+
+    def comprobar_rango(self, campo, minimo, maximo):
+        """Rechaza un valor fuera del territorio nacional, con un mensaje útil.
+
+        La restricción de la tabla ya lo impide, pero ahí el rechazo llega como un
+        IntegrityError sin campo asociado. Aquí llega junto al número equivocado y
+        explicando el error más probable, que es el signo: en Chile las dos
+        coordenadas son negativas, siempre.
+        """
+        valor = self.cleaned_data.get(campo)
+
+        if valor is None:
+            return valor
+
+        if not (minimo <= valor <= maximo):
+            raise forms.ValidationError(
+                f"Ese valor cae fuera de Chile. Revisa el signo: en Chile la "
+                f"{campo} siempre es negativa, entre {minimo} y {maximo}."
+            )
+
+        return valor
+
+    def clean(self):
+        datos = super().clean()
+
+        latitud = datos.get("latitud")
+        longitud = datos.get("longitud")
+
+        if latitud is None or longitud is None:
+            return datos
+
+        self.distancia_al_resto = self.calcular_distancia_al_resto(latitud, longitud)
+
+        if (
+            self.distancia_al_resto is not None
+            and self.distancia_al_resto > Vivienda.DISTANCIA_SOSPECHOSA_METROS
+            and not datos.get("confirmar_lejania")
+        ):
+            self.add_error(
+                "confirmar_lejania",
+                (
+                    f"Este punto está a {self.distancia_al_resto:,.0f} m del resto de "
+                    "las viviendas ubicadas de la zona. Suele significar que el "
+                    "aparato entregó una posición antigua. Si de verdad la casa está "
+                    "ahí, marca la casilla."
+                ).replace(",", "."),
+            )
+
+        return datos
+
+    def calcular_distancia_al_resto(self, latitud, longitud):
+        """Metros hasta el punto medio de las demás viviendas ubicadas de la zona.
+
+        Devuelve None cuando la zona todavía no tiene ninguna otra ubicada: es el
+        caso de la primera casa de la jornada, y sin referencia no hay nada que
+        comparar. Inventar una sería peor que no comprobar.
+        """
+        centro = Vivienda.centro_de_la_zona(
+            self.instance.zona, excluir=self.instance.pk
+        )
+
+        if centro is None:
+            return None
+
+        # Se mide desde el punto NUEVO, así que se usa una vivienda temporal con
+        # esas coordenadas en vez de la instancia guardada, que todavía tiene las
+        # anteriores (o ninguna).
+        return Vivienda(latitud=latitud, longitud=longitud).distancia_a(*centro)
+
+    def save(self, commit=True):
+        vivienda = super().save(commit=False)
+
+        vivienda.ubicacion_capturada_en = timezone.now()
+        # `capturada` lo pone la plantilla cuando el punto vino del navegador. Si no
+        # llega, se asume escrito a mano: es la suposición prudente, porque marcar
+        # como automático un dato tecleado le daría una confianza que no tiene.
+        vivienda.ubicacion_manual = self.data.get("capturada") != "1"
+
+        if commit:
+            vivienda.save()
+
+        return vivienda
+
+

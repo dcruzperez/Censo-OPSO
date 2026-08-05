@@ -61,6 +61,13 @@ urlpatterns = [
         views.EditarViviendaView.as_view(),
         name="vivienda_editar",
     ),
+    # La ubicación va bajo la VIVIENDA y no bajo la encuesta (HU-11): describe el
+    # inmueble, no el trabajo. Dos hogares de la misma casa comparten el punto.
+    path(
+        "viviendas/<int:pk>/ubicacion/",
+        views.CapturarUbicacionView.as_view(),
+        name="capturar_ubicacion",
+    ),
     # Agregar un segundo hogar a una vivienda existente. Solo POST (ver la vista).
     path(
         "viviendas/<int:pk>/hogar/nuevo/",
