@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   NO HAY DÓNDE REGISTRAR — se muestra en lugar del formulario de vivienda.
+
+   Aparece cuando la persona tiene permiso para registrar pero ninguna zona donde
+   hacerlo: o no le han asignado sectores, o los que tiene están en un operativo
+   cerrado o desactivados.
+
+   Se decide ANTES de dibujar el formulario, y no dejando el desplegable de zonas
+   vacío, porque un formulario que no se puede completar es peor que no ofrecerlo:
+   la persona rellena nueve campos y descubre el problema al enviar.
+
+   Es la misma decisión que la HU-06 tomó en su pantalla de asignación cuando no
+   hay censistas disponibles: explicar la causa y decir a quién acudir.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Registrar una vivienda{% endblock %}
+
+{% block contenido %}
+
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+    Registrar una vivienda
+  </h1>
+</div>
+
+<div class="card-opso p-4 p-lg-5 text-center">
+  <h2 class="h5 fw-semibold mb-2">No tienes territorio donde registrar</h2>
+  <p class="text-secondary mb-3">
+    Para dar de alta una vivienda hace falta tener asignado al menos un sector
+    con zonas activas, en un operativo que siga abierto.
+  </p>
+  <p class="text-secondary small mb-3">
+    Puede ser que tu supervisor todavía no te haya repartido territorio, o que el
+    operativo en el que trabajabas ya se haya cerrado.
+  </p>
+  <div class="d-flex gap-2 justify-content-center flex-wrap">
+    <a href="{% url 'operativos:mis_sectores' %}" class="btn btn-opso btn-sm">
+      Ver mis sectores
+    </a>
+    <a href="{% url 'fichas:mis_encuestas' %}" class="btn btn-outline-secondary btn-sm">
+      Volver a mis encuestas
+    </a>
+  </div>
+</div>
+
+{% endblock %}

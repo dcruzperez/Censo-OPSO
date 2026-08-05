@@ -10,19 +10,82 @@
   </p>
 </div>
 
+{# Contadores de encuestas (HU-07). Eran marcadores de posición ("—") desde la
+   HU-01; ahora los calcula DashboardCensistaView con una sola consulta. #}
 <div class="row g-3 mb-4">
   <div class="col-12 col-md-6">
     <div class="card-opso p-4 h-100">
-      <div class="kpi-valor">—</div>
-      <div class="kpi-etiqueta">Fichas registradas por ti</div>
+      <div class="kpi-valor {% if resumen_encuestas.por_trabajar %}text-primary{% else %}text-success{% endif %}">
+        {{ resumen_encuestas.por_trabajar }}
+      </div>
+      <div class="kpi-etiqueta">Encuestas por trabajar</div>
     </div>
   </div>
   <div class="col-12 col-md-6">
     <div class="card-opso p-4 h-100">
-      <div class="kpi-valor">—</div>
-      <div class="kpi-etiqueta">Fichas pendientes de completar</div>
+      <div class="kpi-valor">{{ resumen_encuestas.total }}</div>
+      <div class="kpi-etiqueta">Encuestas en tu padrón</div>
     </div>
   </div>
+</div>
+
+{# Encuestas (HU-07) — lo segundo que necesita ver: qué puerta toca primero #}
+<div class="card-opso p-4 mb-4">
+  <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
+    <h2 class="h5 fw-semibold mb-0">Tus próximas encuestas</h2>
+    {% if resumen_encuestas.total %}
+      <a href="{% url 'fichas:mis_encuestas' %}" class="btn btn-opso btn-sm">
+        Ver todas
+      </a>
+    {% endif %}
+  </div>
+
+  {% if resumen_encuestas.observadas %}
+    <div class="alert alert-danger small py-2" role="alert">
+      Tu supervisor devolvió
+      <strong>{{ resumen_encuestas.observadas }} encuesta{{ resumen_encuestas.observadas|pluralize }}</strong>
+      con observaciones.
+      <a href="{% url 'fichas:mis_encuestas' %}?estado=OBSERVADA" class="fw-semibold">Corregirlas</a>.
+    </div>
+  {% endif %}
+
+  {% if proximas_encuestas %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr class="small text-secondary">
+            <th scope="col" class="fw-normal ps-0">Dirección</th>
+            <th scope="col" class="fw-normal">Zona</th>
+            <th scope="col" class="fw-normal">Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for encuesta in proximas_encuestas %}
+            <tr>
+              <td class="ps-0">
+                <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}"
+                   class="fw-semibold text-decoration-none">{{ encuesta.direccion }}</a>
+              </td>
+              <td class="small text-secondary">
+                {{ encuesta.zona.nombre }} · {{ encuesta.zona.sector.nombre }}
+              </td>
+              <td>{% include "fichas/_estado_encuesta.html" with encuesta=encuesta %}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% elif resumen_encuestas.total %}
+    {# Tiene padrón y no le queda nada abierto: es una noticia, no un vacío. #}
+    <p class="text-secondary small mb-0">
+      No te queda ninguna encuesta por trabajar. Todo tu padrón está cerrado.
+    </p>
+  {% else %}
+    <p class="text-secondary small mb-0">
+      Todavía no hay encuestas cargadas para ti. Aparecerán aquí en cuanto se
+      cargue el padrón de tu sector.
+    </p>
+  {% endif %}
 </div>
 
 {# Mis sectores (HU-06) — lo primero que necesita ver: dónde le toca trabajar #}
@@ -73,6 +136,7 @@
   <ul class="text-secondary small mb-0 ps-3">
     <li>Registrar nuevas fichas de familias durante el operativo.</li>
     <li>Consultar los sectores y zonas que tiene asignados.</li>
+    <li>Ver sus encuestas asignadas y el estado de cada una.</li>
     <li>Editar únicamente las fichas que él mismo levantó.</li>
     <li>Sin acceso a la gestión de usuarios ni a los reportes globales.</li>
   </ul>

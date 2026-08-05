@@ -8,6 +8,10 @@
      etiqueta -> nombre singular de lo que se lista ("operativo", "comuna").
                  Se usa para el texto "· 12 operativos encontrados", que con el
                  filtro |pluralize se ajusta solo al plural.
+     genero   -> "o" (por defecto) o "a", para concordar el participio con
+                 sustantivos femeninos: "12 encuestas encontradas". Se agregó en la
+                 HU-07 al reutilizar el fragmento con un sustantivo femenino;
+                 quienes ya lo incluían no pasan nada y siguen leyendo igual.
 
    Espera en el contexto (los pone ListView y la vista):
      page_obj, is_paginated, parametros
@@ -23,7 +27,7 @@
     <span class="text-secondary small">
       Página {{ page_obj.number }} de {{ page_obj.paginator.num_pages }}
       · {{ page_obj.paginator.count }} {{ etiqueta }}{{ page_obj.paginator.count|pluralize }}
-      encontrado{{ page_obj.paginator.count|pluralize }}
+      encontrad{{ genero|default:"o" }}{{ page_obj.paginator.count|pluralize }}
     </span>
 
     {% comment %} Cada enlace arrastra "parametros" (los filtros vigentes sin el

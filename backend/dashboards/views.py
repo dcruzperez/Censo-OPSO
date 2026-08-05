@@ -123,6 +123,32 @@ class DashboardSupervisorView(RolRequeridoMixin, TemplateView):
         contexto["operativo_actual"] = operativos_vigentes.order_by(
             "-fecha_inicio"
         ).first()
+
+        # HU-13: la cola de revisión. Es lo primero que el supervisor necesita al
+        # entrar, igual que al censista le importan sus encuestas por trabajar.
+        from django.db.models import Count, Q
+
+        from fichas.models import ESTADOS_SIN_LEVANTAR, Encuesta, EstadoEncuesta
+
+        revisables = Encuesta.objects.exclude(estado=EstadoEncuesta.PENDIENTE)
+
+        contexto["resumen_revision"] = revisables.aggregate(
+            recibidas=Count("id", filter=Q(estado=EstadoEncuesta.COMPLETADA)),
+            validadas=Count("id", filter=Q(estado=EstadoEncuesta.VALIDADA)),
+            observadas=Count("id", filter=Q(estado=EstadoEncuesta.OBSERVADA)),
+            anuladas=Count("id", filter=Q(estado=EstadoEncuesta.ANULADA)),
+            sin_levantar=Count("id", filter=Q(estado__in=ESTADOS_SIN_LEVANTAR)),
+        )
+
+        # Las cinco que llevan más esperando: la cola se atiende por antigüedad, así
+        # que el panel muestra justamente su cabeza.
+        contexto["cola_revision"] = (
+            revisables.filter(
+                estado=EstadoEncuesta.COMPLETADA, cerrada_en__isnull=False
+            )
+            .select_related("vivienda", "censista")
+            .order_by("cerrada_en")[:5]
+        )
         return contexto
 
 
@@ -149,5 +175,44 @@ class DashboardCensistaView(RolRequeridoMixin, TemplateView):
             .exclude(sector__operativo__estado=EstadoOperativo.CERRADO)
             .select_related("sector", "sector__comuna", "sector__operativo")
             .order_by("sector__nombre")
+        )
+
+        # HU-07: sus encuestas. El panel tenía estos dos contadores como marcadores
+        # de posición ("—") desde la HU-01, igual que le pasó al del supervisor
+        # hasta la HU-06; ahora hay datos que ponerles.
+        #
+        # Se cuentan solo las de operativos NO cerrados, por lo mismo que los
+        # sectores de arriba: un padrón de un operativo terminado no es trabajo
+        # pendiente, y sumarlo haría que el panel mostrara una carga que no existe.
+        from django.db.models import Count, Q
+
+        from fichas.models import ESTADOS_ABIERTOS, Encuesta, EstadoEncuesta
+
+        mis_encuestas = Encuesta.objects.filter(
+            censista=self.request.user
+        ).exclude(vivienda__zona__sector__operativo__estado=EstadoOperativo.CERRADO)
+
+        # Un solo viaje a la base de datos para los tres recuentos, con el
+        # argumento `filter` de Count. Es el mismo recurso que usa MisEncuestasView.
+        contexto["resumen_encuestas"] = mis_encuestas.aggregate(
+            total=Count("id"),
+            por_trabajar=Count("id", filter=Q(estado__in=ESTADOS_ABIERTOS)),
+            observadas=Count("id", filter=Q(estado=EstadoEncuesta.OBSERVADA)),
+        )
+
+        # Las tres primeras de la jornada, con el mismo criterio de urgencia que
+        # «Mis encuestas»: primero lo devuelto, después lo empezado a medias.
+        from fichas.views import ORDEN_POR_URGENCIA
+
+        contexto["proximas_encuestas"] = (
+            mis_encuestas.filter(estado__in=ESTADOS_ABIERTOS)
+            .select_related("vivienda", "vivienda__zona", "vivienda__zona__sector")
+            .annotate(urgencia=ORDEN_POR_URGENCIA)
+            .order_by(
+                "urgencia",
+                "vivienda__zona__sector__nombre",
+                "vivienda__zona__nombre",
+                "vivienda__direccion",
+            )[:5]
         )
         return contexto

@@ -15,6 +15,8 @@ urlpatterns = [
     path("dashboard/", include("dashboards.urls")),
     # Organización territorial: /operativos/, /operativos/comunas/, ... (HU-05)
     path("operativos/", include("operativos.urls")),
+    # Encuestas del encuestador: /encuestas/, /encuestas/<pk>/ (HU-07)
+    path("encuestas/", include("fichas.urls")),
     # Autenticación y raíz del sitio: /login/, /logout/, /
     # Se incluye al final porque contiene la ruta "" (la más genérica).
     path("", include("usuarios.urls")),

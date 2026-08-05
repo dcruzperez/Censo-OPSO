@@ -1,0 +1,25 @@
+{% comment %} ==========================================================================
+   FRAGMENTO REUTILIZABLE: la etiqueta de color del estado de una encuesta.
+
+   Uso:
+     {% include "fichas/_estado_encuesta.html" with encuesta=encuesta %}
+
+   Es el equivalente de _estado_operativo.html (HU-05) para el ciclo de vida de la
+   HU-07, con una diferencia deliberada: allí el condicional que elige el color
+   está en el HTML, y aquí está en el modelo (Encuesta.color_estado).
+
+   ¿Por qué el cambio? Porque son tres estados frente a siete. Un `if/elif/else`
+   con siete ramas dentro de una plantilla es ilegible, no se puede probar con una
+   prueba unitaria y obliga a recordar el nombre exacto de cada estado escrito como
+   texto. En el modelo es un diccionario, se lee de un vistazo y hay pruebas que
+   comprueban que los siete estados tienen color asignado.
+
+   El color no es decoración, comunica urgencia:
+     rojo    = te la devolvieron, es lo más urgente
+     naranjo = la dejaste a medias
+     gris    = todavía no la visitas
+     azul    = enviada, esperando revisión
+     verde   = validada, cerrada de verdad
+     negro   = cerrada sin datos (no ubicada o rechazada)
+   ========================================================================= {% endcomment %}
+<span class="badge text-bg-{{ encuesta.color_estado }}">{{ encuesta.get_estado_display }}</span>

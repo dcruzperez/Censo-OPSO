@@ -77,6 +77,31 @@
           </li>
         {% endif %}
 
+        {% comment %} «Mis encuestas» (HU-07) sí se decide por PERMISO, al contrario que
+           «Mis sectores». No es una incoherencia: son dos cosas distintas.
+
+           El módulo de fichas es una FUNCIONALIDAD que un rol puede no tener en
+           absoluto (un perfil de consulta municipal, por ejemplo), y su puerta es
+           `fichas.ver_propias`. El territorio asignado, en cambio, es información
+           mínima de la propia cuenta y no debería poder revocarse. La explicación
+           completa está en fichas/views.py y en MisSectoresView. {% endcomment %}
+        {% if user|tiene_permiso:"fichas.ver_propias" %}
+          <li class="nav-item">
+            <a class="nav-link" href="{% url 'fichas:mis_encuestas' %}">Mis encuestas</a>
+          </li>
+        {% endif %}
+
+        {% comment %} «Revisión» (HU-13) va por `fichas.ver_todas`, que es lo que
+           distingue a quien supervisa de quien levanta. El encuestador tiene
+           `ver_propias` y no este, así que ve «Mis encuestas» y no la bandeja; el
+           supervisor tiene los dos y ve ambos enlaces, que es correcto: también
+           puede tener fichas propias. {% endcomment %}
+        {% if user|tiene_permiso:"fichas.ver_todas" %}
+          <li class="nav-item">
+            <a class="nav-link" href="{% url 'fichas:bandeja_revision' %}">Revisión</a>
+          </li>
+        {% endif %}
+
         {% comment %} «Mis sectores» (HU-06) no se decide por permiso ni por rol, sino por
            un HECHO: si la persona tiene territorio a cargo, el enlace le sirve; si no,
            solo la llevaría a una pantalla vacía.

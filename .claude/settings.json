@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(../.venv/Scripts/python.exe manage.py showmigrations operativos)",
+      "Bash(../.venv/Scripts/python.exe manage.py migrate)",
+      "Bash(../.venv/Scripts/python.exe manage.py shell -c ' *)",
+      "Bash(../.venv/Scripts/python.exe manage.py shell)"
+    ]
+  }
+}

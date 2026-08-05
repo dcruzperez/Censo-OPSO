@@ -60,6 +60,7 @@ INSTALLED_APPS = [
     "usuarios",  # HU: autenticación, roles y auditoría de accesos
     "dashboards",  # paneles diferenciados por rol
     "operativos",  # HU-05: operativos y organización territorial
+    "fichas",  # HU-07: encuestas asignadas al encuestador
 ]
 
 
@@ -476,6 +477,54 @@ STORAGES = {
         )
     },
 }
+
+
+# ==========================================================================
+# 16 bis. ARCHIVOS SUBIDOS POR LOS USUARIOS (HU-12)
+# ==========================================================================
+# Los estáticos (CSS, JS, iconos) los escribe el equipo y los puede leer
+# cualquiera. Estos NO: son fotografías de las viviendas de familias reales, y
+# esa diferencia gobierna toda la configuración de abajo.
+
+# Dónde se guardan en disco.
+MEDIA_ROOT = config("MEDIA_ROOT", default=str(BASE_DIR / "media"))
+
+# ATENCIÓN: MEDIA_URL existe porque Django lo pide, pero OPSO **NO SIRVE ESTA
+# CARPETA COMO ARCHIVOS ESTÁTICOS**, ni en desarrollo ni en producción.
+#
+# El atajo habitual —`static(settings.MEDIA_URL, document_root=...)` en urls.py, o
+# un `location /media/` en Nginx— deja cada archivo accesible con solo conocer su
+# dirección, SIN SESIÓN NI PERMISO. Para un logotipo da igual; para la fotografía
+# de la casa de una familia, no: sería publicar datos personales en internet.
+#
+# Las fotos se entregan por una vista que comprueba quién pregunta
+# (fichas.views.ServirFotografiaView). El prefijo se conserva para que las URL
+# generadas por Django tengan una forma reconocible.
+MEDIA_URL = "media/"
+
+# Tamaño máximo de una fotografía, en bytes. Cinco megabytes es de sobra para la
+# foto de una fachada tomada con un teléfono y evita que una imagen de 40 MB
+# bloquee la subida en una conexión de terreno.
+OPSO_TAMANO_MAXIMO_FOTO = config(
+    "OPSO_TAMANO_MAXIMO_FOTO", default=5 * 1024 * 1024, cast=int
+)
+
+# Cuántas fotografías admite una vivienda. La historia dice «cuando sea necesario»:
+# el límite existe para que la ficha no se convierta en un álbum.
+OPSO_MAXIMO_FOTOS_POR_VIVIENDA = config(
+    "OPSO_MAXIMO_FOTOS_POR_VIVIENDA", default=5, cast=int
+)
+
+# A partir de este tamaño, Django escribe la subida en un archivo temporal en vez
+# de mantenerla en memoria. Se baja del valor por defecto (2,5 MB) porque en
+# terreno pueden llegar varias subidas a la vez y la memoria del servidor es el
+# recurso que primero se agota.
+FILE_UPLOAD_MAX_MEMORY_SIZE = 1024 * 1024
+
+# Permisos del archivo al escribirlo: lectura y escritura solo para el usuario que
+# ejecuta la aplicación. Sin esto, el sistema usa el umask del proceso, que en
+# muchos servidores deja los archivos legibles para todo el mundo.
+FILE_UPLOAD_PERMISSIONS = 0o600
 
 
 # ==========================================================================

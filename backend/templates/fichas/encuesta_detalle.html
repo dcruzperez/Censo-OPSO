@@ -1,0 +1,451 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   FICHA DE UNA ENCUESTA — /encuestas/<pk>/
+
+   Responde «¿qué sé de esta puerta antes de tocarla?»: dónde queda, cómo
+   reconocerla, qué me dijo el supervisor y qué ha pasado con ella hasta ahora.
+
+   Es de SOLO LECTURA. En la HU-07 no hay nada que guardar: las historias
+   siguientes del sprint son las que traen el formulario de la vivienda, el grupo
+   familiar, los borradores, el GPS y las fotografías. Esta pantalla es el sitio
+   natural donde esas historias colgarán sus botones, y por eso existe ya.
+
+   Quien la abre casi siempre es el propio encuestador, pero un supervisor con
+   `fichas.ver_todas` también puede: en ese caso la plantilla lo dice
+   explícitamente (es_propia), porque leer la ficha de otra persona y creerla
+   propia lleva a ir a tocar una puerta que no toca.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}{{ encuesta.direccion }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'fichas:mis_encuestas' %}">Mis encuestas</a></li>
+    <li class="breadcrumb-item active" aria-current="page">{{ encuesta.direccion }}</li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+      {{ encuesta.direccion }}
+    </h1>
+    <p class="text-secondary mb-0">
+      {{ encuesta.zona.nombre }} · {{ encuesta.zona.sector.nombre }} ·
+      {{ encuesta.zona.sector.comuna.nombre }}
+    </p>
+  </div>
+  <div class="text-end">
+    {% include "fichas/_estado_encuesta.html" with encuesta=encuesta %}
+    <div class="text-secondary small mt-1">{{ encuesta.zona.sector.operativo.nombre }}</div>
+  </div>
+</div>
+
+{% if not es_propia %}
+  {% comment %} Solo lo ve quien tiene fichas.ver_todas. Se avisa para que un
+     supervisor no confunda la ficha de otra persona con una suya. {% endcomment %}
+  <div class="alert alert-info small d-flex gap-2" role="alert">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+    </svg>
+    <div>
+      Esta encuesta está a cargo de
+      <strong>{{ encuesta.censista.get_full_name|default:encuesta.censista.email }}</strong>,
+      no tuya. La estás viendo porque tu rol puede consultar las fichas de todo el
+      operativo.
+    </div>
+  </div>
+{% endif %}
+
+{% comment %} El borrador (HU-10): la nota que uno se dejó y la visita anotada. Va
+   arriba, antes de los datos, porque es lo primero que hay que leer al retomar una
+   encuesta a medias: si estuviera al final, habría que recorrer la ficha entera
+   para descubrir por dónde se iba. {% endcomment %}
+{% if encuesta.nota_avance or encuesta.proxima_visita %}
+  <div class="alert {% if encuesta.visita_pendiente_vencida %}alert-warning{% else %}alert-light border{% endif %} small" role="alert">
+    <div class="d-flex justify-content-between align-items-start gap-2 flex-wrap">
+      <div>
+        {% if encuesta.nota_avance %}
+          <strong>Por dónde ibas:</strong> {{ encuesta.nota_avance|linebreaksbr }}
+        {% endif %}
+        {% if encuesta.proxima_visita %}
+          <div class="mt-1">
+            {% if encuesta.visita_pendiente_vencida %}
+              <strong>Tenías anotado volver el
+                {{ encuesta.proxima_visita|date:"d-m-Y" }}</strong> y esa fecha ya pasó.
+            {% else %}
+              Anotado para volver el <strong>{{ encuesta.proxima_visita|date:"d-m-Y" }}</strong>.
+            {% endif %}
+          </div>
+        {% endif %}
+      </div>
+      {% if puede_editar_datos %}
+        <a href="{% url 'fichas:guardar_borrador' encuesta.pk %}" class="fw-semibold">
+          Editar la nota
+        </a>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
+
+{% comment %} Si se cerró sin levantar, el motivo es el dato más importante de la
+   ficha: es lo que explica por qué esa puerta no tiene datos. {% endcomment %}
+{% if encuesta.motivo_cierre %}
+  <div class="alert alert-dark small" role="alert">
+    <strong>No se pudo levantar ({{ encuesta.get_estado_display|lower }}):</strong>
+    {{ encuesta.motivo_cierre|linebreaksbr }}
+  </div>
+{% endif %}
+
+{% comment %} ---------- LO QUE PIDIÓ CORREGIR EL SUPERVISOR (HU-15) ----------
+
+   Hasta la HU-15 este aviso decía «revisa las observaciones» sin mostrar ninguna:
+   el estado OBSERVADA existía desde la HU-07, pero el texto de la devolución no,
+   así que el encuestador leía una instrucción imposible de seguir.
+
+   Ahora las observaciones se muestran AQUÍ, arriba y completas. No en una pestaña ni
+   en un enlace: es lo primero que hay que leer, y es lo único que dice qué hacer.
+   {% endcomment %}
+{% if encuesta.necesita_correccion %}
+  <div class="alert alert-danger d-flex gap-2" role="alert">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+    </svg>
+    <div class="small">
+      <strong>
+        {% if encuesta.revisada_por %}
+          {{ encuesta.revisada_por.get_full_name|default:encuesta.revisada_por.email }}
+          devolvió esta ficha
+        {% else %}
+          El supervisor devolvió esta ficha
+        {% endif %}
+        {% if encuesta.revisada_en %}el {{ encuesta.revisada_en|date:"d-m-Y" }}{% endif %}.
+      </strong>
+      Vuelve a ser trabajo pendiente y puedes editarla otra vez.
+
+      {% if encuesta.comentario_revision %}
+        {% comment %} `linebreaksbr` y no `linebreaks`: el texto viene con saltos de
+           línea porque el formulario del supervisor prerrellena una lista con guiones,
+           y hay que respetarlos. Django escapa el contenido antes de convertirlos, así
+           que un comentario con HTML dentro se muestra como texto. {% endcomment %}
+        <div class="mt-2 p-3 bg-white border-start border-4 border-danger rounded-end">
+          {{ encuesta.comentario_revision|linebreaksbr }}
+        </div>
+      {% else %}
+        {% comment %} Solo puede pasar con fichas devueltas antes de la HU-15: desde
+           que existe `encuesta_resolucion_con_motivo`, la base de datos no acepta una
+           devolución sin texto. {% endcomment %}
+        <div class="mt-2">
+          No quedaron observaciones escritas. Consulta con tu supervisor qué hay que
+          corregir antes de volver a la vivienda.
+        </div>
+      {% endif %}
+
+      {% if encuesta.veces_devuelta > 1 %}
+        <p class="mb-0 mt-2">
+          Es la {{ encuesta.veces_devuelta }}.ª vez que se devuelve. Si no entiendes
+          qué falta, pregunta antes de reenviarla.
+        </p>
+      {% endif %}
+    </div>
+  </div>
+{% endif %}
+
+{% comment %} La resolución también se muestra cuando la ficha se cerró: quien la
+   levantó tiene derecho a saber que se aprobó —y con qué comentario— o por qué se
+   anuló su trabajo. Sin esto, el encuestador vería el estado cambiar sin explicación.
+   {% endcomment %}
+{% if encuesta.esta_resuelta and not encuesta.necesita_correccion %}
+  <div class="alert {% if encuesta.estado == 'VALIDADA' %}alert-success{% else %}alert-secondary{% endif %} small" role="alert">
+    <strong>
+      {{ encuesta.get_estado_display }}
+      {% if encuesta.revisada_por %}
+        por {{ encuesta.revisada_por.get_full_name|default:encuesta.revisada_por.email }}
+      {% endif %}
+      {% if encuesta.revisada_en %}el {{ encuesta.revisada_en|date:"d-m-Y" }}{% endif %}.
+    </strong>
+    {% if encuesta.comentario_revision %}
+      <div class="mt-2">{{ encuesta.comentario_revision|linebreaksbr }}</div>
+    {% endif %}
+  </div>
+{% endif %}
+
+<div class="row g-3">
+
+  {# ---------- Cómo llegar y cómo reconocerla ---------- #}
+  <div class="col-12 col-lg-7">
+    <div class="card-opso p-4 h-100">
+      <h2 class="h6 fw-semibold mb-3">La vivienda</h2>
+
+      <dl class="row mb-0 small">
+        <dt class="col-5 col-sm-4 text-secondary fw-normal">Dirección</dt>
+        <dd class="col-7 col-sm-8 fw-semibold">{{ encuesta.direccion }}</dd>
+
+        <dt class="col-5 col-sm-4 text-secondary fw-normal">Cómo reconocerla</dt>
+        <dd class="col-7 col-sm-8">{{ encuesta.referencia|default:"—" }}</dd>
+
+        <dt class="col-5 col-sm-4 text-secondary fw-normal">Zona</dt>
+        <dd class="col-7 col-sm-8">{{ encuesta.zona.nombre }}</dd>
+
+        <dt class="col-5 col-sm-4 text-secondary fw-normal">Sector</dt>
+        <dd class="col-7 col-sm-8">{{ encuesta.zona.sector.nombre }}</dd>
+
+        <dt class="col-5 col-sm-4 text-secondary fw-normal">Comuna</dt>
+        <dd class="col-7 col-sm-8">
+          {{ encuesta.zona.sector.comuna.nombre }}
+          <span class="text-secondary">({{ encuesta.zona.sector.comuna.region.nombre }})</span>
+        </dd>
+
+        <dt class="col-5 col-sm-4 text-secondary fw-normal">Operativo</dt>
+        <dd class="col-7 col-sm-8 mb-0">
+          {{ encuesta.zona.sector.operativo.nombre }}
+          {% include "operativos/_estado_operativo.html" with estado=encuesta.zona.sector.operativo %}
+        </dd>
+      </dl>
+
+      {# ---------- Las características de la vivienda (HU-08) ---------- #}
+      <hr class="my-3">
+      <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+        <h3 class="h6 fw-semibold mb-0">Características</h3>
+        <a href="{% url 'fichas:vivienda_detalle' encuesta.vivienda.pk %}" class="small">
+          Ver la vivienda
+        </a>
+      </div>
+
+      {% if encuesta.vivienda.datos_completos %}
+        <dl class="row mb-0 small">
+          <dt class="col-5 col-sm-4 text-secondary fw-normal">Tipo</dt>
+          <dd class="col-7 col-sm-8">{{ encuesta.vivienda.get_tipo_display }}</dd>
+
+          <dt class="col-5 col-sm-4 text-secondary fw-normal">Muros</dt>
+          <dd class="col-7 col-sm-8">{{ encuesta.vivienda.get_materialidad_muros_display }}</dd>
+
+          <dt class="col-5 col-sm-4 text-secondary fw-normal">Tenencia</dt>
+          <dd class="col-7 col-sm-8 mb-0">{{ encuesta.vivienda.get_tenencia_display }}</dd>
+        </dl>
+      {% else %}
+        {% comment %} Vivienda del padrón de la HU-07: se dice que falta describirla
+           y se ofrece el camino, en vez de mostrar tres guiones. {% endcomment %}
+        <p class="small text-secondary mb-0">
+          Esta vivienda todavía no está descrita.
+          {% if puede_editar_datos %}
+            <a href="{% url 'fichas:vivienda_editar' encuesta.vivienda.pk %}">
+              Completar sus datos
+            </a>.
+          {% endif %}
+        </p>
+      {% endif %}
+
+      {% if encuesta.zona.descripcion %}
+        <p class="text-secondary small mt-3 mb-0">
+          <strong>Límites de la zona:</strong> {{ encuesta.zona.descripcion }}
+        </p>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ---------- El grupo familiar (HU-08) ---------- #}
+  <div class="col-12">
+    <div class="card-opso p-4">
+      <h2 class="h6 fw-semibold mb-3">El hogar</h2>
+
+      {% if encuesta.tiene_grupo_familiar %}
+        <dl class="row mb-0 small">
+          <dt class="col-6 col-sm-3 text-secondary fw-normal">Jefatura de hogar</dt>
+          <dd class="col-6 col-sm-3 fw-semibold">
+            {{ encuesta.grupo_familiar.jefe_hogar_nombre }}
+          </dd>
+
+          <dt class="col-6 col-sm-3 text-secondary fw-normal">RUT</dt>
+          <dd class="col-6 col-sm-3">{{ encuesta.grupo_familiar.jefe_hogar_rut|default:"No entregado" }}</dd>
+
+          <dt class="col-6 col-sm-3 text-secondary fw-normal">Personas declaradas</dt>
+          <dd class="col-6 col-sm-3">{{ encuesta.grupo_familiar.integrantes_declarados }}</dd>
+
+          <dt class="col-6 col-sm-3 text-secondary fw-normal">Teléfono</dt>
+          <dd class="col-6 col-sm-3">{{ encuesta.grupo_familiar.telefono_contacto|default:"—" }}</dd>
+
+          <dt class="col-6 col-sm-3 text-secondary fw-normal">Ingreso del hogar</dt>
+          <dd class="col-6 col-sm-3">
+            {% if encuesta.grupo_familiar.ingreso_mensual %}
+              ${{ encuesta.grupo_familiar.ingreso_mensual|floatformat:"0" }}
+            {% else %}
+              No entregado
+            {% endif %}
+          </dd>
+
+          <dt class="col-6 col-sm-3 text-secondary fw-normal">Por persona</dt>
+          <dd class="col-6 col-sm-3 mb-0">
+            {% if encuesta.grupo_familiar.ingreso_por_persona %}
+              ${{ encuesta.grupo_familiar.ingreso_por_persona|floatformat:"0" }}
+            {% else %}
+              —
+            {% endif %}
+          </dd>
+        </dl>
+
+        {% if encuesta.grupo_familiar.observaciones %}
+          <p class="small mt-3 mb-0">
+            {{ encuesta.grupo_familiar.observaciones|linebreaksbr }}
+          </p>
+        {% endif %}
+
+        {# ---------- Las personas del hogar (HU-09) ---------- #}
+        <hr class="my-3">
+        <div class="d-flex justify-content-between align-items-center gap-2 flex-wrap">
+          <div>
+            <h3 class="h6 fw-semibold mb-1">Personas registradas</h3>
+            <p class="small text-secondary mb-0">
+              {{ encuesta.grupo_familiar.total_integrantes }} de
+              {{ encuesta.grupo_familiar.integrantes_declarados }} declarada{{ encuesta.grupo_familiar.integrantes_declarados|pluralize }}
+              {% if encuesta.grupo_familiar.hay_discrepancia %}
+                <span class="badge text-bg-warning">hay más de las declaradas</span>
+              {% elif encuesta.grupo_familiar.esta_completo %}
+                <span class="badge text-bg-success">completo</span>
+              {% else %}
+                <span class="badge text-bg-secondary">
+                  faltan {{ encuesta.grupo_familiar.integrantes_pendientes }}
+                </span>
+              {% endif %}
+            </p>
+          </div>
+          <a href="{% url 'fichas:integrantes' encuesta.pk %}" class="btn btn-outline-secondary btn-sm">
+            {% if encuesta.grupo_familiar.total_integrantes %}
+              Ver y editar
+            {% else %}
+              Registrar a las personas
+            {% endif %}
+          </a>
+        </div>
+      {% else %}
+        <p class="text-secondary small mb-0">
+          Todavía no se han registrado los datos de la familia que vive aquí.
+          {% if puede_editar_datos %}
+            <a href="{% url 'fichas:registrar_hogar' encuesta.pk %}">Registrarlos ahora</a>.
+          {% endif %}
+        </p>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ---------- En qué va ---------- #}
+  <div class="col-12 col-lg-5">
+    <div class="card-opso p-4 h-100">
+      <h2 class="h6 fw-semibold mb-3">En qué va</h2>
+
+      <dl class="row mb-0 small">
+        <dt class="col-6 text-secondary fw-normal">Estado</dt>
+        <dd class="col-6">{% include "fichas/_estado_encuesta.html" with encuesta=encuesta %}</dd>
+
+        <dt class="col-6 text-secondary fw-normal">A cargo de</dt>
+        <dd class="col-6">{{ encuesta.censista.get_full_name|default:encuesta.censista.email }}</dd>
+
+        <dt class="col-6 text-secondary fw-normal">Primera visita</dt>
+        <dd class="col-6">{{ encuesta.iniciada_en|date:"d-m-Y H:i"|default:"Sin visitar" }}</dd>
+
+        <dt class="col-6 text-secondary fw-normal">Cerrada el</dt>
+        <dd class="col-6">{{ encuesta.cerrada_en|date:"d-m-Y H:i"|default:"—" }}</dd>
+
+        <dt class="col-6 text-secondary fw-normal">Cargada el</dt>
+        <dd class="col-6 mb-0">
+          {{ encuesta.creada_en|date:"d-m-Y" }}
+          {% if encuesta.asignada_por %}
+            <div class="text-secondary">
+              por {{ encuesta.asignada_por.get_full_name|default:encuesta.asignada_por.email }}
+            </div>
+          {% endif %}
+        </dd>
+      </dl>
+
+      {% comment %} Las acciones de la HU-08. Solo se ofrecen si la encuesta es
+         propia, admite cambios y la persona tiene permiso para escribir: las tres
+         condiciones las resolvió la vista, y la de verdad la vuelve a comprobar el
+         servidor al recibir el POST. {% endcomment %}
+      {% if puede_editar_datos %}
+        <div class="d-grid gap-2 mt-3">
+          <a href="{% url 'fichas:registrar_hogar' encuesta.pk %}" class="btn btn-outline-secondary btn-sm">
+            {% if encuesta.tiene_grupo_familiar %}
+              Editar los datos del hogar
+            {% else %}
+              Registrar el grupo familiar
+            {% endif %}
+          </a>
+
+          {% comment %} Las tres salidas de la HU-10. «Terminar» va primero y
+             destacada solo cuando de verdad se puede: ofrecerla en gris cuando
+             falta algo enseñaría a pulsar botones que rechazan. {% endcomment %}
+          {% if encuesta.puede_completarse %}
+            <a href="{% url 'fichas:completar_encuesta' encuesta.pk %}" class="btn btn-opso btn-sm">
+              Terminar y enviar a revisión
+            </a>
+          {% else %}
+            <a href="{% url 'fichas:completar_encuesta' encuesta.pk %}" class="btn btn-outline-primary btn-sm">
+              Ver qué falta para terminar
+            </a>
+          {% endif %}
+
+          <a href="{% url 'fichas:guardar_borrador' encuesta.pk %}" class="btn btn-outline-secondary btn-sm">
+            Guardar borrador y continuar después
+          </a>
+          <a href="{% url 'fichas:cerrar_encuesta' encuesta.pk %}" class="btn btn-outline-danger btn-sm">
+            No se pudo levantar
+          </a>
+        </div>
+      {% elif es_propia and motivo_bloqueo %}
+        <div class="alert alert-secondary small mt-3 mb-0" role="alert">
+          {{ motivo_bloqueo }}
+        </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ---------- Indicaciones ---------- #}
+  {% if encuesta.observaciones %}
+    <div class="col-12">
+      <div class="card-opso p-4">
+        <h2 class="h6 fw-semibold mb-2">Indicaciones</h2>
+        <p class="small mb-0">{{ encuesta.observaciones|linebreaksbr }}</p>
+      </div>
+    </div>
+  {% endif %}
+
+  {# ---------- Los otros hogares de la misma vivienda ---------- #}
+  {% if otros_hogares %}
+    {% comment %} Desde la HU-08 esto ya no es «otras filas con la misma dirección
+       escrita», que podía ser un duplicado: son hogares de la MISMA vivienda,
+       hermanos de la misma clave foránea. Sigue mostrándose porque es información
+       útil en terreno —hay más de una familia en esa casa— y porque permite saltar
+       de una ficha a la otra sin volver al listado. {% endcomment %}
+    <div class="col-12">
+      <div class="card-opso p-4">
+        <h2 class="h6 fw-semibold mb-2">
+          Otros hogares en esta misma vivienda
+          <span class="badge text-bg-light border">{{ otros_hogares|length }}</span>
+        </h2>
+        <ul class="small mb-0">
+          {% for otra in otros_hogares %}
+            <li class="mb-1">
+              <a href="{% url 'fichas:encuesta_detalle' otra.pk %}">
+                {{ otra.grupo_familiar.jefe_hogar_nombre|default:"Hogar sin registrar" }}
+              </a>
+              {% include "fichas/_estado_encuesta.html" with encuesta=otra %}
+              · a cargo de {{ otra.censista.get_full_name|default:otra.censista.email }}
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+  {% endif %}
+
+</div>
+
+<div class="mt-4">
+  <a href="{% url 'fichas:mis_encuestas' %}" class="btn btn-outline-secondary btn-sm">
+    Volver a mis encuestas
+  </a>
+</div>
+
+{% endblock %}

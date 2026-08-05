@@ -1,0 +1,329 @@
+{% extends "base.html" %}
+{% load permisos %}
+
+{% comment %} ==========================================================================
+   MIS ENCUESTAS — /encuestas/
+
+   La pantalla de la HU-07: «Como encuestador, quiero visualizar las encuestas
+   asignadas y su estado para organizar mi trabajo».
+
+   El orden de la página responde, de arriba abajo, a las preguntas que se hace
+   quien la abre por la mañana:
+
+     1. ¿Cuánto me queda?        -> los contadores y la barra de avance.
+     2. ¿Hay algo urgente?       -> el aviso de fichas devueltas por el supervisor.
+     3. ¿A qué zona voy hoy?     -> el resumen por zona.
+     4. ¿Qué puerta toco?        -> la tabla, ordenada por urgencia.
+
+   Está pensada para leerse EN TERRENO, probablemente en un teléfono con una mano:
+   la tabla se desplaza dentro de su contenedor, los contadores caben de a dos por
+   fila y ninguna acción importante queda al final de la página.
+
+   La plantilla NO llama a métodos del modelo dentro del bucle: la vista trae las
+   relaciones con select_related y los contadores agregados. Llamar a
+   encuesta.operativo en cada fila lanzaría una consulta por fila, que es
+   exactamente el problema que el select_related está evitando.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Mis encuestas{% endblock %}
+
+{% block contenido %}
+
+<div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">Mis encuestas</h1>
+    <p class="text-secondary mb-0">
+      Las viviendas que tienes que levantar y en qué va cada una.
+    </p>
+  </div>
+  <div class="d-flex gap-2 flex-wrap">
+    {% comment %} El botón de registrar (HU-08) se muestra por PERMISO, igual que el
+       enlace del menú. Quien no puede crear fichas —un supervisor, por ejemplo— no
+       lo ve, y si escribe la dirección a mano la vista lo rechaza igual. {% endcomment %}
+    {% if user|tiene_algun_permiso:"fichas.crear,fichas.editar" %}
+      <a href="{% url 'fichas:vivienda_registrar' %}" class="btn btn-opso btn-sm">
+        Registrar una vivienda
+      </a>
+    {% endif %}
+    {% if user.asignaciones_sector.exists %}
+      <a href="{% url 'operativos:mis_sectores' %}" class="btn btn-outline-secondary btn-sm">
+        Ver mi territorio
+      </a>
+    {% endif %}
+  </div>
+</div>
+
+{% if hay_encuestas %}
+
+  {# ---------- 1. ¿Cuánto me queda? ---------- #}
+  <div class="row g-3 mb-3">
+    <div class="col-6 col-lg-3">
+      <div class="card-opso p-3">
+        {% comment %} El contador que se mira primero: lo que falta por hacer. Va en
+           azul cuando queda trabajo y en verde cuando no queda ninguno, porque
+           terminar el padrón asignado es una noticia y merece verse. {% endcomment %}
+        <div class="kpi-valor {% if resumen.por_trabajar %}text-primary{% else %}text-success{% endif %}">
+          {{ resumen.por_trabajar }}
+        </div>
+        <div class="kpi-etiqueta">
+          {% if resumen.por_trabajar %}Te quedan por trabajar{% else %}No te queda ninguna{% endif %}
+        </div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="card-opso p-3">
+        <div class="kpi-valor">{{ resumen.pendientes }}</div>
+        <div class="kpi-etiqueta">Sin visitar</div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="card-opso p-3">
+        <div class="kpi-valor {% if resumen.borradores %}text-warning{% endif %}">
+          {{ resumen.borradores }}
+        </div>
+        <div class="kpi-etiqueta">A medias</div>
+      </div>
+    </div>
+    <div class="col-6 col-lg-3">
+      <div class="card-opso p-3">
+        <div class="kpi-valor">{{ resumen.cerradas }}</div>
+        <div class="kpi-etiqueta">Cerradas de {{ resumen.total }}</div>
+      </div>
+    </div>
+  </div>
+
+  {# ---------- La barra de avance ---------- #}
+  {% comment %} Un porcentaje dice en un segundo lo que cuatro contadores obligan a
+     calcular de cabeza. Lleva role="progressbar" y los atributos aria-* para que un
+     lector de pantalla anuncie el mismo dato que se ve. {% endcomment %}
+  <div class="card-opso p-3 mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+      <span class="small fw-semibold">Avance de tu padrón</span>
+      <span class="small text-secondary">{{ resumen.avance }}%</span>
+    </div>
+    <div class="progress" style="height: 10px;" role="progressbar"
+         aria-label="Avance de tu padrón" aria-valuenow="{{ resumen.avance }}"
+         aria-valuemin="0" aria-valuemax="100">
+      <div class="progress-bar bg-success" style="width: {{ resumen.avance }}%;"></div>
+    </div>
+    <p class="text-secondary small mb-0 mt-2">
+      {{ resumen.cerradas }} de {{ resumen.total }} encuesta{{ resumen.total|pluralize }}
+      cerrada{{ resumen.cerradas|pluralize }}
+      {% if resumen.completadas %}
+        · {{ resumen.completadas }} esperando la revisión de tu supervisor
+      {% endif %}
+      {% if resumen.validadas %}
+        · {{ resumen.validadas }} ya validada{{ resumen.validadas|pluralize }}
+      {% endif %}
+    </p>
+  </div>
+
+  {# ---------- 2. ¿Hay algo urgente? ---------- #}
+  {% comment %} Una ficha devuelta por el supervisor es lo único de esta pantalla que
+     tiene a otra persona esperando, y además ya consumió una visita. Por eso se
+     avisa arriba y con un enlace que filtra directamente, en vez de confiar en que
+     se vea al recorrer la tabla. {% endcomment %}
+  {# ---------- Visitas anotadas que ya vencieron (HU-10) ---------- #}
+  {% comment %} Un borrador con «volver el jueves» y hoy es lunes de la semana
+     siguiente no es trabajo pendiente cualquiera: es trabajo que se escapó. El
+     aviso va junto al de las fichas devueltas, que es el otro caso donde el
+     tiempo corre en contra. {% endcomment %}
+  {% if resumen.visitas_vencidas %}
+    <div class="alert alert-warning small d-flex gap-2" role="alert">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <div>
+        Tienes <strong>{{ resumen.visitas_vencidas }}</strong>
+        encuesta{{ resumen.visitas_vencidas|pluralize }} con una visita anotada
+        para hoy o antes. <a href="?estado=ABIERTAS" class="fw-semibold">Ver las
+        que te quedan</a>.
+      </div>
+    </div>
+  {% endif %}
+
+  {% if resumen.observadas %}
+    <div class="alert alert-danger small d-flex gap-2" role="alert">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+      </svg>
+      <div>
+        Tu supervisor devolvió
+        <strong>{{ resumen.observadas }} encuesta{{ resumen.observadas|pluralize }}</strong>
+        con observaciones. Corregirlas es lo primero: hay alguien esperando para
+        cerrarlas.
+        <a href="?estado=OBSERVADA" class="fw-semibold">Ver solo esas</a>.
+      </div>
+    </div>
+  {% endif %}
+
+  {# ---------- 3. ¿A qué zona voy hoy? ---------- #}
+  {% if avance_por_zona %}
+    <div class="card-opso p-3 mb-3">
+      <h2 class="h6 fw-semibold mb-2">Dónde te queda trabajo</h2>
+      <div class="d-flex flex-wrap gap-2">
+        {% comment %} avance_por_zona llega ya agrupado por PostgreSQL y ordenado con
+           las zonas más cargadas delante: la primera pastilla es la zona a la que
+           conviene ir hoy. {% endcomment %}
+        {% for zona in avance_por_zona %}
+          <span class="badge text-bg-light border d-inline-flex align-items-center gap-2 p-2">
+            <span class="fw-semibold">{{ zona.vivienda__zona__nombre }}</span>
+            <span class="text-secondary fw-normal">{{ zona.vivienda__zona__sector__nombre }}</span>
+            {% if zona.por_trabajar %}
+              <span class="badge text-bg-primary">{{ zona.por_trabajar }} por hacer</span>
+            {% else %}
+              <span class="badge text-bg-success">completa</span>
+            {% endif %}
+          </span>
+        {% endfor %}
+      </div>
+    </div>
+  {% endif %}
+
+  {# ---------- Buscador y filtros ---------- #}
+  <form method="get" class="card-opso p-3 mb-3">
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-lg-4">
+        <label for="{{ filtro.q.id_for_label }}" class="form-label small fw-semibold mb-1">{{ filtro.q.label }}</label>
+        {{ filtro.q }}
+      </div>
+      <div class="col-12 col-sm-6 col-lg-3">
+        <label for="{{ filtro.estado.id_for_label }}" class="form-label small fw-semibold mb-1">{{ filtro.estado.label }}</label>
+        {{ filtro.estado }}
+      </div>
+      <div class="col-12 col-sm-6 col-lg-3">
+        <label for="{{ filtro.sector.id_for_label }}" class="form-label small fw-semibold mb-1">{{ filtro.sector.label }}</label>
+        {{ filtro.sector }}
+      </div>
+      <div class="col-12 col-lg-2 d-flex gap-2">
+        <button type="submit" class="btn btn-opso btn-sm w-100">Filtrar</button>
+        {% if parametros %}
+          <a href="{% url 'fichas:mis_encuestas' %}"
+             class="btn btn-outline-secondary btn-sm" title="Quitar los filtros">Limpiar</a>
+        {% endif %}
+      </div>
+      <div class="col-12">
+        <div class="form-check small mt-1">
+          {{ filtro.historicas }}
+          <label class="form-check-label text-secondary" for="{{ filtro.historicas.id_for_label }}">
+            {{ filtro.historicas.label }}
+          </label>
+        </div>
+      </div>
+    </div>
+  </form>
+
+  {# ---------- 4. ¿Qué puerta toco? ---------- #}
+  <div class="card-opso p-0 overflow-hidden">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th scope="col">Dirección</th>
+            <th scope="col">Zona</th>
+            <th scope="col">Sector</th>
+            <th scope="col">Estado</th>
+            <th scope="col" class="text-end">Ficha</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for encuesta in encuestas %}
+            {% comment %} La fila entera se pinta cuando la ficha volvió con
+               observaciones. Es coherente con el panel de la HU-06, que marca así
+               los sectores sin nadie: el color de fila se reserva para lo que hay
+               que arreglar, no para decorar. {% endcomment %}
+            <tr {% if encuesta.necesita_correccion %}class="table-danger"{% endif %}>
+              <td>
+                <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}" class="fw-semibold text-decoration-none">
+                  {{ encuesta.direccion }}
+                </a>
+                {% if encuesta.referencia %}
+                  <div class="text-secondary small">{{ encuesta.referencia }}</div>
+                {% endif %}
+              </td>
+              <td class="small text-secondary">{{ encuesta.zona.nombre }}</td>
+              <td class="small text-secondary">
+                {{ encuesta.zona.sector.nombre }}
+                <div>{{ encuesta.zona.sector.comuna.nombre }}</div>
+              </td>
+              <td>
+                {% include "fichas/_estado_encuesta.html" with encuesta=encuesta %}
+                {% if encuesta.zona.sector.operativo.esta_cerrado %}
+                  <span class="badge text-bg-secondary">operativo cerrado</span>
+                {% endif %}
+                {% comment %} La visita anotada (HU-10). Se muestra en la fila para
+                   que la lista sirva de agenda: al mirarla por la mañana se ve a qué
+                   puertas hay que volver hoy sin abrir cada ficha. {% endcomment %}
+                {% if encuesta.proxima_visita and encuesta.requiere_trabajo %}
+                  <div class="small mt-1 {% if encuesta.visita_pendiente_vencida %}text-warning-emphasis fw-semibold{% else %}text-secondary{% endif %}">
+                    volver el {{ encuesta.proxima_visita|date:"d-m" }}
+                  </div>
+                {% endif %}
+              </td>
+              <td class="text-end">
+                <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}"
+                   class="btn btn-outline-secondary btn-sm">Abrir</a>
+              </td>
+            </tr>
+          {% empty %}
+            {% comment %} Lista vacía CON filtros aplicados: el problema no es que no
+               haya trabajo, es que el filtro no encontró nada. Decirlo evita que
+               alguien concluya que terminó su padrón. {% endcomment %}
+            <tr>
+              <td colspan="5" class="text-center text-secondary py-4">
+                Ninguna encuesta coincide con lo que buscaste.
+                <a href="{% url 'fichas:mis_encuestas' %}">Ver todas</a>.
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% include "operativos/_paginacion.html" with etiqueta="encuesta" genero="a" %}
+  </div>
+
+  {% comment %} El fragmento de paginación vive en templates/operativos/ porque lo
+     creó la HU-05. Se reutiliza tal cual desde aquí en vez de copiarlo: son 35
+     líneas con la lógica de la ventana de páginas, y duplicarlas garantizaría que
+     una corrección se aplicara en un módulo y se olvidara en el otro. No se mueve
+     de carpeta para no tocar las tres pantallas de otras historias que ya lo
+     incluyen. {% endcomment %}
+
+{% else %}
+
+  {# ---------- Sin ninguna encuesta ---------- #}
+  {% comment %} Se explica QUÉ VA A PASAR y no solo que la lista está vacía. Es la
+     misma decisión que tomó «Mis sectores» en la HU-06: quien entra a trabajar y no
+     ve nada necesita saber si falla el sistema o si todavía no hay trabajo cargado.
+     {% endcomment %}
+  <div class="card-opso p-4 p-lg-5 text-center">
+    <h2 class="h5 fw-semibold mb-2">Todavía no tienes encuestas</h2>
+    <p class="text-secondary mb-3">
+      Aquí aparecerán las viviendas que tengas que levantar, con su dirección y su
+      estado, en cuanto se cargue el padrón de tu sector.
+    </p>
+    {% if user.asignaciones_sector.exists %}
+      {% comment %} Con territorio asignado, la salida útil no es esperar: es
+         registrar la primera vivienda al llegar a terreno (HU-08). {% endcomment %}
+      {% if user|tiene_algun_permiso:"fichas.crear,fichas.editar" %}
+        <a href="{% url 'fichas:vivienda_registrar' %}" class="btn btn-opso btn-sm mb-3">
+          Registrar la primera vivienda
+        </a>
+      {% endif %}
+      <p class="text-secondary small mb-0">
+        Ya tienes territorio asignado:
+        <a href="{% url 'operativos:mis_sectores' %}">revisa tus sectores y zonas</a>
+        mientras tanto.
+      </p>
+    {% else %}
+      <p class="text-secondary small mb-0">
+        Tu supervisor todavía no te ha asignado territorio. Cuando lo haga, tus
+        encuestas aparecerán en esta pantalla.
+      </p>
+    {% endif %}
+  </div>
+
+{% endif %}
+
+{% endblock %}
