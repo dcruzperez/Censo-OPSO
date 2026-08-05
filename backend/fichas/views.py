@@ -2304,3 +2304,83 @@ class AnularEncuestaView(ResolverEncuestaMixin, View):
         }
 
 
+# ==========================================================================
+# HU-15 — DEVOLVER CON OBSERVACIONES
+# ==========================================================================
+
+
+class DevolverEncuestaView(ResolverEncuestaMixin, View):
+    """Devuelve una encuesta al encuestador para que la corrija.
+
+    URL: /encuestas/<pk>/devolver/
+
+    ----------------------------------------------------------------------
+    LA TERCERA SALIDA DE LA REVISIÓN
+    ----------------------------------------------------------------------
+    La HU-14 dejó dos: validar cierra bien y anular cierra mal. Faltaba la del medio,
+    que es la más frecuente en un censo real: la ficha se puede salvar, pero le falta
+    algo. Devolverla la pasa a OBSERVADA y la REABRE.
+
+    «Reabrir» no es una metáfora: OBSERVADA pertenece a ESTADOS_ABIERTOS desde la
+    HU-07, así que `cambiar_estado()` borra `cerrada_en` y la ficha vuelve a la lista
+    de trabajo pendiente del encuestador —arriba, porque `ORDEN_POR_URGENCIA` la pone
+    primera—, editable otra vez porque `puede_registrarse()` mira si está abierta. No
+    hubo que tocar nada de eso: la HU-07 modeló el estado, la HU-10 modeló las
+    transiciones y esta historia solo añade quién lo dispara y con qué texto.
+
+    ----------------------------------------------------------------------
+    POR QUÉ NO ES UN BOTÓN DIRECTO
+    ----------------------------------------------------------------------
+    Por lo mismo que validar y anular: un GET no debe cambiar nada, y aquí además hay
+    algo que escribir. Pero la pantalla intermedia gana un segundo propósito propio,
+    que es la razón de que exista `problemas_detectados()`: llega con las
+    observaciones ya redactadas a partir de lo que el sistema sabe contar. El
+    supervisor corrige y añade en vez de escribir de cero, y así la devolución no se
+    queda en «revisar» por pereza.
+    """
+
+    template_name = "fichas/encuesta_devolver.html"
+
+    def get(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_resoluble()) is not None:
+            return respuesta
+
+        return render(
+            request,
+            self.template_name,
+            self.contexto(DevolverEncuestaForm(encuesta=self.encuesta)),
+        )
+
+    def post(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_resoluble()) is not None:
+            return respuesta
+
+        formulario = DevolverEncuestaForm(request.POST, encuesta=self.encuesta)
+
+        if not formulario.is_valid():
+            return render(request, self.template_name, self.contexto(formulario))
+
+        with transaction.atomic():
+            self.encuesta.devolver(
+                usuario=request.user,
+                observaciones=formulario.comentario_completo(),
+            )
+
+        messages.success(
+            request,
+            f"Encuesta de {self.encuesta.direccion} devuelta a "
+            f"{self.encuesta.censista.get_full_name() or self.encuesta.censista.email}. "
+            "Volverá a la cola de revisión cuando la corrija y la envíe otra vez.",
+        )
+        return redirect("fichas:bandeja_revision")
+
+    def contexto(self, formulario):
+        return {
+            **self.contexto_base(),
+            "titulo_pagina": f"Devolver {self.encuesta.direccion}",
+            "form": formulario,
+            # Se pasa aparte de `form` porque la plantilla lo enseña como lista, no
+            # como campo: el supervisor tiene que poder ver lo que el sistema detectó
+            # incluso si borra el texto prerrellenado.
+            "problemas": self.encuesta.problemas_detectados(),
+        }

@@ -7127,3 +7127,797 @@ class IntegracionHU14Test(BaseRevisionTest):
         self.assertEqual(respuesta.status_code, 302)
 
 
+# ==========================================================================
+# HU-15 — 68. DEVOLVER CON OBSERVACIONES
+# ==========================================================================
+
+
+class BaseDevolucionTest(BaseResolucionTest):
+    """Escenario común: una encuesta recibida y la dirección para devolverla."""
+
+    def setUp(self):
+        super().setUp()
+        self.url_devolver = reverse(
+            "fichas:devolver_encuesta", kwargs={"pk": self.encuesta.pk}
+        )
+
+    def datos_devolucion(self, **extra):
+        base = {
+            "aspectos": ["Integrantes del hogar"],
+            "observaciones": "Faltan los dos hijos menores que declaró la familia.",
+        }
+        base.update(extra)
+        return base
+
+
+class EstadoObservadaTest(BaseDevolucionTest):
+    """Lo que significa OBSERVADA, ahora que hay quien la ponga."""
+
+    def test_devolver_reabre_la_encuesta(self):
+        """Es la diferencia con las otras dos resoluciones: no cierra, reabre."""
+        self.encuesta.devolver(usuario=self.supervisor, observaciones="Faltan datos.")
+
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.OBSERVADA)
+        self.assertFalse(self.encuesta.esta_cerrada)
+        self.assertTrue(self.encuesta.requiere_trabajo)
+
+    def test_devolver_borra_la_fecha_de_cierre(self):
+        """Si siguiera cerrada, seguiría contando como enviada."""
+        self.assertIsNotNone(self.encuesta.cerrada_en)
+
+        self.encuesta.devolver(usuario=self.supervisor, observaciones="Faltan datos.")
+
+        self.assertIsNone(self.encuesta.cerrada_en)
+
+    def test_devolver_conserva_la_fecha_de_inicio(self):
+        """El trabajo ya hecho no se pierde: la encuesta sigue siendo la misma."""
+        iniciada = self.encuesta.iniciada_en
+
+        self.encuesta.devolver(usuario=self.supervisor, observaciones="Faltan datos.")
+
+        self.assertEqual(self.encuesta.iniciada_en, iniciada)
+
+    def test_una_devuelta_vuelve_a_admitir_cambios(self):
+        """Sin esto, devolverla sería pedir una corrección imposible."""
+        self.encuesta.devolver(usuario=self.supervisor, observaciones="Faltan datos.")
+
+        permitido, _ = self.encuesta.puede_registrarse()
+
+        self.assertTrue(permitido)
+
+    def test_devolver_exige_comentario_en_la_base_de_datos(self):
+        """La regla no vive solo en el formulario: la tabla la garantiza."""
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Encuesta.objects.create(
+                    vivienda=self.crear_vivienda(direccion="Sin motivo 1"),
+                    censista=self.marta,
+                    estado=EstadoEncuesta.OBSERVADA,
+                    iniciada_en=timezone.now(),
+                    comentario_revision="",
+                )
+
+    def test_la_restriccion_sigue_cubriendo_las_anuladas(self):
+        """Renombrarla no debía perder lo que ya comprobaba (HU-14)."""
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Encuesta.objects.create(
+                    vivienda=self.crear_vivienda(direccion="Sin motivo 2"),
+                    censista=self.marta,
+                    estado=EstadoEncuesta.ANULADA,
+                    iniciada_en=timezone.now(),
+                    cerrada_en=timezone.now(),
+                    comentario_revision="",
+                )
+
+    def test_una_observada_no_esta_en_revision(self):
+        """Está en manos del encuestador otra vez, no del supervisor."""
+        self.devolver(self.encuesta)
+
+        self.assertFalse(self.encuesta.esta_en_revision)
+        self.assertIsNone(self.encuesta.dias_esperando())
+
+
+class ContadorDeDevolucionesTest(BaseDevolucionTest):
+    """`veces_devuelta`: la señal de que el problema ya no es la ficha."""
+
+    def test_una_encuesta_nueva_no_se_ha_devuelto_nunca(self):
+        self.assertEqual(self.encuesta.veces_devuelta, 0)
+        self.assertFalse(self.encuesta.fue_devuelta)
+
+    def test_devolver_suma_uno(self):
+        self.encuesta.devolver(usuario=self.supervisor, observaciones="Faltan datos.")
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.veces_devuelta, 1)
+        self.assertTrue(self.encuesta.fue_devuelta)
+
+    def test_devolver_dos_veces_suma_dos(self):
+        """El caso que justifica el campo: la segunda vuelta con el mismo error."""
+        self.encuesta.devolver(usuario=self.supervisor, observaciones="Faltan datos.")
+        self.encuesta.cambiar_estado(EstadoEncuesta.COMPLETADA)
+        self.encuesta.devolver(usuario=self.supervisor, observaciones="Siguen faltando.")
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.veces_devuelta, 2)
+
+    def test_validar_no_toca_el_contador(self):
+        """Aprobar no es devolver: contar ahí falsearía la señal."""
+        self.encuesta.resolver(EstadoEncuesta.VALIDADA, usuario=self.supervisor)
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.veces_devuelta, 0)
+
+    def test_el_contador_sobrevive_a_la_validacion(self):
+        """Que costara dos intentos es información de calidad, no ruido temporal."""
+        self.encuesta.devolver(usuario=self.supervisor, observaciones="Faltan datos.")
+        self.encuesta.cambiar_estado(EstadoEncuesta.COMPLETADA)
+        self.encuesta.resolver(EstadoEncuesta.VALIDADA, usuario=self.supervisor)
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.VALIDADA)
+        self.assertTrue(self.encuesta.fue_devuelta)
+
+    def test_avisa_al_llegar_al_umbral(self):
+        for veces in range(Encuesta.DEVOLUCIONES_PARA_ALERTAR):
+            with self.subTest(veces=veces):
+                self.assertFalse(self.encuesta.devuelta_repetidamente)
+                self.encuesta.veces_devuelta = veces + 1
+
+        self.assertTrue(self.encuesta.devuelta_repetidamente)
+
+    def test_no_admite_valores_negativos(self):
+        """PositiveSmallIntegerField: «devuelta menos una vez» no significa nada."""
+        self.encuesta.veces_devuelta = -1
+
+        with self.assertRaises(ValidationError):
+            self.encuesta.full_clean()
+
+
+class ProblemasDetectadosTest(BaseDevolucionTest):
+    """Lo que el sistema sugiere escribir, para que el supervisor no parta de cero."""
+
+    def test_una_ficha_completa_no_tiene_problemas_que_sugerir(self):
+        """Y no significa que esté bien: significa que no falta nada CONTABLE."""
+        self.encuesta.vivienda.latitud = Decimal("-36.8270")
+        self.encuesta.vivienda.longitud = Decimal("-73.0503")
+        self.encuesta.vivienda.save()
+
+        self.assertEqual(self.encuesta.problemas_detectados(), [])
+
+    def test_detecta_las_personas_que_faltan(self):
+        encuesta = self.recibida(direccion="Faltan personas 1")
+        self.con_hogar(encuesta, declarados=5, personas=3)
+
+        problemas = " ".join(encuesta.problemas_detectados())
+
+        self.assertIn("Faltan 2 personas", problemas)
+
+    def test_usa_el_singular_cuando_falta_una(self):
+        """«Faltan 1 personas» delata que nadie leyó el texto que se envía."""
+        encuesta = self.recibida(direccion="Falta una 1")
+        self.con_hogar(encuesta, declarados=3, personas=2)
+
+        problemas = " ".join(encuesta.problemas_detectados())
+
+        self.assertIn("Falta 1 persona por registrar", problemas)
+
+    def test_detecta_que_no_hay_hogar(self):
+        encuesta = self.recibida(direccion="Sin hogar 1")
+
+        problemas = " ".join(encuesta.problemas_detectados())
+
+        self.assertIn("datos del hogar", problemas)
+
+    def test_sin_hogar_no_habla_de_personas_que_faltan(self):
+        """Sin hogar no hay declaración con la que comparar: sobra el detalle."""
+        encuesta = self.recibida(direccion="Sin hogar 2")
+
+        problemas = " ".join(encuesta.problemas_detectados())
+
+        self.assertNotIn("Faltan", problemas)
+
+    def test_detecta_la_vivienda_sin_describir(self):
+        vivienda = self.crear_vivienda(direccion="Sin describir 1", tipo="")
+        encuesta = self.recibida(direccion="Sin describir 1", vivienda=vivienda)
+        self.con_hogar(encuesta, declarados=2, personas=2)
+
+        problemas = " ".join(encuesta.problemas_detectados())
+
+        self.assertIn("vivienda no está descrita", problemas)
+
+    def test_detecta_la_ubicacion_que_falta(self):
+        problemas = " ".join(self.encuesta.problemas_detectados())
+
+        self.assertIn("ubicación", problemas)
+
+    def test_acumula_varios_problemas(self):
+        """Devolverla dos veces por dos cosas que se veían juntas es un viaje de más."""
+        vivienda = self.crear_vivienda(direccion="Todo mal 1", tipo="")
+        encuesta = self.recibida(direccion="Todo mal 1", vivienda=vivienda)
+        self.con_hogar(encuesta, declarados=4, personas=1)
+
+        self.assertEqual(len(encuesta.problemas_detectados()), 3)
+
+
+# ==========================================================================
+# HU-15 — 69. EL FORMULARIO DE LA DEVOLUCIÓN
+# ==========================================================================
+
+
+class DevolverFormTest(BaseDevolucionTest):
+    def test_valida_con_un_aspecto_y_observaciones(self):
+        formulario = DevolverEncuestaForm(data=self.datos_devolucion())
+
+        self.assertTrue(formulario.is_valid())
+
+    def test_exige_al_menos_un_aspecto(self):
+        """Los aspectos dicen DÓNDE mirar: sin ninguno, el texto queda suelto."""
+        formulario = DevolverEncuestaForm(data=self.datos_devolucion(aspectos=[]))
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("aspectos", formulario.errors)
+
+    def test_no_acepta_un_aspecto_inventado(self):
+        formulario = DevolverEncuestaForm(
+            data=self.datos_devolucion(aspectos=["Lo que sea"])
+        )
+
+        self.assertFalse(formulario.is_valid())
+
+    def test_exige_observaciones(self):
+        formulario = DevolverEncuestaForm(data=self.datos_devolucion(observaciones=""))
+
+        self.assertFalse(formulario.is_valid())
+
+    def test_rechaza_una_observacion_de_una_palabra(self):
+        """«revisar» le cuesta al encuestador un viaje para no saber qué mirar."""
+        formulario = DevolverEncuestaForm(
+            data=self.datos_devolucion(observaciones="revisar")
+        )
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("observaciones", formulario.errors)
+
+    def test_los_espacios_no_cuentan_como_largo(self):
+        formulario = DevolverEncuestaForm(
+            data=self.datos_devolucion(observaciones="   ok   ")
+        )
+
+        self.assertFalse(formulario.is_valid())
+
+    def test_no_pide_confirmacion_como_anular(self):
+        """Devolver es reversible y esperable; anular no. Igualarlas gastaría la barrera."""
+        self.assertNotIn("confirmar", DevolverEncuestaForm().fields)
+
+    def test_el_comentario_junta_aspectos_y_texto(self):
+        formulario = DevolverEncuestaForm(data=self.datos_devolucion())
+        formulario.is_valid()
+
+        comentario = formulario.comentario_completo()
+
+        self.assertTrue(comentario.startswith("Corregir: Integrantes del hogar."))
+        self.assertIn("Faltan los dos hijos menores", comentario)
+
+    def test_los_aspectos_se_ordenan_siempre_igual(self):
+        """Dos devoluciones por lo mismo tienen que leerse igual."""
+        formulario = DevolverEncuestaForm(
+            data=self.datos_devolucion(
+                aspectos=["Ubicación", "Datos de la vivienda"]
+            )
+        )
+        formulario.is_valid()
+
+        self.assertIn(
+            "Corregir: Datos de la vivienda, Ubicación.",
+            formulario.comentario_completo(),
+        )
+
+    def test_prerrellena_lo_que_el_sistema_detecta(self):
+        encuesta = self.recibida(direccion="Prerrelleno 1")
+        self.con_hogar(encuesta, declarados=4, personas=1)
+
+        formulario = DevolverEncuestaForm(encuesta=encuesta)
+
+        self.assertIn("Faltan 3 personas", formulario.initial["observaciones"])
+
+    def test_no_prerrellena_si_no_hay_nada_que_decir(self):
+        self.encuesta.vivienda.latitud = Decimal("-36.8270")
+        self.encuesta.vivienda.longitud = Decimal("-73.0503")
+        self.encuesta.vivienda.save()
+
+        formulario = DevolverEncuestaForm(encuesta=self.encuesta)
+
+        self.assertNotIn("observaciones", formulario.initial)
+
+    def test_no_pisa_lo_que_el_supervisor_escribio(self):
+        """Si el formulario vuelve con un error, su texto tiene que seguir ahí."""
+        formulario = DevolverEncuestaForm(
+            data=self.datos_devolucion(aspectos=[], observaciones="Lo mío"),
+            encuesta=self.encuesta,
+        )
+        formulario.is_valid()
+
+        self.assertEqual(formulario.data["observaciones"], "Lo mío")
+
+    def test_funciona_sin_encuesta(self):
+        """El prerrelleno es una ayuda, no un requisito para instanciarlo."""
+        self.assertTrue(DevolverEncuestaForm(data=self.datos_devolucion()).is_valid())
+
+
+# ==========================================================================
+# HU-15 — 70. LA PANTALLA DE DEVOLVER
+# ==========================================================================
+
+
+class DevolverEncuestaVistaTest(BaseDevolucionTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.supervisor)
+
+    # -- quién entra -------------------------------------------------------
+
+    def test_el_supervisor_ve_el_formulario(self):
+        respuesta = self.client.get(self.url_devolver)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertTemplateUsed(respuesta, "fichas/encuesta_devolver.html")
+
+    def test_el_encuestador_no_puede_devolver(self):
+        """Exige `fichas.validar`, igual que validar y anular."""
+        self.client.force_login(self.marta)
+
+        respuesta = self.client.get(self.url_devolver)
+
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_el_encuestador_tampoco_por_POST(self):
+        self.client.force_login(self.marta)
+
+        self.client.post(self.url_devolver, self.datos_devolucion())
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.COMPLETADA)
+
+    def test_sin_sesion_pide_entrar(self):
+        self.client.logout()
+
+        respuesta = self.client.get(self.url_devolver)
+
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_no_se_puede_devolver_la_propia(self):
+        """Quien levanta no resuelve, ni para bien ni para mal."""
+        propia = self.recibida(direccion="Del supervisor", censista=self.supervisor)
+
+        respuesta = self.client.get(
+            reverse("fichas:devolver_encuesta", kwargs={"pk": propia.pk})
+        )
+
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_no_se_puede_devolver_una_que_no_espera_revision(self):
+        borrador = self.crear(direccion="Borrador 1", estado=EstadoEncuesta.BORRADOR)
+
+        respuesta = self.client.get(
+            reverse("fichas:devolver_encuesta", kwargs={"pk": borrador.pk})
+        )
+
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_no_se_puede_devolver_dos_veces_seguidas(self):
+        """Dos supervisores en la misma bandeja: el segundo no pisa al primero."""
+        self.client.post(self.url_devolver, self.datos_devolucion())
+
+        respuesta = self.client.post(self.url_devolver, self.datos_devolucion())
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertEqual(self.encuesta.veces_devuelta, 1)
+
+    # -- lo que muestra ----------------------------------------------------
+
+    def test_dice_a_quien_vuelve_la_ficha(self):
+        """Escribir para una persona con nombre no es lo mismo que para el sistema."""
+        respuesta = self.client.get(self.url_devolver)
+
+        self.assertContains(respuesta, "Marta Soto")
+
+    def test_muestra_los_problemas_detectados(self):
+        respuesta = self.client.get(self.url_devolver)
+
+        self.assertContains(respuesta, "Lo que el sistema detecta")
+        self.assertContains(respuesta, "ubicación")
+
+    def test_prerrellena_el_texto_en_la_pantalla(self):
+        encuesta = self.recibida(direccion="Prerrelleno 2")
+        self.con_hogar(encuesta, declarados=5, personas=2)
+
+        respuesta = self.client.get(
+            reverse("fichas:devolver_encuesta", kwargs={"pk": encuesta.pk})
+        )
+
+        self.assertContains(respuesta, "Faltan 3 personas")
+
+    def test_avisa_cuando_no_detecta_nada(self):
+        """El silencio no debe leerse como «no hay nada que objetar»."""
+        self.encuesta.vivienda.latitud = Decimal("-36.8270")
+        self.encuesta.vivienda.longitud = Decimal("-73.0503")
+        self.encuesta.vivienda.save()
+
+        respuesta = self.client.get(self.url_devolver)
+
+        self.assertContains(respuesta, "no detecta datos faltantes")
+
+    def test_avisa_de_la_reincidencia(self):
+        self.encuesta.veces_devuelta = Encuesta.DEVOLUCIONES_PARA_ALERTAR
+        self.encuesta.save(update_fields=["veces_devuelta"])
+
+        respuesta = self.client.get(self.url_devolver)
+
+        self.assertContains(respuesta, "ya se devolvió")
+
+    def test_no_avisa_de_reincidencia_la_primera_vez(self):
+        respuesta = self.client.get(self.url_devolver)
+
+        self.assertNotContains(respuesta, "ya se devolvió")
+
+    # -- lo que hace -------------------------------------------------------
+
+    def test_un_GET_no_devuelve_nada(self):
+        """Si un GET devolviera fichas, un <img> ajeno las devolvería solo."""
+        self.client.get(self.url_devolver)
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.COMPLETADA)
+
+    def test_el_POST_la_deja_observada(self):
+        self.client.post(self.url_devolver, self.datos_devolucion())
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.OBSERVADA)
+
+    def test_guarda_quien_la_devolvio_y_cuando(self):
+        self.client.post(self.url_devolver, self.datos_devolucion())
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.revisada_por, self.supervisor)
+        self.assertIsNotNone(self.encuesta.revisada_en)
+
+    def test_guarda_las_observaciones_con_los_aspectos(self):
+        self.client.post(self.url_devolver, self.datos_devolucion())
+
+        self.encuesta.refresh_from_db()
+        self.assertIn("Corregir: Integrantes del hogar.", self.encuesta.comentario_revision)
+        self.assertIn("hijos menores", self.encuesta.comentario_revision)
+
+    def test_suma_una_devolucion(self):
+        self.client.post(self.url_devolver, self.datos_devolucion())
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.veces_devuelta, 1)
+
+    def test_no_borra_nada_de_lo_registrado(self):
+        """Devolver pide corregir, no empezar de cero."""
+        self.client.post(self.url_devolver, self.datos_devolucion())
+
+        self.encuesta.refresh_from_db()
+        self.assertTrue(hasattr(self.encuesta, "grupo_familiar"))
+        self.assertEqual(self.encuesta.grupo_familiar.integrantes.count(), 2)
+
+    def test_un_formulario_incompleto_no_devuelve_nada(self):
+        self.client.post(self.url_devolver, self.datos_devolucion(observaciones=""))
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.COMPLETADA)
+        self.assertEqual(self.encuesta.veces_devuelta, 0)
+
+    def test_un_formulario_incompleto_vuelve_con_el_error(self):
+        respuesta = self.client.post(
+            self.url_devolver, self.datos_devolucion(observaciones="ver")
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "Escribe qué hay que corregir")
+
+    def test_redirige_a_la_bandeja(self):
+        """El trabajo del supervisor es la cola, no esta ficha."""
+        respuesta = self.client.post(self.url_devolver, self.datos_devolucion())
+
+        self.assertRedirects(respuesta, self.url_bandeja)
+
+    def test_avisa_a_quien_volvio_la_ficha(self):
+        respuesta = self.client.post(
+            self.url_devolver, self.datos_devolucion(), follow=True
+        )
+
+        self.assertContains(respuesta, "devuelta a Marta Soto")
+
+    def test_una_encuesta_inexistente_responde_404(self):
+        respuesta = self.client.get(
+            reverse("fichas:devolver_encuesta", kwargs={"pk": 9999})
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+
+
+# ==========================================================================
+# HU-15 — 71. LO QUE LEE EL ENCUESTADOR
+# ==========================================================================
+
+
+class ObservacionesParaElEncuestadorTest(BaseDevolucionTest):
+    """La mitad de la historia: sin esto, la devolución no pide nada."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.supervisor)
+        self.client.post(self.url_devolver, self.datos_devolucion())
+        self.client.force_login(self.marta)
+
+    def test_el_encuestador_lee_las_observaciones_en_su_ficha(self):
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertContains(respuesta, "Faltan los dos hijos menores")
+
+    def test_lee_tambien_qué_aspectos_hay_que_corregir(self):
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertContains(respuesta, "Corregir: Integrantes del hogar.")
+
+    def test_sabe_quien_la_devolvio(self):
+        """Para poder preguntarle si no entiende qué falta."""
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertContains(respuesta, "Luis Pérez")
+
+    def test_la_ficha_vuelve_a_su_lista_de_trabajo(self):
+        respuesta = self.client.get(self.url_lista)
+        direcciones = [e.direccion for e in respuesta.context["encuestas"]]
+
+        self.assertIn("Av. Central 100", direcciones)
+
+    def test_aparece_primera_por_urgencia(self):
+        """Lo devuelto va delante: hay alguien esperando para cerrarlo."""
+        self.crear(direccion="Pendiente 1", estado=EstadoEncuesta.PENDIENTE)
+
+        respuesta = self.client.get(self.url_lista)
+        direcciones = [e.direccion for e in respuesta.context["encuestas"]]
+
+        self.assertEqual(direcciones[0], "Av. Central 100")
+
+    def test_la_puede_editar_otra_vez(self):
+        respuesta = self.client.get(
+            reverse("fichas:registrar_hogar", kwargs={"pk": self.encuesta.pk})
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_la_puede_volver_a_enviar(self):
+        """El hogar ya está completo desde el escenario base: nada bloquea el envío."""
+        self.client.post(
+            reverse("fichas:completar_encuesta", kwargs={"pk": self.encuesta.pk})
+        )
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.COMPLETADA)
+
+    def test_otro_encuestador_no_ve_esas_observaciones(self):
+        """Devolver no cambia de quién es la ficha."""
+        self.client.force_login(self.juan)
+
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_avisa_cuando_ya_van_dos_devoluciones(self):
+        self.encuesta.cambiar_estado(EstadoEncuesta.COMPLETADA)
+        self.client.force_login(self.supervisor)
+        self.client.post(self.url_devolver, self.datos_devolucion())
+        self.client.force_login(self.marta)
+
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertContains(respuesta, "2.ª vez")
+
+    def test_el_comentario_de_una_validada_tambien_se_lee(self):
+        """Aprobada con un comentario, el encuestador tiene derecho a leerlo."""
+        otra = self.recibida(direccion="Validada con nota")
+        otra.resolver(
+            EstadoEncuesta.VALIDADA,
+            usuario=self.supervisor,
+            comentario="Revisada junto a la familia.",
+        )
+
+        respuesta = self.client.get(self.url_detalle(otra))
+
+        self.assertContains(respuesta, "Revisada junto a la familia")
+
+    def test_el_motivo_de_una_anulada_tambien_se_lee(self):
+        """Es la ficha cuyo trabajo se descartó: el motivo es lo mínimo."""
+        otra = self.recibida(direccion="Anulada con motivo")
+        otra.resolver(
+            EstadoEncuesta.ANULADA,
+            usuario=self.supervisor,
+            comentario="Duplicada: ya estaba levantada en el Pasaje 4.",
+        )
+
+        respuesta = self.client.get(self.url_detalle(otra))
+
+        self.assertContains(respuesta, "Duplicada: ya estaba levantada")
+
+    def test_el_texto_del_supervisor_no_se_interpreta_como_HTML(self):
+        """El comentario es texto de una persona, no una plantilla."""
+        self.encuesta.comentario_revision = "Revisar <script>alert(1)</script>"
+        self.encuesta.save(update_fields=["comentario_revision"])
+
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertNotContains(respuesta, "<script>alert(1)</script>")
+
+
+# ==========================================================================
+# HU-15 — 72. LO QUE CAMBIA EN LA REVISIÓN
+# ==========================================================================
+
+
+class DevolucionEnLaRevisionTest(BaseDevolucionTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.supervisor)
+
+    def test_la_pantalla_de_revision_ofrece_las_tres_salidas(self):
+        respuesta = self.client.get(self.url_revisar(self.encuesta))
+
+        self.assertContains(respuesta, self.url_validar)
+        self.assertContains(respuesta, self.url_devolver)
+        self.assertContains(respuesta, self.url_anular)
+
+    def test_no_ofrece_devolver_una_ya_resuelta(self):
+        self.devolver(self.encuesta)
+
+        respuesta = self.client.get(self.url_revisar(self.encuesta))
+
+        self.assertNotContains(respuesta, self.url_devolver)
+
+    def test_muestra_el_historial_de_devoluciones(self):
+        self.devolver(self.encuesta)
+
+        respuesta = self.client.get(self.url_revisar(self.encuesta))
+
+        self.assertContains(respuesta, "Devoluciones")
+
+    def test_no_habla_de_devoluciones_si_no_hubo(self):
+        self.encuesta.resolver(EstadoEncuesta.VALIDADA, usuario=self.supervisor)
+
+        respuesta = self.client.get(self.url_revisar(self.encuesta))
+
+        self.assertNotContains(respuesta, "Devoluciones")
+
+    def test_avisa_de_la_reincidencia_donde_se_decide(self):
+        self.encuesta.veces_devuelta = Encuesta.DEVOLUCIONES_PARA_ALERTAR
+        self.encuesta.save(update_fields=["veces_devuelta"])
+
+        respuesta = self.client.get(self.url_revisar(self.encuesta))
+
+        self.assertContains(respuesta, "hablar con")
+
+    def test_una_devuelta_sale_de_la_cola(self):
+        """Está en manos del encuestador: contarla como recibida sería mentir."""
+        self.client.post(self.url_devolver, self.datos_devolucion())
+
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertEqual(respuesta.context["resumen"]["recibidas"], 0)
+        self.assertEqual(respuesta.context["resumen"]["observadas"], 1)
+
+    def test_la_bandeja_filtra_las_devueltas(self):
+        self.client.post(self.url_devolver, self.datos_devolucion())
+
+        respuesta = self.client.get(
+            self.url_bandeja, {"estado": EstadoEncuesta.OBSERVADA}
+        )
+        direcciones = [e.direccion for e in respuesta.context["encuestas"]]
+
+        self.assertEqual(direcciones, ["Av. Central 100"])
+
+    def test_el_panel_del_supervisor_cuenta_las_devueltas(self):
+        self.client.post(self.url_devolver, self.datos_devolucion())
+
+        respuesta = self.client.get(reverse("dashboards:supervisor"))
+
+        self.assertEqual(respuesta.context["resumen_revision"]["observadas"], 1)
+
+
+# ==========================================================================
+# HU-15 — 73. RECORRIDO COMPLETO
+# ==========================================================================
+
+
+class IntegracionHU15Test(BaseRevisionTest):
+    def test_se_devuelve_se_corrige_y_se_valida(self):
+        """El circuito completo de una corrección, de punta a punta."""
+        encuesta = self.recibida(direccion="Av. Central 100", hace_dias=2)
+        self.con_hogar(encuesta, declarados=3, personas=1)
+
+        # 1. El supervisor la encuentra en la cola.
+        self.client.force_login(self.supervisor)
+        respuesta = self.client.get(self.url_bandeja)
+        self.assertEqual(respuesta.context["resumen"]["recibidas"], 1)
+
+        # 2. La pantalla de devolver llega con las observaciones ya redactadas.
+        url_devolver = reverse("fichas:devolver_encuesta", kwargs={"pk": encuesta.pk})
+        respuesta = self.client.get(url_devolver)
+        self.assertContains(respuesta, "Faltan 2 personas")
+
+        # 3. La devuelve, agregando lo que solo él vio.
+        self.client.post(
+            url_devolver,
+            {
+                "aspectos": ["Integrantes del hogar", "Ubicación"],
+                "observaciones": (
+                    "Faltan los dos hijos menores y no se capturó la ubicación."
+                ),
+            },
+        )
+        encuesta.refresh_from_db()
+        self.assertEqual(encuesta.estado, EstadoEncuesta.OBSERVADA)
+        self.assertEqual(encuesta.veces_devuelta, 1)
+        self.assertIsNone(encuesta.cerrada_en)
+
+        # 4. Sale de la cola del supervisor.
+        respuesta = self.client.get(self.url_bandeja)
+        self.assertEqual(respuesta.context["resumen"]["recibidas"], 0)
+
+        # 5. El encuestador la encuentra arriba de su lista y LEE qué corregir.
+        self.client.force_login(self.marta)
+        respuesta = self.client.get(self.url_lista)
+        self.assertEqual(respuesta.context["encuestas"][0].direccion, "Av. Central 100")
+
+        respuesta = self.client.get(self.url_detalle(encuesta))
+        self.assertContains(respuesta, "Faltan los dos hijos menores")
+        self.assertContains(respuesta, "Luis Pérez")
+
+        # 6. Corrige lo que le pidieron: agrega las dos personas que faltaban.
+        for numero in (2, 3):
+            self.client.post(
+                reverse(
+                    "fichas:integrante_nuevo", kwargs={"encuesta_pk": encuesta.pk}
+                ),
+                {
+                    "parentesco": Parentesco.HIJO,
+                    "nombres": f"Hijo {numero}",
+                    "apellidos": "Millán",
+                    "sexo": Sexo.MASCULINO,
+                    "fecha_nacimiento": (
+                        timezone.localdate() - timedelta(days=10 * 365)
+                    ).isoformat(),
+                    "nivel_educacional": NivelEducacional.BASICA_INCOMPLETA,
+                    "situacion_ocupacional": SituacionOcupacional.ESTUDIA,
+                    "pueblo_originario": PuebloOriginario.NINGUNO,
+                },
+            )
+        self.assertEqual(encuesta.grupo_familiar.integrantes.count(), 3)
+
+        # 7. La vuelve a enviar.
+        self.client.post(
+            reverse("fichas:completar_encuesta", kwargs={"pk": encuesta.pk})
+        )
+        encuesta.refresh_from_db()
+        self.assertEqual(encuesta.estado, EstadoEncuesta.COMPLETADA)
+
+        # 8. Reaparece en la cola del supervisor, que ahora sí la valida.
+        self.client.force_login(self.supervisor)
+        respuesta = self.client.get(self.url_bandeja)
+        self.assertEqual(respuesta.context["resumen"]["recibidas"], 1)
+
+        self.client.post(
+            reverse("fichas:validar_encuesta", kwargs={"pk": encuesta.pk}),
+            {"comentario": "Corregida correctamente."},
+        )
+        encuesta.refresh_from_db()
+        self.assertEqual(encuesta.estado, EstadoEncuesta.VALIDADA)
+
+        # 9. Y queda registro de que costó dos intentos.
+        self.assertEqual(encuesta.veces_devuelta, 1)
+        self.assertTrue(encuesta.fue_devuelta)

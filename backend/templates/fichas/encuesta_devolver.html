@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   DEVOLVER UNA ENCUESTA CON OBSERVACIONES — /encuestas/<pk>/devolver/
+
+   Dos pasos, como validar y anular: un GET no debe cambiar nada. Pero esta pantalla
+   tiene un segundo trabajo que las otras dos no tienen, y es el que justifica la
+   historia entera: conseguir que el supervisor escriba observaciones ÚTILES.
+
+   Por eso llega con el texto ya redactado a partir de lo que el sistema detecta
+   (Encuesta.problemas_detectados()) y por eso los problemas se enseñan además como
+   lista aparte. Una devolución que dice «revisar» le cuesta al encuestador un viaje
+   para descubrir que no sabe qué mirar.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Devolver {{ encuesta.direccion }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:bandeja_revision' %}">Revisión de encuestas</a>
+    </li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:revisar_encuesta' encuesta.pk %}">{{ encuesta.direccion }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Devolver</li>
+  </ol>
+</nav>
+
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+    Devolver para corrección
+  </h1>
+  <p class="text-secondary mb-0">
+    {{ encuesta.direccion }} · {{ encuesta.zona.nombre }} ·
+    {{ encuesta.zona.sector.nombre }}
+  </p>
+</div>
+
+{# ---------- Quién la va a recibir ---------- #}
+{% comment %} La devolución tiene un destinatario con nombre, y decirlo cambia cómo se
+   escribe el texto: no es un informe para el sistema, es un mensaje a una persona que
+   va a volver a esa casa. {% endcomment %}
+<div class="card-opso p-4 mb-3">
+  <h2 class="h6 fw-semibold mb-3">Qué va a pasar</h2>
+  <p class="small mb-2">
+    La encuesta vuelve a
+    <strong>{{ encuesta.censista.get_full_name|default:encuesta.censista.email }}</strong>
+    marcada como <em>observada</em>: reaparece en su lista de trabajo pendiente —la
+    primera, porque es lo más urgente— y podrá editarla otra vez.
+  </p>
+  <p class="text-secondary small mb-0">
+    Cuando la corrija y la vuelva a enviar, reaparecerá en esta bandeja. No se pierde
+    nada de lo que ya registró.
+  </p>
+</div>
+
+{# ---------- Lo que el sistema ya detectó ---------- #}
+{% if problemas %}
+  <div class="card-opso p-4 mb-3">
+    <h2 class="h6 fw-semibold mb-2">Lo que el sistema detecta</h2>
+    <p class="text-secondary small">
+      Ya está escrito abajo para que no tengas que redactarlo. Bórralo si no
+      corresponde y agrega lo que solo tú puedes ver.
+    </p>
+    <ul class="small mb-0">
+      {% for problema in problemas %}
+        <li>{{ problema }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% else %}
+  {% comment %} Que no falte nada contable no significa que la ficha esté bien: el
+     supervisor puede estar devolviéndola porque la dirección no coincide con la foto o
+     porque los datos no cuadran entre sí. Decirlo evita que interprete el silencio
+     como «no hay nada que objetar». {% endcomment %}
+  <div class="alert alert-info small" role="alert">
+    El sistema no detecta datos faltantes en esta ficha. Si la devuelves, explica qué
+    encontraste al revisarla: el encuestador no tiene otra forma de saberlo.
+  </div>
+{% endif %}
+
+<form method="post" novalidate>
+  {% csrf_token %}
+
+  <div class="card-opso p-4 mb-3">
+    <div class="row g-3">
+      {% include "usuarios/gestion/_campo.html" with campo=form.aspectos ancho="col-12" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.observaciones ancho="col-12" %}
+    </div>
+
+    {% comment %} Los errores que no pertenecen a un campo concreto. Hoy el formulario
+       no genera ninguno, pero la plantilla no debería tragárselos en silencio si
+       mañana lo hace. {% endcomment %}
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger small mt-3 mb-0" role="alert">
+        {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+      </div>
+    {% endif %}
+  </div>
+
+  {% if encuesta.devuelta_repetidamente %}
+    <div class="alert alert-warning small" role="alert">
+      <strong>Esta ficha ya se devolvió {{ encuesta.veces_devuelta }} veces.</strong>
+      Si vuelve con los mismos errores, devolverla otra vez no lo va a arreglar:
+      conviene hablar con
+      {{ encuesta.censista.get_full_name|default:encuesta.censista.email }}.
+    </div>
+  {% endif %}
+
+  <div class="d-flex gap-2 flex-wrap">
+    <button type="submit" class="btn btn-opso">Devolver con estas observaciones</button>
+    <a href="{% url 'fichas:revisar_encuesta' encuesta.pk %}" class="btn btn-outline-secondary">
+      Cancelar
+    </a>
+  </div>
+</form>
+
+{% endblock %}

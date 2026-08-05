@@ -204,6 +204,11 @@ urlpatterns = [
     path(
         "<int:pk>/devolver/",
         views.DevolverEncuestaView.as_view(),
+        name="devolver_encuesta",
+    ),
+    path(
+        "<int:pk>/borrador/",
+        views.GuardarBorradorView.as_view(),
         name="guardar_borrador",
     ),
     path(

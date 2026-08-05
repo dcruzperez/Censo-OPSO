@@ -1637,6 +1637,93 @@ class Encuesta(models.Model):
         return True, ""
 
     # ------------------------------------------------------------------
+    # DEVOLVER CON OBSERVACIONES (HU-15)
+    # ------------------------------------------------------------------
+
+    @property
+    def fue_devuelta(self):
+        """True si el supervisor la ha devuelto alguna vez.
+
+        Es distinto de `necesita_correccion`, que pregunta si está devuelta AHORA.
+        Una ficha ya validada puede haber sido devuelta dos veces antes, y eso
+        importa: dice que costó tres intentos.
+        """
+        return self.veces_devuelta > 0
+
+    @property
+    def devuelta_repetidamente(self):
+        """True si se ha devuelto tantas veces que el problema ya no es la ficha.
+
+        Dos devoluciones son parte del trabajo; a la tercera, lo que falla no es esa
+        casa: es que alguien no entendió cómo se llena el formulario. El supervisor
+        necesita verlo para hacer algo distinto de devolverla otra vez.
+        """
+        return self.veces_devuelta >= self.DEVOLUCIONES_PARA_ALERTAR
+
+    def devolver(self, usuario, observaciones):
+        """Devuelve la encuesta al encuestador para que la corrija.
+
+        Es una resolución más —pasa por `resolver()`— pero con dos diferencias que
+        justifican un método propio:
+
+        1. REABRE LA ENCUESTA. OBSERVADA está en ESTADOS_ABIERTOS, así que
+           `cambiar_estado()` borra `cerrada_en` y la ficha vuelve a ser trabajo
+           pendiente del encuestador. Es la única resolución que hace eso: validar y
+           anular cierran.
+
+        2. CUENTA. `veces_devuelta` se incrementa aquí y en ningún otro sitio, para
+           que el número no dependa de que cada vista se acuerde de sumarlo.
+
+        Las observaciones son obligatorias y lo garantiza la base de datos
+        (`encuesta_resolucion_con_motivo`). No se comprueba aquí de nuevo: quien
+        llama ya pasó por el formulario, y duplicar la comprobación en tres capas
+        solo reparte la misma regla sin reforzarla.
+        """
+        self.veces_devuelta = self.veces_devuelta + 1
+        self.save(update_fields=["veces_devuelta"])
+
+        return self.resolver(
+            EstadoEncuesta.OBSERVADA, usuario=usuario, comentario=observaciones
+        )
+
+    def problemas_detectados(self):
+        """Lo que el sistema nota que falta, en frases listas para copiar.
+
+        Sirve para PRERRELLENAR las observaciones al devolver: el supervisor recibe
+        escrito lo que el sistema ya sabe —faltan personas, la vivienda no está
+        descrita, no hay ubicación— y añade lo que solo él puede ver.
+
+        No es una alerta ni un veredicto: es un borrador editable. La diferencia
+        importa porque el catálogo de alertas de registros incompletos es una
+        historia aparte (HU-16); esto solo reutiliza los mismos datos que la bandeja
+        ya calcula desde la HU-13 para ahorrarle al supervisor escribir lo evidente.
+        """
+        datos = self.resumen_para_revision()
+        problemas = []
+
+        if not datos["tiene_hogar"]:
+            problemas.append("Falta registrar los datos del hogar.")
+        elif datos["personas"] < datos["declaradas"]:
+            faltan = datos["declaradas"] - datos["personas"]
+            # El verbo también concuerda. Es un detalle, pero este texto lo lee una
+            # persona a la que se le está pidiendo trabajo extra: «Faltan 1 personas»
+            # delata que nadie leyó el mensaje que se le envía.
+            problemas.append(
+                f"{'Faltan' if faltan != 1 else 'Falta'} {faltan} "
+                f"persona{'s' if faltan != 1 else ''} por registrar: "
+                f"la familia declaró {datos['declaradas']} y hay {datos['personas']}."
+            )
+
+        if not datos["vivienda_descrita"]:
+            problemas.append(
+                "La vivienda no está descrita: falta tipo, materialidad o servicios."
+            )
+
+        if not datos["tiene_ubicacion"]:
+            problemas.append("No se capturó la ubicación de la vivienda.")
+
+        return problemas
+
     def clean(self):
         """Validación de modelo: coherencia entre el estado y sus fechas.
 

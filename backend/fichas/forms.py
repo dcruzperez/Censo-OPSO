@@ -1502,3 +1502,122 @@ class AnularEncuestaForm(forms.Form):
         return f"{self.cleaned_data['causa']}: {self.cleaned_data['motivo']}"
 
 
+# ==========================================================================
+# HU-15 — DEVOLVER CON OBSERVACIONES
+# ==========================================================================
+
+
+class DevolverEncuestaForm(forms.Form):
+    """Devolver una encuesta al encuestador para que la corrija.
+
+    ----------------------------------------------------------------------
+    LO QUE ESTE FORMULARIO TIENE QUE CONSEGUIR
+    ----------------------------------------------------------------------
+    Que el encuestador sepa QUÉ corregir. Suena obvio, pero es la diferencia entre
+    una devolución útil y una que solo devuelve trabajo: si el texto dice «revisar»,
+    la persona abre la ficha, no encuentra nada evidente y la reenvía igual. Se
+    perdieron dos viajes y una revisión.
+
+    De ahí las tres decisiones del formulario:
+
+    1. LOS ASPECTOS SON UNA LISTA, NO UNA CAUSA ÚNICA. Al anular hay un motivo —la
+       ficha se descarta por una razón—; al devolver suele haber varios problemas a
+       la vez, y devolverla dos veces por dos cosas que se veían juntas es una visita
+       de más. Además permite contar: «qué se corrige más» es una pregunta de calidad
+       que un campo libre no responde.
+
+    2. LAS OBSERVACIONES SON OBLIGATORIAS Y CON LARGO MÍNIMO. Los aspectos dicen
+       DÓNDE mirar; solo el texto dice QUÉ está mal. La base de datos exige lo mismo
+       (`encuesta_resolucion_con_motivo`).
+
+    3. NO HAY CASILLA DE CONFIRMACIÓN, y `AnularEncuestaForm` sí la tiene. No es un
+       olvido: anular tira el trabajo de otra persona y deja la vivienda sin datos —
+       es irreversible en la práctica—, mientras que devolver es la acción que se
+       espera de una revisión y se puede volver a resolver después. Poner la misma
+       barrera a las dos las igualaría, y entonces la casilla dejaría de significar
+       algo donde de verdad hace falta.
+    """
+
+    #: Largo mínimo de las observaciones, igual que en CerrarSinDatosForm (HU-10) y
+    #: AnularEncuestaForm (HU-14): tiene un lector concreto que necesita entenderlo.
+    OBSERVACIONES_MINIMO = 15
+
+    ASPECTOS = (
+        ("Integrantes del hogar", "Integrantes del hogar: faltan o están incompletos"),
+        ("Datos de la vivienda", "Datos de la vivienda: tipo, materialidad, servicios"),
+        ("Datos del hogar", "Datos del hogar: jefatura, ingresos, composición"),
+        ("Ubicación", "Ubicación: falta la captura o no corresponde"),
+        ("Fotografías", "Fotografías: faltan o no sirven como evidencia"),
+        ("Otro", "Otro aspecto"),
+    )
+
+    aspectos = forms.MultipleChoiceField(
+        label="Qué hay que corregir",
+        choices=ASPECTOS,
+        widget=forms.CheckboxSelectMultiple(attrs={"class": "form-check-input"}),
+        help_text="Marca todo lo que haya que revisar, no solo lo más grave.",
+    )
+    observaciones = forms.CharField(
+        label="Observaciones",
+        max_length=1000,
+        widget=forms.Textarea(
+            attrs={
+                "class": CLASE_TEXTO,
+                "rows": 5,
+                "placeholder": (
+                    "Ej.: la familia declaró 5 personas y hay 3 registradas; "
+                    "faltan los dos hijos menores."
+                ),
+            }
+        ),
+        help_text=(
+            "Lo va a leer el encuestador para saber qué corregir. Sé concreto: "
+            "«revisar» no le dice dónde mirar."
+        ),
+    )
+
+    def __init__(self, *args, encuesta=None, **kwargs):
+        """Recibe la encuesta para PRERRELLENAR lo que el sistema ya detecta.
+
+        El supervisor no debería tener que escribir «faltan 2 personas» cuando el
+        sistema lo sabe contar. Llega escrito y él añade lo que solo él puede ver —
+        que la dirección no coincide con la foto, que el nombre está mal escrito—.
+
+        Solo se prerrellena en el GET (`initial`), nunca sobre lo que el supervisor
+        ya envió: si el formulario vuelve con un error, lo que él escribió tiene que
+        seguir ahí.
+        """
+        super().__init__(*args, **kwargs)
+
+        if encuesta is not None and not self.is_bound:
+            problemas = encuesta.problemas_detectados()
+            if problemas:
+                self.initial["observaciones"] = "\n".join(
+                    f"- {problema}" for problema in problemas
+                )
+
+    def clean_observaciones(self):
+        observaciones = (self.cleaned_data.get("observaciones") or "").strip()
+
+        if len(observaciones) < self.OBSERVACIONES_MINIMO:
+            raise forms.ValidationError(
+                "Escribe qué hay que corregir. Quien lo lea tiene que poder "
+                "arreglarlo sin volver a preguntarte."
+            )
+
+        return observaciones
+
+    def comentario_completo(self):
+        """Los aspectos y las observaciones en un solo texto, como se guardan.
+
+        El formato se arma aquí, en un solo sitio, por lo mismo que en
+        `AnularEncuestaForm`: es lo que buscarán los reportes, y conviene que solo
+        exista una forma de generarlo.
+
+        Los aspectos se ordenan según `ASPECTOS` y no según los marcó el supervisor,
+        para que dos devoluciones por lo mismo se lean igual.
+        """
+        orden = [clave for clave, _ in self.ASPECTOS]
+        marcados = sorted(self.cleaned_data["aspectos"], key=orden.index)
+
+        return f"Corregir: {', '.join(marcados)}.\n\n{self.cleaned_data['observaciones']}"
