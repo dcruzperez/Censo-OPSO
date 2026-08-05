@@ -2058,3 +2058,226 @@ class Integrante(models.Model):
 
 
 # ==========================================================================
+# 5. LAS FOTOGRAFÍAS DE LA VIVIENDA (HU-12)
+# ==========================================================================
+
+
+def ruta_de_la_fotografia(instancia, nombre_original):
+    """Dónde se guarda el archivo, y con qué nombre.
+
+    ----------------------------------------------------------------------
+    EL NOMBRE ORIGINAL SE DESCARTA POR COMPLETO
+    ----------------------------------------------------------------------
+    Se guarda como «uuid4.extensión» y no como «IMG_20260803_fachada.jpg», por tres
+    motivos distintos y los tres reales:
+
+      1. SEGURIDAD. El nombre que llega en la subida lo elige quien sube, y puede
+         contener rutas relativas, caracteres que el sistema de archivos interpreta
+         o tener 600 caracteres. Django ya lo limpia, pero el modo seguro de tratar
+         una entrada peligrosa es no usarla.
+
+      2. IMPOSIBILIDAD DE ADIVINAR. Aunque algún día alguien configure mal el
+         servidor y deje la carpeta accesible, un archivo llamado con un UUID no se
+         encuentra probando direcciones. Es una segunda línea de defensa detrás de
+         la vista que comprueba permisos, no un sustituto de ella.
+
+      3. COLISIONES. Diez teléfonos subiendo «IMG_0001.jpg» el mismo día terminan
+         en diez archivos con sufijos numéricos y nombres que ya no dicen nada.
+
+    Se reparte por año y mes porque una carpeta con cien mil archivos es lenta de
+    listar y desagradable de respaldar. El año y el mes no identifican a nadie.
+    """
+    extension = Path(nombre_original).suffix.lower()
+
+    # Solo se conserva la extensión si es una de las que el formulario admite. Con
+    # cualquier otra cosa —o sin extensión— se escribe .jpg. La extensión aquí es
+    # una comodidad para el sistema operativo, no la fuente de verdad sobre el
+    # contenido: eso lo decidió Pillow al validar.
+    if extension not in Fotografia.EXTENSIONES:
+        extension = ".jpg"
+
+    hoy = timezone.localdate()
+
+    return f"fichas/{hoy:%Y/%m}/{uuid4().hex}{extension}"
+
+
+class TipoFotografia(models.TextChoices):
+    """Para qué se tomó la foto.
+
+    La historia dice «cuando sea NECESARIO», y estas opciones son la lista de
+    cuándo lo es. No están para clasificar un álbum: están para que el encuestador
+    se pregunte, antes de sacar la foto, qué está documentando.
+
+    No hay una opción «persona» ni la habrá: ver la decisión de diseño 3.
+    """
+
+    FACHADA = "FACHADA", "Fachada de la vivienda"
+    ACCESO = "ACCESO", "Cómo se llega o se reconoce"
+    MATERIALIDAD = "MATERIALIDAD", "Estado o materialidad de la construcción"
+    SERVICIOS = "SERVICIOS", "Servicios básicos (medidor, conexión, pozo)"
+    CROQUIS = "CROQUIS", "Croquis o anotación en papel"
+    OTRA = "OTRA", "Otra evidencia"
+
+
+class Fotografia(models.Model):
+    """Una fotografía de la vivienda, como evidencia del levantamiento.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 1 — cuelga de la VIVIENDA, no de la encuesta
+    ----------------------------------------------------------------------
+    Igual que la ubicación GPS de la HU-11, y por el mismo motivo: una fotografía de
+    la fachada documenta un INMUEBLE, no el trabajo de una persona. Dos hogares de
+    la misma casa comparten la foto de la puerta, y el operativo siguiente la
+    hereda en vez de volver a tomarla.
+
+    Es la tercera historia seguida que cuelga de `Vivienda` sin tocar nada más, y la
+    confirmación de que el corte de la HU-08 estaba bien hecho.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 2 — ImageField, no FileField
+    ----------------------------------------------------------------------
+    La diferencia no es de comodidad: ImageField DECODIFICA el archivo con Pillow
+    para comprobar que es una imagen. Mirar la extensión no valida nada, porque
+    cualquiera puede renombrar un archivo, y un «.jpg» que en realidad es otra cosa,
+    subido a un servidor mal configurado, es un problema serio.
+
+    Pillow es entonces un control de seguridad y no una dependencia estética, y por
+    eso está fijada en requirements.txt con ese comentario.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 3 — NO SE FOTOGRAFÍA A LAS PERSONAS
+    ----------------------------------------------------------------------
+    Es la regla más importante de esta historia y no hay ningún campo que la
+    represente: es una prohibición, no una opción.
+
+    Una fotografía de una persona en su casa es un dato personal de una categoría
+    mucho más sensible que su nombre o su ingreso, y NADA en este censo la
+    necesita. El catálogo de tipos no ofrece «integrante» ni «grupo familiar», el
+    formulario lo advierte antes de subir, y la descripción es obligatoria
+    justamente para obligar a decir qué se está documentando.
+
+    Un sistema no puede impedir que alguien suba una foto equivocada. Lo que sí
+    puede hacer —y hace— es no ofrecerle nunca un motivo para hacerlo, y dejar la
+    foto borrable mientras la encuesta siga abierta.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 4 — la descripción es OBLIGATORIA
+    ----------------------------------------------------------------------
+    Al contrario que casi todos los campos de texto del proyecto, este no es
+    opcional. La historia dice «cuando sea necesario»: si hace falta una foto, hace
+    falta poder decir por qué en una frase. Una fotografía sin explicación no es
+    evidencia de nada, y dentro de seis meses nadie sabrá qué se estaba mirando.
+    """
+
+    #: Extensiones que se conservan al guardar. El contenido lo valida Pillow; esto
+    #: solo decide cómo se llama el archivo en el disco.
+    EXTENSIONES = (".jpg", ".jpeg", ".png", ".webp")
+
+    #: Formatos que el formulario acepta, tal como los nombra Pillow.
+    FORMATOS = ("JPEG", "PNG", "WEBP")
+
+    vivienda = models.ForeignKey(
+        Vivienda,
+        on_delete=models.CASCADE,
+        related_name="fotografias",
+        verbose_name="vivienda",
+        help_text="Vivienda que la fotografía documenta.",
+    )
+    imagen = models.ImageField(
+        "imagen",
+        upload_to=ruta_de_la_fotografia,
+        help_text="JPEG, PNG o WEBP. El nombre original del archivo no se conserva.",
+    )
+    tipo = models.CharField(
+        "tipo de evidencia",
+        max_length=20,
+        choices=TipoFotografia.choices,
+        help_text="Qué se está documentando.",
+    )
+    descripcion = models.CharField(
+        "descripción",
+        max_length=200,
+        help_text=(
+            "Por qué hizo falta esta foto. Ej.: «el número de la casa está borrado; "
+            "es la tercera del pasaje»."
+        ),
+    )
+    tomada_por = models.ForeignKey(
+        "usuarios.Usuario",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="fotografias_tomadas",
+        verbose_name="tomada por",
+        help_text="Quién la subió.",
+    )
+    tomada_en = models.DateTimeField("subida en", auto_now_add=True)
+
+    class Meta:
+        db_table = "fichas_fotografia"
+        verbose_name = "fotografía"
+        verbose_name_plural = "fotografías"
+        # La más reciente primero: al abrir la ficha interesa lo último que se
+        # documentó, no lo primero.
+        ordering = ["-tomada_en"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(tipo__in=TipoFotografia.values),
+                name="fotografia_tipo_valido",
+            ),
+            # Una foto sin explicación no es evidencia (ver la decisión 4). La
+            # restricción lo garantiza también para lo que no pase por el
+            # formulario, como una carga desde /admin/ o un script.
+            models.CheckConstraint(
+                condition=~models.Q(descripcion=""),
+                name="fotografia_con_descripcion",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["vivienda", "tipo"], name="idx_foto_vivienda"),
+        ]
+
+    def __str__(self):
+        return f"{self.get_tipo_display()} · {self.vivienda.direccion}"
+
+    def get_absolute_url(self):
+        """La URL de la VISTA que sirve el archivo, no la del archivo.
+
+        `imagen.url` daría la dirección directa bajo MEDIA_URL, que OPSO no sirve a
+        propósito (ver el comentario de MEDIA_URL en settings.py). Todo lo que
+        muestre esta foto tiene que pedirla por aquí, que es donde se comprueba
+        quién pregunta.
+        """
+        return reverse("fichas:ver_fotografia", kwargs={"pk": self.pk})
+
+    @property
+    def tamano_kb(self):
+        """Peso del archivo en kilobytes, o None si ya no está en disco.
+
+        Devuelve None en vez de reventar cuando el archivo falta: una fila cuyo
+        archivo se perdió —un respaldo restaurado a medias— tiene que poder
+        mostrarse igual, aunque sea para avisar de que falta.
+        """
+        try:
+            return round(self.imagen.size / 1024)
+        except (FileNotFoundError, ValueError, OSError):
+            return None
+
+    def borrar_archivo(self):
+        """Borra la fila Y el archivo del disco.
+
+        Django NO borra el archivo al borrar la fila: dejó de hacerlo a propósito
+        hace muchas versiones, porque en una transacción que se revierte el archivo
+        ya no se podría recuperar. La consecuencia es que hay que borrarlo a mano, y
+        si no se hace, el disco acumula fotografías de familias que ya nadie puede
+        ver ni saber que están.
+
+        Para datos personales eso no es un descuido de limpieza: es conservar
+        información que ya no debería existir. Por eso el borrado vive aquí, en un
+        método del modelo, y no repartido por las vistas.
+        """
+        archivo = self.imagen
+        self.delete()
+
+        if archivo:
+            archivo.delete(save=False)

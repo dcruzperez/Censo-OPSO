@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   QUITAR UNA FOTOGRAFÍA — /encuestas/fotografias/<pk>/quitar/
+
+   Dos pasos: esta pantalla confirma y el POST ejecuta. Con un GET capaz de borrar,
+   un <img src="..."> incrustado en cualquier página lo ejecutaría con la sesión de
+   quien la mirara.
+
+   Se borra de verdad, archivo incluido. Es la segunda pantalla del proyecto que lo
+   hace —la primera fue quitar a un integrante en la HU-09— y por el mismo motivo:
+   lo que se elimina es un dato capturado por error, no un registro histórico que
+   explique algo. Y son datos personales: conservarlos «por si acaso» es justo lo
+   contrario de lo que pide la minimización de datos.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Quitar la fotografía{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'fichas:mis_encuestas' %}">Mis encuestas</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:vivienda_detalle' vivienda.pk %}">{{ vivienda.direccion }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Quitar fotografía</li>
+  </ol>
+</nav>
+
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+    ¿Quitar esta fotografía?
+  </h1>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-12 col-md-5">
+    <img src="{% url 'fichas:ver_fotografia' fotografia.pk %}"
+         alt="{{ fotografia.descripcion }}" class="img-fluid rounded border">
+  </div>
+  <div class="col-12 col-md-7">
+    <div class="card-opso p-4 h-100">
+      <dl class="row mb-0 small">
+        <dt class="col-5 text-secondary fw-normal">Tipo</dt>
+        <dd class="col-7 fw-semibold">{{ fotografia.get_tipo_display }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Descripción</dt>
+        <dd class="col-7">{{ fotografia.descripcion }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Vivienda</dt>
+        <dd class="col-7">{{ vivienda.direccion }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Subida</dt>
+        <dd class="col-7 mb-0">
+          {{ fotografia.tomada_en|date:"d-m-Y H:i" }}
+          {% if fotografia.tomada_por %}
+            por {{ fotografia.tomada_por.get_full_name|default:fotografia.tomada_por.email }}
+          {% endif %}
+          {% if fotografia.tamano_kb %}· {{ fotografia.tamano_kb }} KB{% endif %}
+        </dd>
+      </dl>
+    </div>
+  </div>
+</div>
+
+<div class="alert alert-danger small d-flex gap-2" role="alert">
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+  </svg>
+  <div>
+    <strong>El archivo se borra del disco, no se archiva.</strong> Es deliberado: son
+    datos personales de una familia y no hay ningún motivo para conservarlos una vez
+    que se decidió que no hacían falta. No hay forma de recuperarlos.
+  </div>
+</div>
+
+<form method="post" class="d-flex gap-2 flex-wrap">
+  {% csrf_token %}
+  <button type="submit" class="btn btn-danger">Sí, quitar la fotografía</button>
+  <a href="{% url 'fichas:vivienda_detalle' vivienda.pk %}" class="btn btn-outline-secondary">
+    Cancelar
+  </a>
+</form>
+
+{% endblock %}

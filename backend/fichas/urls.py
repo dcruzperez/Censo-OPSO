@@ -68,6 +68,33 @@ urlpatterns = [
         views.CapturarUbicacionView.as_view(),
         name="capturar_ubicacion",
     ),
+    # ------------------------------------------------------------------
+    # FOTOGRAFÍAS (HU-12)
+    #
+    # Subir va bajo la VIVIENDA, porque hace falta saber a cuál se adjunta. Ver y
+    # quitar van bajo /fotografias/<pk>/ porque la foto ya sabe de qué vivienda es,
+    # y repetirlo en la dirección sería un dato más que verificar. Es el mismo
+    # criterio con el que la HU-05 anidó «crear» y no «editar».
+    #
+    # OJO con «ver»: NO es la ruta del archivo, es una vista que comprueba quién
+    # pregunta antes de entregarlo. OPSO no sirve MEDIA_ROOT como estáticos en
+    # ningún entorno; ver ServirFotografiaView y el comentario de MEDIA_URL.
+    # ------------------------------------------------------------------
+    path(
+        "viviendas/<int:pk>/fotografias/nueva/",
+        views.SubirFotografiaView.as_view(),
+        name="subir_fotografia",
+    ),
+    path(
+        "fotografias/<int:pk>/ver/",
+        views.ServirFotografiaView.as_view(),
+        name="ver_fotografia",
+    ),
+    path(
+        "fotografias/<int:pk>/quitar/",
+        views.QuitarFotografiaView.as_view(),
+        name="quitar_fotografia",
+    ),
     # Agregar un segundo hogar a una vivienda existente. Solo POST (ver la vista).
     path(
         "viviendas/<int:pk>/hogar/nuevo/",

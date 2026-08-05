@@ -16,6 +16,22 @@ from django.contrib import admin
 from .models import Encuesta, Fotografia, GrupoFamiliar, Integrante, Vivienda
 
 
+class FotografiaInline(admin.TabularInline):
+    """Las fotografías, dentro de su vivienda (HU-12).
+
+    No se registra Fotografia con pantalla propia, al contrario que los demás
+    modelos del módulo. Es deliberado: una pantalla que lista TODAS las fotografías
+    del operativo es un álbum de casas de familias, y no hay ninguna tarea que la
+    necesite. Desde la vivienda se ven las suyas, que es como se consultan.
+    """
+
+    model = Fotografia
+    extra = 0
+    fields = ("imagen", "tipo", "descripcion", "tomada_por", "tomada_en")
+    readonly_fields = ("tomada_en",)
+    autocomplete_fields = ("tomada_por",)
+
+
 class EncuestaInline(admin.TabularInline):
     """Los hogares de una vivienda, visibles desde su ficha.
 

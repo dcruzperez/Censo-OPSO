@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   ADJUNTAR UNA FOTOGRAFÍA — /encuestas/viviendas/<pk>/fotografias/nueva/
+
+   La historia dice «CUANDO SEA NECESARIO», y esta pantalla se lo toma en serio: no
+   empuja a fotografiar. Pide elegir qué se documenta, obliga a explicar por qué hizo
+   falta y muestra cuántas fotos quedan del tope.
+
+   Un formulario que solo dijera «sube una imagen» produciría álbumes de casas
+   ajenas, que es exactamente lo que un censo no debe acumular.
+
+   LA ADVERTENCIA DE NO FOTOGRAFIAR PERSONAS VA ANTES DEL CAMPO DE ARCHIVO. Leerla
+   cuando la foto ya está seleccionada no sirve de nada, y en un teléfono el selector
+   se abre al primer toque.
+
+   El formulario lleva enctype="multipart/form-data": sin eso el navegador envía solo
+   el nombre del archivo y el servidor recibe un campo vacío. Es el error clásico de
+   la primera subida de archivos de cualquier proyecto.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Fotografía de {{ vivienda.direccion }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'fichas:mis_encuestas' %}">Mis encuestas</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:vivienda_detalle' vivienda.pk %}">{{ vivienda.direccion }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Fotografía</li>
+  </ol>
+</nav>
+
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+    Adjuntar una fotografía
+  </h1>
+  <p class="text-secondary mb-0">
+    {{ vivienda.direccion }} · {{ vivienda.zona.nombre }} ·
+    {{ vivienda.zona.sector.nombre }}
+  </p>
+</div>
+
+{# ---------- La advertencia, antes de todo ---------- #}
+<div class="alert alert-danger small d-flex gap-2" role="alert">
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+  </svg>
+  <div>
+    <strong>No fotografíes a personas.</strong> Ni a la familia, ni a niños, ni el
+    interior de la casa con gente dentro. El censo no lo necesita y una foto así es
+    un dato personal mucho más sensible que cualquier otro de esta ficha.
+    <div class="mt-1">
+      Fotografía <strong>la vivienda</strong>: la fachada, el acceso, un medidor, un
+      croquis.
+    </div>
+  </div>
+</div>
+
+{% if quedan %}
+  <p class="text-secondary small">
+    Esta vivienda tiene {{ fotografias|length }} de {{ tope }} fotografías.
+    Puedes adjuntar {{ quedan }} más. Máximo {{ tamano_maximo_mb }} MB por imagen.
+  </p>
+{% else %}
+  {% comment %} Con el cupo lleno se dice qué hacer, no solo que no se puede.
+     {% endcomment %}
+  <div class="alert alert-warning small" role="alert">
+    Esta vivienda ya tiene el máximo de {{ tope }} fotografías. Si hace falta otra,
+    <a href="{% url 'fichas:vivienda_detalle' vivienda.pk %}" class="fw-semibold">quita
+    alguna que ya no sirva</a>: las fotos son evidencia puntual, no un álbum.
+  </div>
+{% endif %}
+
+{% if form.non_field_errors %}
+  <div class="alert alert-danger small" role="alert">
+    {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+  </div>
+{% endif %}
+
+<form method="post" enctype="multipart/form-data" novalidate>
+  {% csrf_token %}
+
+  <div class="card-opso p-4 mb-3">
+    <div class="row g-3">
+      {% include "usuarios/gestion/_campo.html" with campo=form.tipo ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.imagen ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.descripcion ancho="col-12" %}
+    </div>
+
+    <p class="text-secondary small mb-0 mt-2">
+      La descripción es obligatoria: una foto sin explicación no es evidencia de
+      nada, y dentro de seis meses nadie va a recordar qué se estaba mirando.
+    </p>
+  </div>
+
+  <div class="d-flex gap-2 flex-wrap">
+    <button type="submit" class="btn btn-opso" {% if not quedan %}disabled{% endif %}>
+      Adjuntar la fotografía
+    </button>
+    <a href="{% url 'fichas:vivienda_detalle' vivienda.pk %}" class="btn btn-outline-secondary">
+      Cancelar
+    </a>
+  </div>
+</form>
+
+{# ---------- Lo que ya está adjunto ---------- #}
+{% if fotografias %}
+  <div class="card-opso p-4 mt-3">
+    <h2 class="h6 fw-semibold mb-3">Ya adjuntas</h2>
+    <div class="row g-3">
+      {% for foto in fotografias %}
+        <div class="col-6 col-md-4 col-lg-3">
+          {% comment %} src apunta a la VISTA que sirve el archivo, nunca a
+             MEDIA_URL: es ahí donde se comprueba quién pregunta. {% endcomment %}
+          <img src="{% url 'fichas:ver_fotografia' foto.pk %}"
+               alt="{{ foto.descripcion }}"
+               class="img-fluid rounded border" loading="lazy">
+          <div class="small text-secondary mt-1">{{ foto.get_tipo_display }}</div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}
+
+{% endblock %}

@@ -1570,3 +1570,267 @@ class CapturarUbicacionView(RegistroEnTerrenoMixin, View):
         }
 
 
+# ==========================================================================
+# HU-12 — LAS FOTOGRAFÍAS
+# ==========================================================================
+
+
+class ViviendaDelTerritorioMixin(RegistroEnTerrenoMixin):
+    """Base de las pantallas que trabajan sobre una vivienda del territorio propio.
+
+    Repite el criterio de EditarViviendaView y CapturarUbicacionView: la vivienda
+    tiene que estar en una zona asignada, y el territorio tiene que admitir trabajo.
+    No se exige que la encuesta sea propia porque una fotografía documenta el
+    INMUEBLE, y el sector puede estar repartido entre varias personas.
+    """
+
+    @cached_property
+    def vivienda(self):
+        return get_object_or_404(
+            Vivienda.objects.filter(
+                zona__in=zonas_disponibles(self.request.user)
+            ).select_related("zona", "zona__sector"),
+            pk=self.kwargs["pk"],
+        )
+
+    def comprobar_abierta(self):
+        permitido, motivo = self.vivienda.puede_registrarse_trabajo()
+
+        if permitido:
+            return None
+
+        messages.error(self.request, motivo)
+        return redirect("fichas:vivienda_detalle", pk=self.vivienda.pk)
+
+
+class SubirFotografiaView(ViviendaDelTerritorioMixin, View):
+    """Adjunta una fotografía a la vivienda. GET muestra, POST guarda.
+
+    URL: /encuestas/viviendas/<pk>/fotografias/nueva/
+
+    ----------------------------------------------------------------------
+    «CUANDO SEA NECESARIO» ESTÁ EN EL TÍTULO DE LA HISTORIA, Y SE TOMA EN SERIO
+    ----------------------------------------------------------------------
+    Esta pantalla NO empuja a fotografiar. Al contrario: pide elegir qué se está
+    documentando, obliga a explicar por qué hizo falta y limita a cinco fotos por
+    vivienda. Un formulario que solo dijera «sube una imagen» produciría álbumes de
+    casas ajenas, que es exactamente lo que un censo no debe acumular.
+
+    La advertencia de no fotografiar personas va ANTES del campo de archivo, no
+    después: leerla cuando la foto ya está seleccionada no sirve de nada.
+    """
+
+    template_name = "fichas/fotografia_form.html"
+
+    def formulario(self, datos=None, archivos=None):
+        return FotografiaForm(datos, archivos, vivienda=self.vivienda)
+
+    def get(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_abierta()) is not None:
+            return respuesta
+
+        return render(request, self.template_name, self.contexto(self.formulario()))
+
+    def post(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_abierta()) is not None:
+            return respuesta
+
+        # request.FILES va aparte de request.POST: sin pasarlo, el campo de imagen
+        # llega vacío y el formulario dice que falta el archivo aunque se haya
+        # subido. Es el error clásico de la primera subida de archivos.
+        formulario = self.formulario(request.POST, request.FILES)
+
+        if not formulario.is_valid():
+            return render(request, self.template_name, self.contexto(formulario))
+
+        fotografia = formulario.save(commit=False)
+        fotografia.tomada_por = request.user
+        fotografia.save()
+
+        messages.success(
+            request,
+            f"Fotografía adjuntada a «{self.vivienda.direccion}»: "
+            f"{fotografia.get_tipo_display().lower()}.",
+        )
+        return redirect("fichas:vivienda_detalle", pk=self.vivienda.pk)
+
+    def contexto(self, formulario):
+        tope = settings.OPSO_MAXIMO_FOTOS_POR_VIVIENDA
+
+        return {
+            "titulo_pagina": f"Fotografía de {self.vivienda.direccion}",
+            "form": formulario,
+            "vivienda": self.vivienda,
+            "fotografias": self.vivienda.fotografias.all(),
+            "tope": tope,
+            "quedan": max(0, tope - self.vivienda.fotografias.count()),
+            "tamano_maximo_mb": settings.OPSO_TAMANO_MAXIMO_FOTO // (1024 * 1024),
+        }
+
+
+class QuitarFotografiaView(RegistroEnTerrenoMixin, View):
+    """Borra una fotografía. GET confirma, POST ejecuta.
+
+    URL: /encuestas/fotografias/<pk>/quitar/
+
+    ----------------------------------------------------------------------
+    BORRA EL ARCHIVO, NO SOLO LA FILA
+    ----------------------------------------------------------------------
+    Django no borra el archivo al borrar la fila —dejó de hacerlo a propósito hace
+    muchas versiones—, así que hay que hacerlo explícitamente. Si no, el disco
+    acumula fotografías de casas de familias que ya nadie puede ver ni saber que
+    están ahí.
+
+    Para datos personales eso no es un descuido de limpieza: es conservar
+    información que ya no debería existir, que es justo lo contrario de lo que pide
+    la minimización de datos (Ley N° 21.719). Por eso el borrado vive en
+    `Fotografia.borrar_archivo()` y no repartido por las vistas.
+
+    Es la segunda pantalla del proyecto que borra de verdad, después de quitar a un
+    integrante en la HU-09, y por el mismo motivo: lo que se elimina es un dato
+    capturado por error, no un registro histórico que explique algo.
+
+    Dos pasos, como siempre: con un GET capaz de borrar, un `<img src="...">`
+    incrustado en cualquier página lo ejecutaría con la sesión de quien la mirara.
+    """
+
+    template_name = "fichas/fotografia_quitar.html"
+
+    @cached_property
+    def fotografia(self):
+        return get_object_or_404(
+            Fotografia.objects.filter(
+                vivienda__zona__in=zonas_disponibles(self.request.user)
+            ).select_related("vivienda", "vivienda__zona", "tomada_por"),
+            pk=self.kwargs["pk"],
+        )
+
+    def comprobar_abierta(self):
+        permitido, motivo = self.fotografia.vivienda.puede_registrarse_trabajo()
+
+        if permitido:
+            return None
+
+        messages.error(self.request, motivo)
+        return redirect(
+            "fichas:vivienda_detalle", pk=self.fotografia.vivienda_id
+        )
+
+    def get(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_abierta()) is not None:
+            return respuesta
+
+        return render(
+            request,
+            self.template_name,
+            {
+                "titulo_pagina": "Quitar la fotografía",
+                "fotografia": self.fotografia,
+                "vivienda": self.fotografia.vivienda,
+            },
+        )
+
+    def post(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_abierta()) is not None:
+            return respuesta
+
+        vivienda_pk = self.fotografia.vivienda_id
+        etiqueta = self.fotografia.get_tipo_display().lower()
+
+        self.fotografia.borrar_archivo()
+
+        messages.success(
+            request, f"La fotografía ({etiqueta}) se borró junto con su archivo."
+        )
+        return redirect("fichas:vivienda_detalle", pk=vivienda_pk)
+
+
+class ServirFotografiaView(PermisoRequeridoMixin, View):
+    """Entrega el archivo de una fotografía, comprobando antes quién lo pide.
+
+    URL: /encuestas/fotografias/<pk>/ver/
+
+    ----------------------------------------------------------------------
+    POR QUÉ EXISTE ESTA VISTA EN LUGAR DE SERVIR LA CARPETA MEDIA
+    ----------------------------------------------------------------------
+    Es la decisión más importante de la HU-12, y la más fácil de hacer mal.
+
+    Lo habitual en un proyecto Django es añadir en urls.py:
+
+        urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+    …y en producción un `location /media/` en Nginx. Con eso, **cualquiera que
+    conozca o adivine la dirección de un archivo lo descarga: sin sesión, sin rol y
+    sin dejar rastro**. Para un logotipo da igual. Para la fotografía de la casa de
+    una familia censada, es publicar datos personales en internet.
+
+    OPSO no sirve MEDIA_ROOT en ningún entorno. Los archivos se entregan por aquí, y
+    aquí se comprueba:
+
+      - que haya sesión iniciada y permiso del módulo (el mixin),
+      - y que quien pregunta tenga algo que ver con esa vivienda (get_queryset).
+
+    El nombre del archivo en disco es un UUID, así que aunque un día alguien
+    configure mal el servidor web, la dirección no se encuentra probando. Eso es una
+    segunda línea de defensa, no un sustituto de esta vista.
+
+    ----------------------------------------------------------------------
+    FileResponse, Y LO QUE APORTAN SUS DOS CABECERAS
+    ----------------------------------------------------------------------
+    FileResponse envía el archivo por trozos en vez de cargarlo entero en memoria:
+    con varias personas mirando fotos a la vez, la diferencia es el servidor.
+
+    `Content-Disposition: inline` hace que el navegador la muestre en vez de
+    descargarla, y `X-Content-Type-Options: nosniff` le prohíbe adivinar el tipo:
+    si por lo que fuera llegara a haber un archivo que no es una imagen, el
+    navegador no lo interpretará como otra cosa.
+
+    ----------------------------------------------------------------------
+    EN PRODUCCIÓN
+    ----------------------------------------------------------------------
+    Servir archivos desde Python es más lento que hacerlo desde el servidor web. La
+    forma correcta de recuperar ese rendimiento SIN perder el control de acceso es
+    la cabecera `X-Accel-Redirect` (Nginx) o `X-Sendfile` (Apache): Django decide si
+    la persona puede, y el servidor web entrega el archivo. Se deja anotado aquí
+    porque es un cambio de una línea y conviene no improvisarlo.
+    """
+
+    permisos_requeridos = ("fichas.ver_propias", "fichas.ver_todas")
+    mensaje_sin_permiso = "No tienes permiso para consultar el módulo de encuestas."
+
+    def get_queryset(self):
+        """Quién puede ver la foto de qué vivienda.
+
+        Mismo criterio que ViviendaDetalleView: con `fichas.ver_todas` se ven todas
+        —es lo que necesita el supervisor para revisar—; sin ese permiso, solo las
+        de viviendas donde se tiene trabajo o territorio asignado.
+        """
+        consulta = Fotografia.objects.select_related("vivienda", "vivienda__zona")
+
+        if self.request.user.tiene_permiso("fichas.ver_todas"):
+            return consulta
+
+        return consulta.filter(
+            Q(vivienda__encuestas__censista=self.request.user)
+            | Q(vivienda__zona__in=zonas_disponibles(self.request.user))
+        ).distinct()
+
+    def get(self, request, *args, **kwargs):
+        fotografia = get_object_or_404(self.get_queryset(), pk=self.kwargs["pk"])
+
+        try:
+            archivo = fotografia.imagen.open("rb")
+        except FileNotFoundError:
+            # La fila existe y el archivo no: un respaldo restaurado a medias, o un
+            # borrado a mano en el disco. Se responde 404 y no 500 porque, desde
+            # fuera, «esta foto no está» es exactamente lo que ocurre.
+            raise Http404("El archivo de esta fotografía ya no está disponible.")
+
+        respuesta = FileResponse(archivo, as_attachment=False)
+        respuesta["X-Content-Type-Options"] = "nosniff"
+        # Las fotos son datos personales: que no queden en cachés compartidas.
+        respuesta["Cache-Control"] = "private, max-age=0, no-store"
+
+        return respuesta
+
+

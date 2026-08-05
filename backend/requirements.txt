@@ -16,3 +16,9 @@ python-decouple==3.8
 
 # Algoritmo de hash Argon2id para las contraseñas
 argon2-cffi==25.1.0
+
+# Tratamiento de imágenes. La exige ImageField (HU-12), y no es una comodidad:
+# comprobar que un archivo subido ES DE VERDAD una imagen obliga a decodificarlo, y
+# eso lo hace Pillow. Mirar la extensión no valida nada, porque cualquiera puede
+# renombrar un archivo.
+Pillow==12.3.0

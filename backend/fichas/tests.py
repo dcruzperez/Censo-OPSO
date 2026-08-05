@@ -5310,3 +5310,584 @@ class IntegracionHU11Test(BaseUbicacionTest):
         self.assertEqual(str(lejana.latitud), "-36.900000")
 
 
+# ==========================================================================
+# HU-12 — 51. LAS FOTOGRAFÍAS
+# ==========================================================================
+
+
+def imagen_de_prueba(nombre="foto.jpg", formato="JPEG", medidas=(60, 40)):
+    """Una imagen de verdad, en memoria, para las pruebas de subida.
+
+    Tiene que ser una imagen REAL y no unos bytes cualesquiera, porque ImageField la
+    decodifica con Pillow: ese es justamente el control que la HU-12 quiere probar.
+    """
+    buffer = BytesIO()
+    Image.new("RGB", medidas, "red").save(buffer, format=formato)
+    buffer.seek(0)
+
+    return SimpleUploadedFile(nombre, buffer.read(), content_type="image/jpeg")
+
+
+@override_settings(MEDIA_ROOT=tempfile.mkdtemp(prefix="opso-pruebas-"))
+class BaseFotografiaTest(BaseEncuestaTest):
+    """Escenario común, con MEDIA_ROOT apuntando a una carpeta temporal.
+
+    Sin `override_settings`, las pruebas escribirían en la carpeta media real del
+    proyecto y la irían llenando de archivos que nadie borra. La carpeta temporal se
+    elimina al terminar la clase.
+    """
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(settings.MEDIA_ROOT, ignore_errors=True)
+        super().tearDownClass()
+
+    def setUp(self):
+        super().setUp()
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
+        self.vivienda = self.crear_vivienda(direccion="Av. Central 100")
+        self.encuesta = self.crear(
+            vivienda=self.vivienda, estado=EstadoEncuesta.BORRADOR
+        )
+        self.url_subir = reverse(
+            "fichas:subir_fotografia", kwargs={"pk": self.vivienda.pk}
+        )
+
+    def crear_foto(self, vivienda=None, tipo=TipoFotografia.FACHADA, **extra):
+        datos = {
+            "vivienda": vivienda or self.vivienda,
+            "imagen": imagen_de_prueba(),
+            "tipo": tipo,
+            "descripcion": "El número de la casa está borrado.",
+            "tomada_por": self.marta,
+        }
+        datos.update(extra)
+        return Fotografia.objects.create(**datos)
+
+
+class FotografiaModeloTest(BaseFotografiaTest):
+    def test_se_asocia_a_su_vivienda(self):
+        foto = self.crear_foto()
+
+        self.assertIn(foto, self.vivienda.fotografias.all())
+
+    def test_el_nombre_original_no_se_conserva(self):
+        """Lo elige quien sube: no se usa para nada."""
+        foto = self.crear_foto(imagen=imagen_de_prueba(nombre="IMG_0001.jpg"))
+
+        self.assertNotIn("IMG_0001", foto.imagen.name)
+
+    def test_el_archivo_se_guarda_con_un_nombre_impredecible(self):
+        foto = self.crear_foto()
+        nombre = Path(foto.imagen.name).stem
+
+        # Un UUID en hexadecimal: 32 caracteres.
+        self.assertEqual(len(nombre), 32)
+
+    def test_se_reparte_por_ano_y_mes(self):
+        foto = self.crear_foto()
+
+        self.assertTrue(foto.imagen.name.startswith("fichas/"))
+        self.assertIn(str(timezone.localdate().year), foto.imagen.name)
+
+    def test_una_extension_rara_se_reemplaza(self):
+        """La extensión del disco no es la fuente de verdad sobre el contenido."""
+        foto = self.crear_foto(imagen=imagen_de_prueba(nombre="foto.raro"))
+
+        self.assertTrue(foto.imagen.name.endswith(".jpg"))
+
+    def test_una_extension_admitida_se_conserva(self):
+        foto = self.crear_foto(imagen=imagen_de_prueba(nombre="foto.png"))
+
+        self.assertTrue(foto.imagen.name.endswith(".png"))
+
+    def test_el_texto_dice_el_tipo_y_la_direccion(self):
+        foto = self.crear_foto()
+
+        self.assertIn("Fachada", str(foto))
+        self.assertIn("Av. Central 100", str(foto))
+
+    def test_la_url_apunta_a_la_vista_y_no_al_archivo(self):
+        """`imagen.url` daría la ruta directa, que OPSO no sirve a propósito."""
+        foto = self.crear_foto()
+
+        self.assertEqual(
+            foto.get_absolute_url(),
+            reverse("fichas:ver_fotografia", kwargs={"pk": foto.pk}),
+        )
+
+    def test_informa_el_tamano(self):
+        self.assertGreater(self.crear_foto().tamano_kb, 0)
+
+    def test_sin_archivo_el_tamano_es_none_y_no_revienta(self):
+        """Una fila cuyo archivo se perdió tiene que poder mostrarse igual."""
+        foto = self.crear_foto()
+        Path(foto.imagen.path).unlink()
+
+        self.assertIsNone(foto.tamano_kb)
+
+    def test_borrar_la_vivienda_se_lleva_las_fotos(self):
+        self.crear_foto()
+
+        self.vivienda.delete()
+
+        self.assertEqual(Fotografia.objects.count(), 0)
+
+    def test_borrar_archivo_elimina_la_fila_y_el_archivo(self):
+        """Django no borra el archivo solo: hay que hacerlo explícitamente."""
+        foto = self.crear_foto()
+        ruta = Path(foto.imagen.path)
+        self.assertTrue(ruta.exists())
+
+        foto.borrar_archivo()
+
+        self.assertEqual(Fotografia.objects.count(), 0)
+        self.assertFalse(ruta.exists())
+
+
+class RestriccionesFotografiaTest(BaseFotografiaTest):
+    def test_un_tipo_inventado_lo_rechaza_la_base_de_datos(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self.crear_foto(tipo="SELFIE")
+
+    def test_una_descripcion_vacia_la_rechaza_la_base_de_datos(self):
+        """Una foto sin explicación no es evidencia de nada."""
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self.crear_foto(descripcion="")
+
+
+# ==========================================================================
+# HU-12 — 52. EL FORMULARIO
+# ==========================================================================
+
+
+class FotografiaFormTest(BaseFotografiaTest):
+    def datos(self, **extra):
+        base = {
+            "tipo": TipoFotografia.FACHADA,
+            "descripcion": "El número de la casa está borrado.",
+        }
+        base.update(extra)
+        return base
+
+    def formulario(self, datos=None, archivo=None, vivienda=None):
+        archivos = {"imagen": archivo} if archivo is not None else None
+        return FotografiaForm(
+            datos, archivos, vivienda=vivienda or self.vivienda
+        )
+
+    def test_una_imagen_valida_se_acepta(self):
+        formulario = self.formulario(self.datos(), imagen_de_prueba())
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_la_imagen_es_obligatoria(self):
+        formulario = self.formulario(self.datos())
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("imagen", formulario.errors)
+
+    def test_un_archivo_que_no_es_imagen_se_rechaza(self):
+        """Lo detecta Pillow al decodificar: mirar la extensión no valida nada."""
+        falso = SimpleUploadedFile(
+            "foto.jpg", b"esto no es una imagen", content_type="image/jpeg"
+        )
+
+        formulario = self.formulario(self.datos(), falso)
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("imagen", formulario.errors)
+
+    def test_un_formato_no_admitido_se_rechaza(self):
+        """Pillow abre docenas de formatos; se aceptan solo los tres de un teléfono."""
+        formulario = self.formulario(
+            self.datos(), imagen_de_prueba(nombre="foto.gif", formato="GIF")
+        )
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("imagen", formulario.errors)
+
+    def test_png_y_webp_se_aceptan(self):
+        for formato, nombre in (("PNG", "f.png"), ("WEBP", "f.webp")):
+            with self.subTest(formato=formato):
+                formulario = self.formulario(
+                    self.datos(), imagen_de_prueba(nombre=nombre, formato=formato)
+                )
+                self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    @override_settings(OPSO_TAMANO_MAXIMO_FOTO=500)
+    def test_una_imagen_demasiado_pesada_se_rechaza(self):
+        formulario = self.formulario(self.datos(), imagen_de_prueba(medidas=(800, 600)))
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("imagen", formulario.errors)
+
+    def test_la_descripcion_es_obligatoria(self):
+        formulario = self.formulario(self.datos(descripcion=""), imagen_de_prueba())
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("descripcion", formulario.errors)
+
+    def test_una_descripcion_de_dos_palabras_no_basta(self):
+        formulario = self.formulario(self.datos(descripcion="la casa"), imagen_de_prueba())
+
+        self.assertFalse(formulario.is_valid())
+
+    @override_settings(OPSO_MAXIMO_FOTOS_POR_VIVIENDA=2)
+    def test_no_se_pasa_del_tope_de_fotografias(self):
+        """«Cuando sea necesario»: la ficha no puede volverse un álbum."""
+        self.crear_foto()
+        self.crear_foto()
+
+        formulario = self.formulario(self.datos(), imagen_de_prueba())
+
+        self.assertFalse(formulario.is_valid())
+
+    @override_settings(OPSO_MAXIMO_FOTOS_POR_VIVIENDA=2)
+    def test_el_tope_es_por_vivienda(self):
+        self.crear_foto()
+        self.crear_foto()
+        otra = self.crear_vivienda(direccion="Otra 1")
+
+        formulario = self.formulario(self.datos(), imagen_de_prueba(), vivienda=otra)
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+
+# ==========================================================================
+# HU-12 — 53. SUBIR Y QUITAR
+# ==========================================================================
+
+
+class SubirFotografiaTest(BaseFotografiaTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.marta)
+
+    def datos(self, **extra):
+        base = {
+            "tipo": TipoFotografia.FACHADA,
+            "descripcion": "El número de la casa está borrado.",
+            "imagen": imagen_de_prueba(),
+        }
+        base.update(extra)
+        return base
+
+    def test_muestra_el_formulario(self):
+        respuesta = self.client.get(self.url_subir)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "Adjuntar una fotografía")
+
+    def test_advierte_de_no_fotografiar_personas(self):
+        """Es la regla más importante de la historia, y va antes del campo."""
+        respuesta = self.client.get(self.url_subir)
+
+        self.assertContains(respuesta, "No fotografíes a personas")
+
+    def test_el_formulario_admite_archivos(self):
+        """Sin enctype, el navegador manda el nombre y no el archivo."""
+        respuesta = self.client.get(self.url_subir)
+
+        self.assertContains(respuesta, "multipart/form-data")
+
+    def test_guarda_la_fotografia(self):
+        self.client.post(self.url_subir, self.datos())
+
+        self.assertEqual(self.vivienda.fotografias.count(), 1)
+
+    def test_registra_quien_la_subio(self):
+        self.client.post(self.url_subir, self.datos())
+
+        self.assertEqual(Fotografia.objects.get().tomada_por, self.marta)
+
+    def test_vuelve_a_la_ficha_de_la_vivienda(self):
+        respuesta = self.client.post(self.url_subir, self.datos())
+
+        self.assertRedirects(
+            respuesta,
+            reverse("fichas:vivienda_detalle", kwargs={"pk": self.vivienda.pk}),
+        )
+
+    def test_un_archivo_invalido_no_guarda_nada(self):
+        falso = SimpleUploadedFile("x.jpg", b"no soy una imagen")
+
+        self.client.post(self.url_subir, self.datos(imagen=falso))
+
+        self.assertEqual(Fotografia.objects.count(), 0)
+
+    def test_una_vivienda_fuera_de_mi_territorio_responde_404(self):
+        ajena = Vivienda.objects.create(zona=self.zona_norte, direccion="Otra 1")
+
+        respuesta = self.client.get(
+            reverse("fichas:subir_fotografia", kwargs={"pk": ajena.pk})
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_el_supervisor_no_puede_subir(self):
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_subir)
+
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_con_el_operativo_cerrado_no_se_puede(self):
+        self.operativo.estado = EstadoOperativo.CERRADO
+        self.operativo.save()
+
+        self.client.post(self.url_subir, self.datos())
+
+        self.assertEqual(Fotografia.objects.count(), 0)
+
+
+class QuitarFotografiaTest(BaseFotografiaTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.marta)
+        self.foto = self.crear_foto()
+        self.url_quitar = reverse(
+            "fichas:quitar_fotografia", kwargs={"pk": self.foto.pk}
+        )
+
+    def test_el_get_solo_confirma(self):
+        respuesta = self.client.get(self.url_quitar)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(Fotografia.objects.count(), 1)
+
+    def test_avisa_de_que_el_archivo_se_borra(self):
+        respuesta = self.client.get(self.url_quitar)
+
+        self.assertContains(respuesta, "se borra del disco")
+
+    def test_el_post_borra_la_fila(self):
+        self.client.post(self.url_quitar)
+
+        self.assertEqual(Fotografia.objects.count(), 0)
+
+    def test_el_post_borra_tambien_el_archivo(self):
+        """Si no, el disco acumula fotos de familias que ya nadie puede ver."""
+        ruta = Path(self.foto.imagen.path)
+
+        self.client.post(self.url_quitar)
+
+        self.assertFalse(ruta.exists())
+
+    def test_una_foto_fuera_de_mi_territorio_responde_404(self):
+        ajena = Vivienda.objects.create(zona=self.zona_norte, direccion="Otra 1")
+        foto_ajena = self.crear_foto(vivienda=ajena)
+
+        respuesta = self.client.post(
+            reverse("fichas:quitar_fotografia", kwargs={"pk": foto_ajena.pk})
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+        self.assertEqual(Fotografia.objects.count(), 2)
+
+
+# ==========================================================================
+# HU-12 — 54. SERVIR EL ARCHIVO: LA DECISIÓN DE SEGURIDAD
+# ==========================================================================
+
+
+class ServirFotografiaTest(BaseFotografiaTest):
+    def setUp(self):
+        super().setUp()
+        self.foto = self.crear_foto()
+        self.url_ver = reverse("fichas:ver_fotografia", kwargs={"pk": self.foto.pk})
+
+    def test_el_encuestador_ve_su_foto(self):
+        self.client.force_login(self.marta)
+
+        respuesta = self.client.get(self.url_ver)
+
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_entrega_el_contenido_del_archivo(self):
+        self.client.force_login(self.marta)
+
+        respuesta = self.client.get(self.url_ver)
+        contenido = b"".join(respuesta.streaming_content)
+        respuesta.close()
+
+        self.assertGreater(len(contenido), 0)
+
+    def test_un_visitante_anonimo_no_puede(self):
+        """El punto entero de la historia: el archivo NO es público."""
+        respuesta = self.client.get(self.url_ver)
+
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertIn(reverse("usuarios:login"), respuesta.url)
+
+    def test_un_encuestador_ajeno_recibe_404(self):
+        self.client.force_login(self.juan)
+
+        respuesta = self.client.get(self.url_ver)
+
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_el_supervisor_si_puede_con_ver_todas(self):
+        """Es lo que necesita para revisar el trabajo."""
+        self.client.force_login(self.supervisor)
+
+        self.assertEqual(self.client.get(self.url_ver).status_code, 200)
+
+    def test_sin_ver_todas_el_supervisor_no_puede(self):
+        self.rol_supervisor.permisos.remove(
+            Permiso.objects.get(codigo="fichas.ver_todas")
+        )
+        self.client.force_login(self.supervisor)
+
+        self.assertEqual(self.client.get(self.url_ver).status_code, 404)
+
+    def test_un_companero_del_mismo_sector_si_puede(self):
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.juan)
+        self.client.force_login(self.juan)
+
+        self.assertEqual(self.client.get(self.url_ver).status_code, 200)
+
+    def test_prohibe_adivinar_el_tipo_de_contenido(self):
+        self.client.force_login(self.marta)
+
+        respuesta = self.client.get(self.url_ver)
+
+        self.assertEqual(respuesta["X-Content-Type-Options"], "nosniff")
+
+    def test_prohibe_guardarla_en_cachés_compartidas(self):
+        """Son datos personales: no pueden quedar en una caché intermedia."""
+        self.client.force_login(self.marta)
+
+        respuesta = self.client.get(self.url_ver)
+
+        self.assertIn("no-store", respuesta["Cache-Control"])
+
+    def test_si_el_archivo_falta_responde_404(self):
+        """Un respaldo restaurado a medias no puede tumbar la pantalla."""
+        Path(self.foto.imagen.path).unlink()
+        self.client.force_login(self.marta)
+
+        self.assertEqual(self.client.get(self.url_ver).status_code, 404)
+
+    def test_la_carpeta_media_no_se_sirve_como_estatica(self):
+        """La comprobación que resume la historia: no hay ruta pública al archivo.
+
+        Si algún día alguien agregara `static(MEDIA_URL, ...)` a las URLs, esta
+        prueba fallaría, que es exactamente lo que tiene que pasar.
+        """
+        self.client.force_login(self.marta)
+
+        respuesta = self.client.get(f"/{settings.MEDIA_URL}{self.foto.imagen.name}")
+
+        self.assertNotEqual(respuesta.status_code, 200)
+
+
+# ==========================================================================
+# HU-12 — 55. LAS FOTOS EN LA FICHA DE LA VIVIENDA
+# ==========================================================================
+
+
+class FotografiasEnLaFichaTest(BaseFotografiaTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.marta)
+        self.url_vivienda = reverse(
+            "fichas:vivienda_detalle", kwargs={"pk": self.vivienda.pk}
+        )
+
+    def test_sin_fotos_explica_cuando_hacen_falta(self):
+        respuesta = self.client.get(self.url_vivienda)
+
+        self.assertContains(respuesta, "Sin fotografías")
+        self.assertContains(respuesta, "solo cuando hacen falta")
+
+    def test_muestra_las_fotos_adjuntas(self):
+        foto = self.crear_foto()
+
+        respuesta = self.client.get(self.url_vivienda)
+
+        self.assertContains(
+            respuesta, reverse("fichas:ver_fotografia", kwargs={"pk": foto.pk})
+        )
+
+    def test_nunca_enlaza_el_archivo_directo(self):
+        self.crear_foto()
+
+        respuesta = self.client.get(self.url_vivienda)
+
+        self.assertNotContains(respuesta, "/media/fichas/")
+
+    def test_ofrece_adjuntar(self):
+        respuesta = self.client.get(self.url_vivienda)
+
+        self.assertContains(respuesta, self.url_subir)
+
+    def test_con_el_operativo_cerrado_no_ofrece_adjuntar(self):
+        self.operativo.estado = EstadoOperativo.CERRADO
+        self.operativo.save()
+
+        respuesta = self.client.get(self.url_vivienda)
+
+        self.assertNotContains(respuesta, self.url_subir)
+
+
+# ==========================================================================
+# HU-12 — 56. RECORRIDO COMPLETO
+# ==========================================================================
+
+
+class IntegracionHU12Test(BaseFotografiaTest):
+    def test_recorrido_completo(self):
+        self.client.force_login(self.marta)
+
+        # 1. La vivienda no tiene fotos y la ficha lo dice.
+        url_vivienda = reverse(
+            "fichas:vivienda_detalle", kwargs={"pk": self.vivienda.pk}
+        )
+        self.assertContains(self.client.get(url_vivienda), "Sin fotografías")
+
+        # 2. Se adjunta una, con su motivo.
+        self.client.post(
+            self.url_subir,
+            {
+                "tipo": TipoFotografia.ACCESO,
+                "descripcion": "El pasaje no tiene letrero; es la tercera casa.",
+                "imagen": imagen_de_prueba(nombre="IMG_9987.jpg"),
+            },
+        )
+        foto = Fotografia.objects.get()
+        self.assertEqual(foto.tomada_por, self.marta)
+        self.assertNotIn("IMG_9987", foto.imagen.name)
+
+        # 3. Se ve por la vista protegida, nunca por la ruta del archivo.
+        #
+        # Se cierra la respuesta a mano: FileResponse deja el archivo ABIERTO hasta
+        # que se cierra, y en Windows un archivo abierto no se puede borrar. En
+        # producción lo cierra el servidor al terminar de enviarlo; en una prueba
+        # que después borra el archivo, hay que hacerlo aquí.
+        url_ver = reverse("fichas:ver_fotografia", kwargs={"pk": foto.pk})
+        respuesta = self.client.get(url_ver)
+        self.assertEqual(respuesta.status_code, 200)
+        respuesta.close()
+
+        # 4. Juan, que no tiene ese sector, no la ve.
+        self.client.force_login(self.juan)
+        self.assertEqual(self.client.get(url_ver).status_code, 404)
+
+        # 5. Un visitante sin sesión, tampoco.
+        self.client.logout()
+        self.assertEqual(self.client.get(url_ver).status_code, 302)
+
+        # 6. Marta la quita y el archivo desaparece del disco.
+        self.client.force_login(self.marta)
+        ruta = Path(foto.imagen.path)
+        self.client.post(
+            reverse("fichas:quitar_fotografia", kwargs={"pk": foto.pk})
+        )
+
+        self.assertEqual(Fotografia.objects.count(), 0)
+        self.assertFalse(ruta.exists())
+
+

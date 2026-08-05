@@ -1118,3 +1118,145 @@ class UbicacionForm(forms.ModelForm):
         return vivienda
 
 
+# ==========================================================================
+# HU-12 — LAS FOTOGRAFÍAS
+# ==========================================================================
+
+
+class FotografiaForm(forms.ModelForm):
+    """Sube una fotografía como evidencia del levantamiento.
+
+    ----------------------------------------------------------------------
+    LO QUE VALIDA, Y POR QUÉ CADA COSA
+    ----------------------------------------------------------------------
+    Es el formulario con más validación del proyecto, y no por gusto: es el único
+    que acepta un ARCHIVO, que es la entrada más peligrosa que puede recibir una
+    aplicación web.
+
+      1. QUE SEA UNA IMAGEN DE VERDAD. Lo hace ImageField decodificándola con
+         Pillow. Comprobar la extensión no valida nada: cualquiera renombra un
+         archivo. Esto es lo que impide que llegue algo que no es una foto.
+
+      2. QUE EL FORMATO SEA UNO DE LOS TRES ESPERADOS. Pillow abre docenas de
+         formatos, algunos exóticos y con historial de vulnerabilidades. Aceptar
+         solo JPEG, PNG y WEBP reduce la superficie a lo que un teléfono produce.
+
+      3. QUE NO PESE DEMASIADO. Cinco megabytes sobran para la foto de una fachada,
+         y el límite evita que una imagen de 40 MB bloquee la subida en una conexión
+         de terreno.
+
+      4. QUE LA VIVIENDA NO ACUMULE UN ÁLBUM. La historia dice «cuando sea
+         necesario»: cinco fotos por vivienda es el tope, y llegar a él suele
+         significar que se está documentando de más.
+
+      5. QUE HAYA UNA DESCRIPCIÓN. Ver la decisión 4 del modelo.
+
+    ----------------------------------------------------------------------
+    EL LÍMITE DE TAMAÑO SE COMPRUEBA ANTES QUE EL FORMATO
+    ----------------------------------------------------------------------
+    Y no es casual. Validar el formato obliga a decodificar la imagen, y decodificar
+    una imagen enorme —o una preparada para expandirse al descomprimirse— consume
+    memoria. Mirar `size` es leer un número que ya está ahí. Se rechaza barato antes
+    de gastar caro.
+    """
+
+    class Meta:
+        model = Fotografia
+        fields = ("imagen", "tipo", "descripcion")
+        widgets = {
+            "imagen": forms.ClearableFileInput(
+                attrs={
+                    "class": CLASE_TEXTO,
+                    # accept limita lo que ofrece el selector del teléfono y, en un
+                    # móvil, hace que aparezca la cámara. Es comodidad, no
+                    # seguridad: el servidor valida igual.
+                    "accept": "image/jpeg,image/png,image/webp",
+                }
+            ),
+            "tipo": forms.Select(attrs={"class": CLASE_SELECT}),
+            "descripcion": forms.TextInput(
+                attrs={
+                    "class": CLASE_TEXTO,
+                    "placeholder": (
+                        "El número de la casa está borrado; es la tercera del pasaje"
+                    ),
+                    "autocomplete": "off",
+                }
+            ),
+        }
+
+    def __init__(self, *args, vivienda, **kwargs):
+        """`vivienda` es obligatoria y va por nombre.
+
+        Sin ella no se puede comprobar el tope de fotografías, que es la única regla
+        que depende de lo que ya hay guardado. Se exige después de `*` por lo mismo
+        que en los demás formularios del módulo: para que nadie la pase por posición
+        y la confunda con `data`.
+        """
+        self.vivienda = vivienda
+        super().__init__(*args, **kwargs)
+
+    def clean_descripcion(self):
+        descripcion = (self.cleaned_data.get("descripcion") or "").strip()
+
+        if len(descripcion) < 10:
+            raise forms.ValidationError(
+                "Explica en una frase qué muestra la foto y por qué hizo falta. "
+                "Dentro de seis meses nadie va a recordarlo."
+            )
+
+        return descripcion
+
+    def clean_imagen(self):
+        imagen = self.cleaned_data.get("imagen")
+
+        if imagen is None:
+            return imagen
+
+        # 1. El peso, primero: es barato y evita decodificar algo enorme.
+        maximo = settings.OPSO_TAMANO_MAXIMO_FOTO
+
+        if imagen.size > maximo:
+            raise forms.ValidationError(
+                f"La imagen pesa {imagen.size / 1024 / 1024:.1f} MB y el máximo son "
+                f"{maximo / 1024 / 1024:.0f} MB. Vuelve a tomarla con menos "
+                "resolución."
+            )
+
+        # 2. El formato. `imagen.image` lo dejó puesto ImageField al validar con
+        #    Pillow, así que aquí no se vuelve a abrir el archivo.
+        formato = getattr(getattr(imagen, "image", None), "format", None)
+
+        if formato not in Fotografia.FORMATOS:
+            raise forms.ValidationError(
+                f"El formato {formato or 'de la imagen'} no se acepta. Usa JPEG, "
+                "PNG o WEBP, que es lo que produce cualquier teléfono."
+            )
+
+        return imagen
+
+    def clean(self):
+        datos = super().clean()
+
+        tope = settings.OPSO_MAXIMO_FOTOS_POR_VIVIENDA
+        cuantas = self.vivienda.fotografias.count()
+
+        if self.instance.pk is None and cuantas >= tope:
+            raise forms.ValidationError(
+                f"Esta vivienda ya tiene {cuantas} fotografías, que es el máximo. "
+                "Si hace falta otra, quita alguna que ya no sirva: las fotos son "
+                "evidencia puntual, no un álbum."
+            )
+
+        return datos
+
+    def save(self, commit=True):
+        fotografia = super().save(commit=False)
+        fotografia.vivienda = self.vivienda
+
+        if commit:
+            fotografia.save()
+
+        return fotografia
+
+
