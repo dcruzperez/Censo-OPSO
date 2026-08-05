@@ -711,6 +711,51 @@ class Encuesta(models.Model):
         ),
     )
     # ------------------------------------------------------------------
+    # EL BORRADOR (HU-10)
+    #
+    # La HU-07 declaró `observaciones` como «indicaciones del supervisor O notas
+    # del propio encuestador», y esa «o» era una ambigüedad que se paga en cuanto
+    # los dos escriben en el mismo campo: la nota que el encuestador se deja a sí
+    # mismo pisaría las instrucciones que le dejaron, o al revés.
+    #
+    # La HU-10 la resuelve partiendo la responsabilidad: `observaciones` son las
+    # INDICACIONES que se reciben, y `nota_avance` es la nota que uno se deja. Dos
+    # autores distintos, dos propósitos distintos, dos columnas.
+    # ------------------------------------------------------------------
+    nota_avance = models.TextField(
+        "nota de avance",
+        blank=True,
+        help_text=(
+            "Recordatorio para uno mismo al retomar la encuesta. Ej.: «falta el "
+            "módulo de ingresos y los datos del hijo mayor»."
+        ),
+    )
+    proxima_visita = models.DateField(
+        "próxima visita",
+        null=True,
+        blank=True,
+        help_text=(
+            "Cuándo conviene volver. Vacío si no hace falta una segunda visita."
+        ),
+    )
+    motivo_cierre = models.TextField(
+        "motivo del cierre",
+        blank=True,
+        help_text=(
+            "Por qué no se pudo levantar. Obligatorio al cerrar una encuesta como "
+            "no ubicada o rechazada."
+        ),
+    )
+    asignada_por = models.ForeignKey(
+        "usuarios.Usuario",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="encuestas_asignadas",
+        verbose_name="asignada por",
+        help_text="Quién encargó esta encuesta. Vacío si la creó el encuestador.",
+    )
+    # ------------------------------------------------------------------
     class Meta:
         db_table = "fichas_encuesta"
         verbose_name = "encuesta"
@@ -1034,6 +1079,119 @@ class Encuesta(models.Model):
             )
 
         return self
+
+    # ------------------------------------------------------------------
+    # ¿ESTÁ TERMINADA? (HU-10)
+    #
+    # Es la pregunta que cierra el sprint del encuestador, y la respuesta no la
+    # puede dar una sola tabla: depende de la vivienda (¿está descrita?), del
+    # hogar (¿se registró?) y de las personas (¿están todas?). Por eso vive aquí,
+    # en la encuesta, que es lo único que conoce las tres.
+    # ------------------------------------------------------------------
+
+    def pasos_pendientes(self):
+        """Lo que falta para poder dar la encuesta por terminada.
+
+        Devuelve una lista de diccionarios con `texto` y `ruta` (el nombre de la URL
+        a la que hay que ir), no una lista de textos ni un booleano.
+
+        Es deliberado, y es lo que convierte esta historia en algo más que un botón:
+        «no puedes completar la encuesta» obliga a adivinar qué falta y a buscarlo
+        pantalla por pantalla. «Falta describir la vivienda → [ir]» se resuelve en
+        un toque. Es el mismo criterio con que la HU-05 devuelve el MOTIVO en
+        `puede_desactivarse()` en vez de un booleano suelto.
+
+        El orden de la lista es el orden en que hay que hacer las cosas, no el
+        orden en que se comprobaron: primero la casa, después el hogar, después las
+        personas. Así el primer elemento es siempre el siguiente paso.
+
+        ------------------------------------------------------------------
+        LA UBICACIÓN GPS NO ESTÁ EN ESTA LISTA, Y ES UNA DECISIÓN (HU-11)
+        ------------------------------------------------------------------
+        Sería fácil agregarla y sería un error. El GPS depende de que haya señal, de
+        que el sistema operativo dé el permiso y de que el teléfono no esté bajo
+        techo: nada de eso lo controla el encuestador. Exigirlo para terminar
+        dejaría fichas completas y correctas atrapadas en borrador por un fallo de
+        cobertura, y la salida sería inventar coordenadas.
+
+        Lo que sí hace el sistema es AVISAR en la pantalla de terminar. La
+        diferencia entre bloquear y avisar es la misma de siempre: se bloquea lo que
+        el usuario puede resolver, y se avisa de lo que quizá no.
+        """
+        pendientes = []
+
+        if not self.vivienda.datos_completos:
+            pendientes.append(
+                {
+                    "texto": "Describir la vivienda (tipo, materialidad, servicios).",
+                    "ruta": "fichas:vivienda_editar",
+                    "argumento": self.vivienda_id,
+                }
+            )
+
+        if not self.tiene_grupo_familiar:
+            pendientes.append(
+                {
+                    "texto": "Registrar los datos del hogar.",
+                    "ruta": "fichas:registrar_hogar",
+                    "argumento": self.pk,
+                }
+            )
+            # Sin hogar no se puede comprobar nada de las personas: se corta aquí
+            # para no listar tres pasos que dicen lo mismo.
+            return pendientes
+
+        hogar = self.grupo_familiar
+
+        if hogar.jefe_hogar_registrado is None:
+            pendientes.append(
+                {
+                    "texto": "Registrar a la jefa o jefe de hogar.",
+                    "ruta": "fichas:integrantes",
+                    "argumento": self.pk,
+                }
+            )
+
+        if not hogar.esta_completo:
+            faltan = hogar.integrantes_pendientes
+            pendientes.append(
+                {
+                    "texto": (
+                        f"Registrar {faltan} persona{'s' if faltan != 1 else ''} "
+                        f"más: la familia declaró {hogar.integrantes_declarados}."
+                    ),
+                    "ruta": "fichas:integrantes",
+                    "argumento": self.pk,
+                }
+            )
+
+        return pendientes
+
+    @property
+    def puede_completarse(self):
+        """True si no falta nada por registrar.
+
+        No comprueba el estado ni el territorio: solo si los DATOS están completos.
+        Quién puede completarla y cuándo lo decide `puede_registrarse()`, y las dos
+        cosas se preguntan por separado a propósito: una encuesta puede estar
+        completa y cerrada (nada que hacer) o abierta e incompleta (falta trabajo),
+        y son situaciones distintas que la pantalla explica distinto.
+        """
+        return not self.pasos_pendientes()
+
+    @property
+    def visita_pendiente_vencida(self):
+        """True si se anotó volver en una fecha que ya pasó.
+
+        Es el aviso que evita el olvido silencioso: un borrador con «volver el
+        jueves» y hoy es lunes de la semana siguiente no es trabajo pendiente
+        cualquiera, es trabajo que se escapó.
+        """
+        if self.proxima_visita is None or not self.requiere_trabajo:
+            return False
+
+        return self.proxima_visita <= timezone.localdate()
+
 
     # ------------------------------------------------------------------
     def clean(self):

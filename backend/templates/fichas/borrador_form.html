@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   GUARDAR EL BORRADOR — /encuestas/<pk>/borrador/
+
+   La pantalla de la HU-10, y la que más conviene poder explicar: NO guarda datos
+   del censo. Esos ya se guardan desde la HU-08 en cuanto se pulsa cada botón.
+
+   Guarda lo que no es un campo del formulario: por dónde iba la conversación y
+   cuándo conviene volver. Eso hoy vive en la cabeza del encuestador y se pierde al
+   día siguiente; con cuatro días de diferencia, una encuesta a medias se vuelve a
+   empezar y la familia responde dos veces las mismas preguntas.
+
+   Se muestra además LO QUE FALTA, con enlaces: es la información que hace útil la
+   nota. «Falta el módulo de ingresos» escrito por uno mismo, junto a «faltan 3
+   personas por registrar» calculado por el sistema, es todo lo que hace falta para
+   retomar sin releer la ficha entera.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Borrador de {{ encuesta.direccion }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'fichas:mis_encuestas' %}">Mis encuestas</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}">{{ encuesta.direccion }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Borrador</li>
+  </ol>
+</nav>
+
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+    Guardar para continuar después
+  </h1>
+  <p class="text-secondary mb-0">
+    {{ encuesta.direccion }} · {{ encuesta.zona.nombre }} ·
+    {{ encuesta.zona.sector.nombre }}
+  </p>
+</div>
+
+<div class="alert alert-info small d-flex gap-2" role="alert">
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+  </svg>
+  <div>
+    <strong>Lo que ya escribiste está guardado.</strong> Cada pantalla guarda al
+    pulsar su botón, así que nada se pierde al salir. Esto es para dejarte anotado
+    <em>por dónde ibas</em> y cuándo volver.
+  </div>
+</div>
+
+{% comment %} Lo que falta, calculado por el sistema. Va ANTES del formulario porque
+   es lo que ayuda a escribir la nota: se mira qué falta y se anota el detalle que
+   el sistema no puede saber. {% endcomment %}
+<div class="card-opso p-4 mb-3">
+  <h2 class="h6 fw-semibold mb-3">Lo que falta en esta encuesta</h2>
+  {% include "fichas/_pasos_pendientes.html" with pendientes=pendientes encuesta=encuesta %}
+</div>
+
+<form method="post" novalidate>
+  {% csrf_token %}
+
+  <div class="card-opso p-4 mb-3">
+    <h2 class="h6 fw-semibold mb-3">Tu nota</h2>
+    <div class="row g-3">
+      {% include "usuarios/gestion/_campo.html" with campo=form.nota_avance ancho="col-12" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.proxima_visita ancho="col-12 col-md-5" %}
+    </div>
+
+    {% if encuesta.observaciones %}
+      {% comment %} Las indicaciones que RECIBIÓ se muestran aparte de la nota que
+         ESCRIBE. Son dos campos distintos desde la HU-10 justamente para que no se
+         pisen: dos autores, dos propósitos. {% endcomment %}
+      <div class="alert alert-secondary small mt-3 mb-0" role="alert">
+        <strong>Indicaciones que tienes para esta encuesta:</strong>
+        {{ encuesta.observaciones }}
+      </div>
+    {% endif %}
+  </div>
+
+  <div class="d-flex gap-2 flex-wrap">
+    <button type="submit" class="btn btn-opso">Guardar el borrador</button>
+    <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}" class="btn btn-outline-secondary">
+      Cancelar
+    </a>
+  </div>
+</form>
+
+{% endblock %}

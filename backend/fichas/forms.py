@@ -791,3 +791,161 @@ class IntegranteForm(forms.ModelForm):
         return integrante
 
 
+# ==========================================================================
+# HU-10 — GUARDAR EL BORRADOR Y CERRAR LA ENCUESTA
+# ==========================================================================
+
+
+class BorradorForm(forms.ModelForm):
+    """La nota que el encuestador se deja a sí mismo antes de irse.
+
+    ----------------------------------------------------------------------
+    POR QUÉ ESTE FORMULARIO EXISTE SI YA TODO SE GUARDA SOLO
+    ----------------------------------------------------------------------
+    Desde la HU-08, cada pantalla guarda lo que se escribió en cuanto se pulsa el
+    botón: no hay ningún dato del censo que se pierda al salir. Entonces, ¿qué
+    guarda esta pantalla?
+
+    Guarda LO QUE NO ES UN CAMPO DEL FORMULARIO: por dónde iba la conversación y
+    cuándo conviene volver. Eso, hoy, vive en la cabeza del encuestador y se pierde
+    al día siguiente. Una encuesta a medias sin nota es una encuesta que hay que
+    reconstruir de memoria o volver a empezar, y cuando pasan cuatro días se vuelve
+    a empezar.
+
+    Es la diferencia entre «los datos están guardados» y «puedo continuar»: la
+    historia pide lo segundo.
+
+    ----------------------------------------------------------------------
+    LA PRÓXIMA VISITA NO PUEDE SER DEL PASADO
+    ----------------------------------------------------------------------
+    Se valida porque una fecha pasada no es una cita, es un olvido: el listado la
+    mostraría como visita vencida el mismo día en que se escribió. Se permite HOY,
+    que es el caso real de «vuelvo esta tarde».
+    """
+
+    class Meta:
+        model = Encuesta
+        fields = ("nota_avance", "proxima_visita")
+        widgets = {
+            "nota_avance": forms.Textarea(
+                attrs={
+                    "class": CLASE_TEXTO,
+                    "rows": 4,
+                    "placeholder": (
+                        "Ej.: falta el módulo de ingresos y los datos del hijo "
+                        "mayor. La señora vuelve del trabajo a las 19:00."
+                    ),
+                }
+            ),
+            "proxima_visita": forms.DateInput(
+                attrs={"class": CLASE_TEXTO, "type": "date"}, format="%Y-%m-%d"
+            ),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["proxima_visita"].input_formats = ["%Y-%m-%d", "%d-%m-%Y"]
+
+    def clean_proxima_visita(self):
+        fecha = self.cleaned_data.get("proxima_visita")
+
+        if fecha is not None and fecha < timezone.localdate():
+            raise forms.ValidationError(
+                "Esa fecha ya pasó. Anota cuándo vas a volver, no cuándo estuviste."
+            )
+
+        return fecha
+
+
+class CerrarSinDatosForm(forms.Form):
+    """Cerrar una encuesta que NO se pudo levantar, dejando constancia.
+
+    ----------------------------------------------------------------------
+    POR QUÉ ESTE NO ES UN ModelForm, Y LOS DOS ANTERIORES SÍ
+    ----------------------------------------------------------------------
+    `ViviendaForm` y `GrupoFamiliarForm` editan los campos de un objeto, y para eso
+    un ModelForm es lo correcto. Este formulario NO edita campos: PIDE UNA
+    TRANSICIÓN de estado, y eso es otra cosa.
+
+    La diferencia no es teórica, se ve al intentarlo: un ModelForm con `estado`
+    entre sus campos ejecuta `Encuesta.clean()` al validar, con el estado nuevo ya
+    puesto y las fechas todavía sin mover. La validación de coherencia de la HU-07
+    —«una encuesta cerrada tiene que tener fecha de cierre»— rechaza esa
+    combinación, y con razón: la fila estaría a medias. Las tres columnas las mueve
+    `cambiar_estado()`, junto y en la vista.
+
+    Es el mismo razonamiento que llevó a que AsignarSectorForm (HU-06) y
+    PermisosRolForm (HU-04) fueran Form y no ModelForm: cuando lo que se envía no
+    es «el contenido de un objeto», el ModelForm estorba en vez de ayudar.
+
+    ----------------------------------------------------------------------
+    POR QUÉ ESTO NO ES UN FRACASO NI UN CASO RARO
+    ----------------------------------------------------------------------
+    La HU-07 lo argumentó al definir los siete estados: «no ubicada» y «rechazada»
+    son RESULTADOS, no fracasos. Si el único final posible fuera COMPLETADA, esas
+    puertas quedarían pendientes para siempre y el avance del operativo mentiría
+    hacia abajo: nadie podría distinguir «faltan 40 por visitar» de «40 no se pueden
+    levantar y ya se sabe».
+
+    Lo que la HU-07 no tenía era DÓNDE escribir el motivo, y por eso esta historia
+    agrega `motivo_cierre` con una restricción que lo exige.
+
+    ----------------------------------------------------------------------
+    EL MOTIVO ES OBLIGATORIO Y CON UN MÍNIMO DE LARGO
+    ----------------------------------------------------------------------
+    La restricción de la base de datos solo exige que no esté vacío, así que un
+    punto la satisfaría. Aquí se exige algo legible, porque el motivo tiene un
+    lector concreto: el supervisor que decide si manda a otra persona a esa
+    dirección o la da por cerrada. «x» no le sirve para decidir; «la dirección no
+    existe, el pasaje llega hasta el 40» sí.
+    """
+
+    #: Largo mínimo del motivo. No es un número mágico: es lo que ocupa una frase
+    #: corta, y menos que eso no explica nada.
+    MOTIVO_MINIMO = 15
+
+    #: Los dos únicos estados que esta pantalla puede producir. Se enumeran a partir
+    #: de ESTADOS_SIN_LEVANTAR y no a mano, para que un tercer resultado de ese tipo
+    #: aparezca aquí solo.
+    estado = forms.ChoiceField(
+        label="¿Qué pasó?",
+        choices=(),  # se arman en __init__ desde ESTADOS_SIN_LEVANTAR
+        widget=forms.RadioSelect,
+    )
+    motivo_cierre = forms.CharField(
+        label="Motivo del cierre",
+        widget=forms.Textarea(
+            attrs={
+                "class": CLASE_TEXTO,
+                "rows": 3,
+                "placeholder": (
+                    "Ej.: la dirección no existe, el pasaje llega hasta el 40. "
+                    "Confirmado con dos vecinos."
+                ),
+            }
+        ),
+        help_text=(
+            "Lo va a leer tu supervisor para decidir si manda a otra persona a esa "
+            "dirección."
+        ),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.fields["estado"].choices = [
+            (valor, EstadoEncuesta(valor).label) for valor in ESTADOS_SIN_LEVANTAR
+        ]
+
+    def clean_motivo_cierre(self):
+        motivo = (self.cleaned_data.get("motivo_cierre") or "").strip()
+
+        if len(motivo) < self.MOTIVO_MINIMO:
+            raise forms.ValidationError(
+                "Explícalo con una frase: quien lea esto tiene que poder decidir si "
+                "manda a otra persona a esa dirección."
+            )
+
+        return motivo
+
+

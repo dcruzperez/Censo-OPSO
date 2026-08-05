@@ -1,0 +1,38 @@
+{% comment %} ==========================================================================
+   FRAGMENTO REUTILIZABLE: lo que falta para terminar una encuesta.
+
+   Uso:
+     {% include "fichas/_pasos_pendientes.html" with pendientes=pendientes encuesta=encuesta %}
+
+   Aparece en tres pantallas —la ficha, el borrador y la de terminar—, y en las tres
+   tiene que decir exactamente lo mismo. Escrito tres veces, bastaría con agregar un
+   cuarto requisito a Encuesta.pasos_pendientes() para que dos pantallas lo pidieran
+   y la tercera dijera que ya está todo listo.
+
+   Cada paso trae su ruta desde el modelo, así que el enlace lleva DIRECTO a la
+   pantalla donde se resuelve. Ese es el motivo por el que pasos_pendientes()
+   devuelve rutas y no textos: «no puedes terminar» obliga a buscar el problema, y
+   «falta describir la vivienda → [ir]» se arregla en un toque.
+   ========================================================================= {% endcomment %}
+{% if pendientes %}
+  <ul class="list-unstyled mb-0">
+    {% for paso in pendientes %}
+      <li class="d-flex align-items-start gap-2 mb-2">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="18" height="18" class="flex-shrink-0 mt-1 text-warning" aria-hidden="true">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" />
+        </svg>
+        <span>
+          {{ paso.texto }}
+          <a href="{% url paso.ruta paso.argumento %}" class="fw-semibold">Ir</a>
+        </span>
+      </li>
+    {% endfor %}
+  </ul>
+{% else %}
+  <div class="d-flex align-items-start gap-2">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="18" height="18" class="flex-shrink-0 mt-1 text-success" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+    <span>No falta nada: la encuesta se puede dar por terminada.</span>
+  </div>
+{% endif %}

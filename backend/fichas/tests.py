@@ -3737,3 +3737,932 @@ class IntegracionHU09Test(BaseIntegranteTest):
         self.assertEqual(self.client.get(self.url_lista).status_code, 404)
 
 
+# ==========================================================================
+# HU-10 — 37. ¿QUÉ FALTA PARA TERMINAR?
+# ==========================================================================
+
+
+class BaseBorradorTest(BaseEncuestaTest):
+    """Escenario común: una encuesta en borrador que se va completando por pasos."""
+
+    def setUp(self):
+        super().setUp()
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
+        self.encuesta = self.crear(estado=EstadoEncuesta.BORRADOR)
+        self.url_borrador = reverse(
+            "fichas:guardar_borrador", kwargs={"pk": self.encuesta.pk}
+        )
+        self.url_completar = reverse(
+            "fichas:completar_encuesta", kwargs={"pk": self.encuesta.pk}
+        )
+        self.url_cerrar = reverse(
+            "fichas:cerrar_encuesta", kwargs={"pk": self.encuesta.pk}
+        )
+
+    def nacido_hace(self, anios):
+        return timezone.localdate() - timedelta(days=anios * 365 + 100)
+
+    def con_hogar(self, declarados=2):
+        return GrupoFamiliar.objects.create(
+            encuesta=self.encuesta,
+            jefe_hogar_nombre="Rosa Elena Millán",
+            integrantes_declarados=declarados,
+        )
+
+    def con_persona(self, hogar, parentesco=Parentesco.JEFE_HOGAR, **extra):
+        datos = {
+            "grupo_familiar": hogar,
+            "parentesco": parentesco,
+            "nombres": "Rosa Elena",
+            "apellidos": "Millán",
+            "sexo": Sexo.FEMENINO,
+            "fecha_nacimiento": self.nacido_hace(40),
+            "nivel_educacional": NivelEducacional.MEDIA_COMPLETA,
+            "situacion_ocupacional": SituacionOcupacional.TRABAJA,
+        }
+        datos.update(extra)
+        return Integrante.objects.create(**datos)
+
+    def completar_todo(self, declarados=1):
+        """Deja la encuesta lista para poder terminarse."""
+        hogar = self.con_hogar(declarados=declarados)
+        self.con_persona(hogar)
+        return hogar
+
+
+class PasosPendientesTest(BaseBorradorTest):
+    def test_una_encuesta_recien_creada_tiene_pasos_pendientes(self):
+        self.assertTrue(self.encuesta.pasos_pendientes())
+        self.assertFalse(self.encuesta.puede_completarse)
+
+    def test_el_primer_paso_es_describir_la_vivienda_si_falta(self):
+        vivienda = Vivienda.objects.create(zona=self.zona1, direccion="Sin describir 1")
+        encuesta = self.crear(vivienda=vivienda, estado=EstadoEncuesta.BORRADOR)
+
+        pasos = encuesta.pasos_pendientes()
+
+        self.assertIn("Describir la vivienda", pasos[0]["texto"])
+
+    def test_con_la_vivienda_descrita_el_paso_es_el_hogar(self):
+        pasos = self.encuesta.pasos_pendientes()
+
+        self.assertEqual(len(pasos), 1)
+        self.assertIn("hogar", pasos[0]["texto"])
+
+    def test_sin_hogar_no_se_listan_pasos_de_personas(self):
+        """Tres pasos que dicen lo mismo no ayudan: se corta en el que bloquea."""
+        pasos = self.encuesta.pasos_pendientes()
+
+        self.assertEqual(len(pasos), 1)
+
+    def test_con_hogar_sin_jefe_pide_el_jefe(self):
+        hogar = self.con_hogar()
+        self.con_persona(hogar, parentesco=Parentesco.HIJO, nombres="Hija")
+
+        textos = [p["texto"] for p in self.encuesta.pasos_pendientes()]
+
+        self.assertTrue(any("jefe de hogar" in t for t in textos))
+
+    def test_con_personas_faltantes_dice_cuantas(self):
+        hogar = self.con_hogar(declarados=4)
+        self.con_persona(hogar)
+
+        textos = [p["texto"] for p in self.encuesta.pasos_pendientes()]
+
+        self.assertTrue(any("3 personas" in t for t in textos))
+
+    def test_con_todo_registrado_no_falta_nada(self):
+        self.completar_todo()
+
+        self.assertEqual(self.encuesta.pasos_pendientes(), [])
+        self.assertTrue(self.encuesta.puede_completarse)
+
+    def test_cada_paso_trae_su_ruta_y_su_argumento(self):
+        """Es lo que permite enlazar «Ir» en vez de decir «no puedes»."""
+        for paso in self.encuesta.pasos_pendientes():
+            with self.subTest(paso=paso["texto"]):
+                self.assertIn("ruta", paso)
+                self.assertIsNotNone(paso["argumento"])
+                # La ruta tiene que existir de verdad.
+                reverse(paso["ruta"], args=[paso["argumento"]])
+
+    def test_registrar_mas_personas_de_las_declaradas_no_deja_pasos(self):
+        hogar = self.con_hogar(declarados=1)
+        self.con_persona(hogar)
+        self.con_persona(hogar, parentesco=Parentesco.HIJO, nombres="Extra")
+
+        self.assertTrue(self.encuesta.puede_completarse)
+
+    def test_puede_completarse_no_mira_el_estado(self):
+        """Datos completos y encuesta cerrada son preguntas distintas."""
+        self.completar_todo()
+        self.encuesta.cambiar_estado(EstadoEncuesta.VALIDADA)
+
+        self.assertTrue(self.encuesta.puede_completarse)
+        permitido, _ = self.encuesta.puede_registrarse()
+        self.assertFalse(permitido)
+
+
+class VisitaVencidaTest(BaseBorradorTest):
+    def test_sin_fecha_anotada_no_hay_visita_vencida(self):
+        self.assertFalse(self.encuesta.visita_pendiente_vencida)
+
+    def test_una_fecha_futura_no_esta_vencida(self):
+        self.encuesta.proxima_visita = timezone.localdate() + timedelta(days=2)
+
+        self.assertFalse(self.encuesta.visita_pendiente_vencida)
+
+    def test_la_fecha_de_hoy_ya_cuenta_como_vencida(self):
+        """«Vuelvo esta tarde» tiene que aparecer en la lista de hoy."""
+        self.encuesta.proxima_visita = timezone.localdate()
+
+        self.assertTrue(self.encuesta.visita_pendiente_vencida)
+
+    def test_una_fecha_pasada_esta_vencida(self):
+        self.encuesta.proxima_visita = timezone.localdate() - timedelta(days=3)
+
+        self.assertTrue(self.encuesta.visita_pendiente_vencida)
+
+    def test_una_encuesta_cerrada_no_avisa_de_visitas(self):
+        """Ya no espera a nadie: seguir avisando sería ruido."""
+        self.completar_todo()
+        self.encuesta.proxima_visita = timezone.localdate() - timedelta(days=3)
+        self.encuesta.cambiar_estado(EstadoEncuesta.COMPLETADA)
+
+        self.assertFalse(self.encuesta.visita_pendiente_vencida)
+
+
+# ==========================================================================
+# HU-10 — 38. LA RESTRICCIÓN DEL MOTIVO DE CIERRE
+# ==========================================================================
+
+
+class MotivoDeCierreTest(BaseBorradorTest):
+    def test_cerrar_sin_levantar_exige_motivo(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Encuesta.objects.create(
+                    vivienda=self.crear_vivienda(direccion="Otra 1"),
+                    censista=self.marta,
+                    estado=EstadoEncuesta.NO_UBICADA,
+                    iniciada_en=timezone.now(),
+                    cerrada_en=timezone.now(),
+                    motivo_cierre="",
+                )
+
+    def test_con_motivo_si_se_puede_guardar(self):
+        encuesta = Encuesta.objects.create(
+            vivienda=self.crear_vivienda(direccion="Otra 1"),
+            censista=self.marta,
+            estado=EstadoEncuesta.NO_UBICADA,
+            iniciada_en=timezone.now(),
+            cerrada_en=timezone.now(),
+            motivo_cierre="La dirección no existe.",
+        )
+
+        self.assertEqual(encuesta.estado, EstadoEncuesta.NO_UBICADA)
+
+    def test_los_demas_estados_no_exigen_motivo(self):
+        """Solo NO_UBICADA y RECHAZADA: una completada no necesita explicación."""
+        for estado in (
+            EstadoEncuesta.PENDIENTE,
+            EstadoEncuesta.BORRADOR,
+            EstadoEncuesta.COMPLETADA,
+            EstadoEncuesta.VALIDADA,
+            EstadoEncuesta.OBSERVADA,
+        ):
+            with self.subTest(estado=estado):
+                encuesta = self.crear(direccion=f"Calle {estado}", estado=estado)
+                self.assertEqual(encuesta.motivo_cierre, "")
+
+    def test_rechazada_tambien_exige_motivo(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Encuesta.objects.create(
+                    vivienda=self.crear_vivienda(direccion="Otra 2"),
+                    censista=self.marta,
+                    estado=EstadoEncuesta.RECHAZADA,
+                    iniciada_en=timezone.now(),
+                    cerrada_en=timezone.now(),
+                )
+
+
+# ==========================================================================
+# HU-10 — 39. LOS FORMULARIOS
+# ==========================================================================
+
+
+class BorradorFormTest(BaseBorradorTest):
+    def test_los_dos_campos_son_opcionales(self):
+        """Guardar el borrador sin escribir nada no es un error."""
+        formulario = BorradorForm(
+            {"nota_avance": "", "proxima_visita": ""}, instance=self.encuesta
+        )
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_guarda_la_nota(self):
+        formulario = BorradorForm(
+            {"nota_avance": "Falta el módulo de ingresos.", "proxima_visita": ""},
+            instance=self.encuesta,
+        )
+        formulario.is_valid()
+        formulario.save()
+
+        self.encuesta.refresh_from_db()
+        self.assertIn("ingresos", self.encuesta.nota_avance)
+
+    def test_acepta_una_fecha_futura(self):
+        manana = (timezone.localdate() + timedelta(days=1)).isoformat()
+
+        formulario = BorradorForm(
+            {"nota_avance": "", "proxima_visita": manana}, instance=self.encuesta
+        )
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_acepta_hoy(self):
+        """«Vuelvo esta tarde» es un caso real."""
+        formulario = BorradorForm(
+            {"nota_avance": "", "proxima_visita": timezone.localdate().isoformat()},
+        )
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_rechaza_una_fecha_pasada(self):
+        """Una fecha pasada no es una cita, es un olvido."""
+        ayer = (timezone.localdate() - timedelta(days=1)).isoformat()
+
+        formulario = BorradorForm(
+            {"nota_avance": "", "proxima_visita": ayer}, instance=self.encuesta
+        )
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("proxima_visita", formulario.errors)
+
+
+class CerrarSinDatosFormTest(BaseBorradorTest):
+    def test_solo_ofrece_los_dos_estados_sin_levantar(self):
+        formulario = CerrarSinDatosForm()
+        valores = [valor for valor, _ in formulario.fields["estado"].choices]
+
+        self.assertEqual(set(valores), set(ESTADOS_SIN_LEVANTAR))
+
+    def test_no_ofrece_completada_ni_validada(self):
+        """Esta pantalla no es un atajo para terminar la encuesta."""
+        formulario = CerrarSinDatosForm()
+        valores = [valor for valor, _ in formulario.fields["estado"].choices]
+
+        self.assertNotIn(EstadoEncuesta.COMPLETADA, valores)
+        self.assertNotIn(EstadoEncuesta.VALIDADA, valores)
+
+    def test_un_motivo_completo_es_valido(self):
+        formulario = CerrarSinDatosForm(
+            {
+                "estado": EstadoEncuesta.NO_UBICADA,
+                "motivo_cierre": "La dirección no existe, el pasaje llega hasta el 40.",
+            },
+        )
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_el_motivo_es_obligatorio(self):
+        formulario = CerrarSinDatosForm(
+            {"estado": EstadoEncuesta.NO_UBICADA, "motivo_cierre": ""},
+        )
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("motivo_cierre", formulario.errors)
+
+    def test_un_motivo_de_una_letra_no_sirve(self):
+        """La restricción de la base solo exige no vacío; el lector exige legible."""
+        formulario = CerrarSinDatosForm(
+            {"estado": EstadoEncuesta.NO_UBICADA, "motivo_cierre": "x"},
+        )
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("motivo_cierre", formulario.errors)
+
+    def test_el_estado_es_obligatorio(self):
+        formulario = CerrarSinDatosForm(
+            {"estado": "", "motivo_cierre": "La dirección no existe en el pasaje."},
+        )
+
+        self.assertFalse(formulario.is_valid())
+
+
+# ==========================================================================
+# HU-10 — 40. GUARDAR EL BORRADOR
+# ==========================================================================
+
+
+class GuardarBorradorTest(BaseBorradorTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.marta)
+
+    def datos(self, **extra):
+        base = {"nota_avance": "Falta el módulo de ingresos.", "proxima_visita": ""}
+        base.update(extra)
+        return base
+
+    def test_muestra_el_formulario(self):
+        respuesta = self.client.get(self.url_borrador)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "Guardar para continuar")
+
+    def test_explica_que_los_datos_ya_estaban_guardados(self):
+        """Es el malentendido que la pantalla existe para evitar."""
+        respuesta = self.client.get(self.url_borrador)
+
+        self.assertContains(respuesta, "ya escribiste está guardado")
+
+    def test_muestra_lo_que_falta(self):
+        respuesta = self.client.get(self.url_borrador)
+
+        self.assertContains(respuesta, "Lo que falta en esta encuesta")
+
+    def test_guarda_la_nota(self):
+        self.client.post(self.url_borrador, self.datos())
+
+        self.encuesta.refresh_from_db()
+        self.assertIn("ingresos", self.encuesta.nota_avance)
+
+    def test_guarda_la_proxima_visita(self):
+        manana = timezone.localdate() + timedelta(days=1)
+
+        self.client.post(self.url_borrador, self.datos(proxima_visita=manana.isoformat()))
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.proxima_visita, manana)
+
+    def test_el_mensaje_dice_cuando_hay_que_volver(self):
+        manana = timezone.localdate() + timedelta(days=1)
+
+        respuesta = self.client.post(
+            self.url_borrador, self.datos(proxima_visita=manana.isoformat()), follow=True
+        )
+        mensajes = [str(m) for m in respuesta.context["messages"]]
+
+        self.assertTrue(any("volver el" in m for m in mensajes))
+
+    def test_una_pendiente_pasa_a_borrador(self):
+        """Dejar una nota implica haber estado ahí: «pendiente» ya no es verdad."""
+        pendiente = self.crear(direccion="Calle 2")
+        url = reverse("fichas:guardar_borrador", kwargs={"pk": pendiente.pk})
+
+        self.client.post(url, self.datos())
+
+        pendiente.refresh_from_db()
+        self.assertEqual(pendiente.estado, EstadoEncuesta.BORRADOR)
+
+    def test_una_observada_sigue_observada(self):
+        """Bajarla a borrador borraría el aviso más urgente del encuestador."""
+        self.devolver(self.encuesta)
+
+        self.client.post(self.url_borrador, self.datos())
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.OBSERVADA)
+
+    def test_una_fecha_pasada_no_se_guarda(self):
+        ayer = (timezone.localdate() - timedelta(days=1)).isoformat()
+
+        self.client.post(self.url_borrador, self.datos(proxima_visita=ayer))
+
+        self.encuesta.refresh_from_db()
+        self.assertIsNone(self.encuesta.proxima_visita)
+
+    def test_la_encuesta_de_otra_persona_responde_404(self):
+        ajena = self.crear(direccion="De Juan", censista=self.juan)
+
+        respuesta = self.client.post(
+            reverse("fichas:guardar_borrador", kwargs={"pk": ajena.pk}), self.datos()
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_una_encuesta_cerrada_no_admite_nota(self):
+        self.completar_todo()
+        self.encuesta.cambiar_estado(EstadoEncuesta.VALIDADA)
+
+        self.client.post(self.url_borrador, self.datos())
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.nota_avance, "")
+
+    def test_muestra_aparte_las_indicaciones_recibidas(self):
+        """Dos campos distintos desde la HU-10, para que no se pisen."""
+        self.encuesta.observaciones = "Pasar después de las 19:00."
+        self.encuesta.save()
+
+        respuesta = self.client.get(self.url_borrador)
+
+        self.assertContains(respuesta, "Indicaciones que tienes")
+        self.assertContains(respuesta, "después de las 19:00")
+
+
+# ==========================================================================
+# HU-10 — 41. TERMINAR LA ENCUESTA
+# ==========================================================================
+
+
+class CompletarEncuestaTest(BaseBorradorTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.marta)
+
+    def test_con_pasos_pendientes_muestra_la_lista(self):
+        respuesta = self.client.get(self.url_completar)
+
+        self.assertContains(respuesta, "Todavía no se puede terminar")
+        self.assertContains(respuesta, "Falta esto por registrar")
+
+    def test_con_pasos_pendientes_no_ofrece_el_boton(self):
+        respuesta = self.client.get(self.url_completar)
+
+        self.assertNotContains(respuesta, "terminar y enviar a revisión")
+
+    def test_con_pasos_pendientes_el_post_no_la_completa(self):
+        """Ocultar el botón no es una validación: la URL se escribe a mano."""
+        self.client.post(self.url_completar)
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.BORRADOR)
+
+    def test_el_post_rechazado_explica_que_falta(self):
+        respuesta = self.client.post(self.url_completar, follow=True)
+        mensajes = [str(m) for m in respuesta.context["messages"]]
+
+        self.assertTrue(any("falta" in m.lower() for m in mensajes))
+
+    def test_completa_cuando_no_falta_nada(self):
+        self.completar_todo()
+
+        self.client.post(self.url_completar)
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.COMPLETADA)
+
+    def test_al_completar_se_marca_la_fecha_de_cierre(self):
+        self.completar_todo()
+
+        self.client.post(self.url_completar)
+
+        self.encuesta.refresh_from_db()
+        self.assertIsNotNone(self.encuesta.cerrada_en)
+
+    def test_despues_de_completar_vuelve_al_listado(self):
+        self.completar_todo()
+
+        respuesta = self.client.post(self.url_completar)
+
+        self.assertRedirects(respuesta, reverse("fichas:mis_encuestas"))
+
+    def test_el_mensaje_dice_que_va_a_revision(self):
+        self.completar_todo()
+
+        respuesta = self.client.post(self.url_completar, follow=True)
+        mensajes = [str(m) for m in respuesta.context["messages"]]
+
+        self.assertTrue(any("revisión" in m for m in mensajes))
+
+    def test_muestra_el_resumen_antes_de_enviar(self):
+        """Última oportunidad de ver un dato mal escrito."""
+        self.completar_todo()
+
+        respuesta = self.client.get(self.url_completar)
+
+        self.assertContains(respuesta, "Rosa Elena Millán")
+        self.assertContains(respuesta, "La vivienda")
+        self.assertContains(respuesta, "Las personas")
+
+    def test_avisa_de_que_despues_no_se_puede_modificar(self):
+        self.completar_todo()
+
+        respuesta = self.client.get(self.url_completar)
+
+        self.assertContains(respuesta, "ya no podrás modificarla")
+
+    def test_una_completada_no_la_puede_reabrir_el_encuestador(self):
+        """El camino de vuelta es del supervisor: devolverla como observada."""
+        self.completar_todo()
+        self.encuesta.cambiar_estado(EstadoEncuesta.COMPLETADA)
+
+        respuesta = self.client.get(self.url_completar)
+
+        self.assertRedirects(respuesta, self.url_detalle(self.encuesta))
+
+    def test_una_observada_si_se_puede_volver_a_completar(self):
+        """Es justamente para lo que existe ese estado."""
+        self.completar_todo()
+        self.devolver(self.encuesta)
+
+        self.client.post(self.url_completar)
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.COMPLETADA)
+
+    def test_la_encuesta_de_otra_persona_responde_404(self):
+        ajena = self.crear(direccion="De Juan", censista=self.juan)
+
+        respuesta = self.client.post(
+            reverse("fichas:completar_encuesta", kwargs={"pk": ajena.pk})
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_el_supervisor_no_puede_completar_encuestas(self):
+        self.completar_todo()
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.post(self.url_completar)
+
+        self.assertEqual(respuesta.status_code, 302)
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.BORRADOR)
+
+    def test_con_el_operativo_cerrado_no_se_puede_completar(self):
+        self.completar_todo()
+        self.operativo.estado = EstadoOperativo.CERRADO
+        self.operativo.save()
+
+        self.client.post(self.url_completar)
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.BORRADOR)
+
+
+# ==========================================================================
+# HU-10 — 42. CERRAR SIN PODER LEVANTAR
+# ==========================================================================
+
+
+class CerrarSinDatosTest(BaseBorradorTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.marta)
+
+    def datos(self, **extra):
+        base = {
+            "estado": EstadoEncuesta.NO_UBICADA,
+            "motivo_cierre": "La dirección no existe, el pasaje llega hasta el 40.",
+        }
+        base.update(extra)
+        return base
+
+    def test_muestra_el_formulario(self):
+        respuesta = self.client.get(self.url_cerrar)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "Cerrar sin levantar")
+
+    def test_explica_que_no_es_un_fracaso(self):
+        respuesta = self.client.get(self.url_cerrar)
+
+        self.assertContains(respuesta, "no es un fracaso, es un resultado")
+
+    def test_cierra_como_no_ubicada(self):
+        self.client.post(self.url_cerrar, self.datos())
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.NO_UBICADA)
+
+    def test_cierra_como_rechazada(self):
+        self.client.post(
+            self.url_cerrar, self.datos(estado=EstadoEncuesta.RECHAZADA)
+        )
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.RECHAZADA)
+
+    def test_guarda_el_motivo(self):
+        self.client.post(self.url_cerrar, self.datos())
+
+        self.encuesta.refresh_from_db()
+        self.assertIn("no existe", self.encuesta.motivo_cierre)
+
+    def test_marca_las_dos_fechas(self):
+        self.client.post(self.url_cerrar, self.datos())
+
+        self.encuesta.refresh_from_db()
+        self.assertIsNotNone(self.encuesta.iniciada_en)
+        self.assertIsNotNone(self.encuesta.cerrada_en)
+
+    def test_borra_la_proxima_visita(self):
+        """Ya no espera a nadie: seguir avisando sería ruido."""
+        self.encuesta.proxima_visita = timezone.localdate() + timedelta(days=2)
+        self.encuesta.save()
+
+        self.client.post(self.url_cerrar, self.datos())
+
+        self.encuesta.refresh_from_db()
+        self.assertIsNone(self.encuesta.proxima_visita)
+
+    def test_sin_motivo_no_cierra(self):
+        self.client.post(self.url_cerrar, self.datos(motivo_cierre=""))
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.BORRADOR)
+
+    def test_con_un_motivo_de_una_letra_no_cierra(self):
+        self.client.post(self.url_cerrar, self.datos(motivo_cierre="x"))
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.BORRADOR)
+
+    def test_se_puede_cerrar_una_pendiente_sin_nada_registrado(self):
+        """Es el caso más frecuente: se llega, no hay nadie, se cierra."""
+        pendiente = self.crear(direccion="Calle 2")
+        url = reverse("fichas:cerrar_encuesta", kwargs={"pk": pendiente.pk})
+
+        self.client.post(url, self.datos())
+
+        pendiente.refresh_from_db()
+        self.assertEqual(pendiente.estado, EstadoEncuesta.NO_UBICADA)
+
+    def test_avisa_si_ya_habia_datos_del_hogar(self):
+        self.con_hogar()
+
+        respuesta = self.client.get(self.url_cerrar)
+
+        self.assertContains(respuesta, "ya tiene datos registrados")
+
+    def test_cerrar_con_datos_conserva_el_hogar(self):
+        """Si la familia se arrepintió a mitad, lo levantado no se tira."""
+        hogar = self.con_hogar()
+
+        self.client.post(self.url_cerrar, self.datos(estado=EstadoEncuesta.RECHAZADA))
+
+        self.assertTrue(GrupoFamiliar.objects.filter(pk=hogar.pk).exists())
+
+    def test_vuelve_al_listado(self):
+        respuesta = self.client.post(self.url_cerrar, self.datos())
+
+        self.assertRedirects(respuesta, reverse("fichas:mis_encuestas"))
+
+    def test_la_encuesta_de_otra_persona_responde_404(self):
+        ajena = self.crear(direccion="De Juan", censista=self.juan)
+
+        respuesta = self.client.post(
+            reverse("fichas:cerrar_encuesta", kwargs={"pk": ajena.pk}), self.datos()
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_una_ya_cerrada_no_se_puede_volver_a_cerrar(self):
+        self.encuesta.motivo_cierre = "Motivo anterior que no se debe pisar."
+        self.encuesta.save()
+        self.encuesta.cambiar_estado(EstadoEncuesta.RECHAZADA)
+
+        self.client.post(self.url_cerrar, self.datos())
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.RECHAZADA)
+        self.assertIn("anterior", self.encuesta.motivo_cierre)
+
+
+# ==========================================================================
+# HU-10 — 43. LO QUE GANAN LAS PANTALLAS ANTERIORES
+# ==========================================================================
+
+
+class BorradorEnLasPantallasTest(BaseBorradorTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.marta)
+
+    def test_la_ficha_muestra_la_nota_de_avance(self):
+        self.encuesta.nota_avance = "Falta el módulo de ingresos."
+        self.encuesta.save()
+
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertContains(respuesta, "Por dónde ibas")
+        self.assertContains(respuesta, "módulo de ingresos")
+
+    def test_la_ficha_avisa_de_una_visita_vencida(self):
+        self.encuesta.proxima_visita = timezone.localdate() - timedelta(days=2)
+        self.encuesta.save()
+
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertContains(respuesta, "esa fecha ya pasó")
+
+    def test_la_ficha_muestra_el_motivo_del_cierre(self):
+        self.encuesta.motivo_cierre = "La dirección no existe en ese pasaje."
+        self.encuesta.save()
+        self.encuesta.cambiar_estado(EstadoEncuesta.NO_UBICADA)
+
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertContains(respuesta, "no existe en ese pasaje")
+
+    def test_la_ficha_ofrece_terminar_cuando_esta_completa(self):
+        self.completar_todo()
+
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertContains(respuesta, "Terminar y enviar a revisión")
+
+    def test_la_ficha_ofrece_ver_que_falta_cuando_no_lo_esta(self):
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertContains(respuesta, "Ver qué falta para terminar")
+
+    def test_la_ficha_ofrece_las_tres_salidas(self):
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertContains(respuesta, self.url_borrador)
+        self.assertContains(respuesta, self.url_completar)
+        self.assertContains(respuesta, self.url_cerrar)
+
+    def test_una_encuesta_cerrada_no_ofrece_ninguna(self):
+        self.completar_todo()
+        self.encuesta.cambiar_estado(EstadoEncuesta.VALIDADA)
+
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertNotContains(respuesta, self.url_cerrar)
+
+    def test_el_listado_cuenta_las_visitas_vencidas(self):
+        self.encuesta.proxima_visita = timezone.localdate() - timedelta(days=1)
+        self.encuesta.save()
+
+        respuesta = self.client.get(self.url_lista)
+
+        self.assertEqual(respuesta.context["resumen"]["visitas_vencidas"], 1)
+        self.assertContains(respuesta, "visita anotada")
+
+    def test_una_visita_futura_no_cuenta_como_vencida(self):
+        self.encuesta.proxima_visita = timezone.localdate() + timedelta(days=5)
+        self.encuesta.save()
+
+        respuesta = self.client.get(self.url_lista)
+
+        self.assertEqual(respuesta.context["resumen"]["visitas_vencidas"], 0)
+
+    def test_el_listado_muestra_la_fecha_de_la_visita(self):
+        self.encuesta.proxima_visita = timezone.localdate() + timedelta(days=5)
+        self.encuesta.save()
+
+        respuesta = self.client.get(self.url_lista)
+
+        self.assertContains(respuesta, "volver el")
+
+    def test_las_visitas_de_encuestas_cerradas_no_se_cuentan(self):
+        self.completar_todo()
+        self.encuesta.proxima_visita = timezone.localdate() - timedelta(days=1)
+        self.encuesta.save()
+        self.encuesta.cambiar_estado(EstadoEncuesta.COMPLETADA)
+
+        respuesta = self.client.get(self.url_lista)
+
+        self.assertEqual(respuesta.context["resumen"]["visitas_vencidas"], 0)
+
+
+# ==========================================================================
+# HU-10 — 44. RECORRIDO COMPLETO DEL CICLO DE VIDA
+# ==========================================================================
+
+
+class IntegracionHU10Test(BaseEncuestaTest):
+    """De la vivienda registrada al envío a revisión, pasando por el borrador."""
+
+    def setUp(self):
+        super().setUp()
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
+        self.client.force_login(self.marta)
+
+    def nacido_hace(self, anios):
+        return timezone.localdate() - timedelta(days=anios * 365 + 100)
+
+    def test_recorrido_completo(self):
+        # 1. Se registra la vivienda: la encuesta nace en BORRADOR.
+        self.client.post(
+            reverse("fichas:vivienda_registrar"),
+            {
+                "zona": self.zona1.pk,
+                "direccion": "Av. Central 100",
+                "referencia": "",
+                "tipo": TipoVivienda.CASA,
+                "tenencia": TenenciaVivienda.ARRENDADA,
+                "materialidad_muros": MaterialidadMuros.ALBANILERIA,
+                "origen_agua": OrigenAgua.RED_PUBLICA,
+                "sistema_sanitario": SistemaSanitario.ALCANTARILLADO,
+                "tiene_electricidad": True,
+                "observaciones": "",
+            },
+        )
+        encuesta = Encuesta.objects.get()
+        self.assertEqual(encuesta.estado, EstadoEncuesta.BORRADOR)
+
+        # 2. Todavía no se puede terminar: falta el hogar.
+        respuesta = self.client.get(
+            reverse("fichas:completar_encuesta", kwargs={"pk": encuesta.pk})
+        )
+        self.assertContains(respuesta, "Todavía no se puede terminar")
+
+        # 3. Se registra el hogar de dos personas.
+        self.client.post(
+            reverse("fichas:registrar_hogar", kwargs={"pk": encuesta.pk}),
+            {
+                "jefe_hogar_nombre": "Rosa Elena Millán",
+                "jefe_hogar_rut": "",
+                "telefono_contacto": "",
+                "integrantes_declarados": 2,
+                "ingreso_mensual": "",
+                "observaciones": "",
+            },
+        )
+
+        # 4. Se hace de noche: se guarda el borrador con una nota y fecha de vuelta.
+        manana = timezone.localdate() + timedelta(days=1)
+        self.client.post(
+            reverse("fichas:guardar_borrador", kwargs={"pk": encuesta.pk}),
+            {
+                "nota_avance": "Falta registrar a las dos personas del hogar.",
+                "proxima_visita": manana.isoformat(),
+            },
+        )
+        encuesta.refresh_from_db()
+        self.assertEqual(encuesta.proxima_visita, manana)
+
+        # 5. Al día siguiente, la nota está a la vista en la ficha.
+        respuesta = self.client.get(
+            reverse("fichas:encuesta_detalle", kwargs={"pk": encuesta.pk})
+        )
+        self.assertContains(respuesta, "Falta registrar a las dos personas")
+
+        # 6. Se registran las dos personas.
+        for numero, (parentesco, nombres) in enumerate(
+            [(Parentesco.JEFE_HOGAR, "Rosa Elena"), (Parentesco.HIJO, "Camila")]
+        ):
+            self.client.post(
+                reverse("fichas:integrante_nuevo", kwargs={"encuesta_pk": encuesta.pk}),
+                {
+                    "parentesco": parentesco,
+                    "nombres": nombres,
+                    "apellidos": "Millán",
+                    "rut": "",
+                    "sexo": Sexo.FEMENINO,
+                    "fecha_nacimiento": self.nacido_hace(40 - numero * 20).isoformat(),
+                    "nivel_educacional": NivelEducacional.MEDIA_COMPLETA,
+                    "situacion_ocupacional": SituacionOcupacional.TRABAJA,
+                    "pueblo_originario": PuebloOriginario.NINGUNO,
+                    "observaciones": "",
+                },
+            )
+
+        # 7. Ahora sí se puede terminar, y la pantalla muestra el resumen.
+        encuesta.refresh_from_db()
+        self.assertTrue(encuesta.puede_completarse)
+        respuesta = self.client.get(
+            reverse("fichas:completar_encuesta", kwargs={"pk": encuesta.pk})
+        )
+        self.assertContains(respuesta, "Rosa Elena Millán")
+
+        # 8. Se envía a revisión.
+        self.client.post(
+            reverse("fichas:completar_encuesta", kwargs={"pk": encuesta.pk})
+        )
+        encuesta.refresh_from_db()
+        self.assertEqual(encuesta.estado, EstadoEncuesta.COMPLETADA)
+        self.assertIsNotNone(encuesta.cerrada_en)
+
+        # 9. Y ya no se puede modificar: el camino de vuelta es del supervisor.
+        respuesta = self.client.get(
+            reverse("fichas:guardar_borrador", kwargs={"pk": encuesta.pk})
+        )
+        self.assertEqual(respuesta.status_code, 302)
+
+        # 10. El listado lo refleja: una completada y ninguna por trabajar.
+        respuesta = self.client.get(self.url_lista)
+        self.assertEqual(respuesta.context["resumen"]["completadas"], 1)
+        self.assertEqual(respuesta.context["resumen"]["por_trabajar"], 0)
+
+    def test_recorrido_de_una_puerta_que_no_se_pudo(self):
+        """El otro final posible, y el que la HU-07 dejó sin motivo dónde escribir."""
+        encuesta = self.crear(direccion="Calle El Canelo 302")
+
+        self.client.post(
+            reverse("fichas:cerrar_encuesta", kwargs={"pk": encuesta.pk}),
+            {
+                "estado": EstadoEncuesta.NO_UBICADA,
+                "motivo_cierre": (
+                    "La vivienda está deshabitada desde hace meses según dos vecinos."
+                ),
+            },
+        )
+
+        encuesta.refresh_from_db()
+        self.assertEqual(encuesta.estado, EstadoEncuesta.NO_UBICADA)
+        self.assertIn("deshabitada", encuesta.motivo_cierre)
+        self.assertFalse(encuesta.requiere_trabajo)
+
+        # Y el motivo se lee en la ficha, que es lo que necesita el supervisor.
+        respuesta = self.client.get(self.url_detalle(encuesta))
+        self.assertContains(respuesta, "deshabitada")
+
+

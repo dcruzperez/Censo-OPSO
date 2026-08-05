@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   CERRAR SIN PODER LEVANTAR — /encuestas/<pk>/cerrar/
+
+   Produce «no ubicada» o «rechazada», que la HU-07 definió como RESULTADOS y no
+   como fracasos: sin ellos, una dirección que no existe quedaría pendiente para
+   siempre y el avance del operativo mentiría hacia abajo.
+
+   Lo que agrega la HU-10 es el MOTIVO, y la pantalla insiste en él porque tiene un
+   lector concreto: el supervisor que decide si manda a otra persona a esa dirección
+   o la da por cerrada. «x» no le sirve para decidir; «la dirección no existe, el
+   pasaje llega hasta el 40» sí. La restricción de la base de datos exige que no
+   esté vacío y el formulario exige además que sea legible.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Cerrar {{ encuesta.direccion }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'fichas:mis_encuestas' %}">Mis encuestas</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}">{{ encuesta.direccion }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Cerrar</li>
+  </ol>
+</nav>
+
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+    Cerrar sin levantar la información
+  </h1>
+  <p class="text-secondary mb-0">
+    {{ encuesta.direccion }} · {{ encuesta.zona.nombre }} ·
+    {{ encuesta.zona.sector.nombre }}
+  </p>
+</div>
+
+<div class="alert alert-secondary small d-flex gap-2" role="alert">
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+  </svg>
+  <div>
+    <strong>Esto no es un fracaso, es un resultado.</strong> Una dirección que no
+    existe o una familia que no quiere participar tienen que quedar cerradas: si no,
+    el operativo las cuenta para siempre como trabajo pendiente.
+  </div>
+</div>
+
+{% if form.non_field_errors %}
+  <div class="alert alert-danger small" role="alert">
+    {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+  </div>
+{% endif %}
+
+<form method="post" novalidate>
+  {% csrf_token %}
+
+  <div class="card-opso p-4 mb-3">
+    <h2 class="h6 fw-semibold mb-3">{{ form.estado.label }}</h2>
+
+    {% comment %} Botones de radio y no un desplegable: son dos opciones, y con radios
+       las dos se leen a la vez sin desplegar nada, que en un teléfono con una mano
+       es un toque menos. {% endcomment %}
+    {% for opcion in form.estado %}
+      <div class="form-check mb-2">
+        {{ opcion.tag }}
+        <label class="form-check-label" for="{{ opcion.id_for_label }}">
+          {{ opcion.choice_label }}
+          {% if opcion.data.value == "NO_UBICADA" %}
+            <div class="text-secondary small">
+              La dirección no existe, la vivienda está deshabitada o no se pudo
+              encontrar.
+            </div>
+          {% else %}
+            <div class="text-secondary small">
+              Se encontró a la familia y no quiso participar.
+            </div>
+          {% endif %}
+        </label>
+      </div>
+    {% endfor %}
+
+    {% for error in form.estado.errors %}
+      <div class="text-danger small mt-1">{{ error }}</div>
+    {% endfor %}
+  </div>
+
+  <div class="card-opso p-4 mb-3">
+    <div class="row g-3">
+      {% include "usuarios/gestion/_campo.html" with campo=form.motivo_cierre ancho="col-12" %}
+    </div>
+    <p class="text-secondary small mb-0 mt-2">
+      Lo va a leer tu supervisor para decidir si manda a otra persona a esa
+      dirección. Una frase basta, pero que se entienda.
+    </p>
+  </div>
+
+  {% if encuesta.tiene_grupo_familiar %}
+    {% comment %} Caso poco frecuente y desagradable de descubrir después: se levantó
+       algo y ahora se cierra sin datos. No se bloquea —puede ser correcto, si la
+       familia se arrepintió a mitad— pero se avisa de que eso queda guardado.
+       {% endcomment %}
+    <div class="alert alert-warning small" role="alert">
+      Esta encuesta ya tiene datos registrados del hogar de
+      <strong>{{ encuesta.grupo_familiar.jefe_hogar_nombre }}</strong>. Al cerrarla
+      así, esos datos se conservan pero la ficha queda marcada como no levantada.
+      Si la familia se arrepintió a mitad de la encuesta, es lo correcto.
+    </div>
+  {% endif %}
+
+  <div class="d-flex gap-2 flex-wrap">
+    <button type="submit" class="btn btn-danger">Cerrar la encuesta</button>
+    <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}" class="btn btn-outline-secondary">
+      Cancelar
+    </a>
+  </div>
+</form>
+
+{% endblock %}

@@ -1181,3 +1181,278 @@ class QuitarIntegranteView(HogarDeLaEncuestaMixin, View):
         return redirect("fichas:integrantes", encuesta_pk=self.encuesta.pk)
 
 
+# ==========================================================================
+# HU-10 — EL BORRADOR Y EL CIERRE DE LA ENCUESTA
+# ==========================================================================
+
+
+class EncuestaPropiaMixin(RegistroEnTerrenoMixin):
+    """Base de las tres pantallas del borrador.
+
+    Igual que HogarDeLaEncuestaMixin en la HU-09, pero sin exigir que el hogar
+    exista: se puede guardar una nota de avance —o cerrar por no ubicada— en una
+    encuesta a la que todavía no se le ha registrado nada. De hecho es el caso más
+    frecuente de «no ubicada»: se llega, no hay nadie, se cierra.
+    """
+
+    @cached_property
+    def encuesta(self):
+        return get_object_or_404(
+            Encuesta.objects.select_related(
+                "vivienda", "vivienda__zona", "vivienda__zona__sector", "grupo_familiar"
+            ),
+            pk=self.kwargs["pk"],
+            censista=self.request.user,
+        )
+
+    def comprobar_abierta(self):
+        permitido, motivo = self.encuesta.puede_registrarse()
+
+        if permitido:
+            return None
+
+        messages.error(self.request, motivo)
+        return redirect("fichas:encuesta_detalle", pk=self.encuesta.pk)
+
+
+class GuardarBorradorView(EncuestaPropiaMixin, View):
+    """Deja anotado por dónde iba la encuesta y cuándo volver.
+
+    URL: /encuestas/<pk>/borrador/
+
+    ----------------------------------------------------------------------
+    ¿QUÉ GUARDA, SI TODO SE GUARDABA YA?
+    ----------------------------------------------------------------------
+    Los datos del censo se guardan desde la HU-08 en cuanto se pulsa cada botón: no
+    hay nada que se pierda al salir de la aplicación. Lo que esta pantalla guarda es
+    lo que NO es un campo del formulario: por dónde iba la conversación y cuándo
+    conviene volver.
+
+    Eso hoy vive en la cabeza del encuestador y se pierde al día siguiente. Una
+    encuesta a medias sin nota hay que reconstruirla de memoria, y cuando pasan
+    cuatro días se vuelve a empezar —con la familia respondiendo dos veces las
+    mismas preguntas—.
+
+    Es la diferencia entre «los datos están guardados» y «puedo continuar», y la
+    historia pide lo segundo.
+
+    ----------------------------------------------------------------------
+    GUARDAR LA NOTA NO CAMBIA EL ESTADO… CON UNA EXCEPCIÓN
+    ----------------------------------------------------------------------
+    Una encuesta PENDIENTE a la que se le deja una nota pasa a BORRADOR, porque
+    dejar una nota implica haber estado ahí: «pendiente» significa «sin visitar» y
+    ya no es verdad. Es la misma regla que aplicó la HU-08 al registrar el hogar, y
+    la única transición que esta pantalla provoca.
+
+    Una encuesta OBSERVADA que recibe una nota SIGUE observada: bajarla a BORRADOR
+    haría desaparecer de la pantalla el hecho de que el supervisor la devolvió, que
+    es el aviso más urgente que tiene el encuestador.
+    """
+
+    template_name = "fichas/borrador_form.html"
+
+    def formulario(self, datos=None):
+        return BorradorForm(datos, instance=self.encuesta)
+
+    def get(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_abierta()) is not None:
+            return respuesta
+
+        return render(request, self.template_name, self.contexto(self.formulario()))
+
+    def post(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_abierta()) is not None:
+            return respuesta
+
+        formulario = self.formulario(request.POST)
+
+        if not formulario.is_valid():
+            return render(request, self.template_name, self.contexto(formulario))
+
+        with transaction.atomic():
+            encuesta = formulario.save()
+
+            if encuesta.estado == EstadoEncuesta.PENDIENTE:
+                encuesta.cambiar_estado(EstadoEncuesta.BORRADOR)
+
+        messages.success(request, self.confirmacion(encuesta))
+        return redirect("fichas:encuesta_detalle", pk=encuesta.pk)
+
+    def confirmacion(self, encuesta):
+        """Dice qué queda anotado, no solo que se guardó.
+
+        Mismo criterio que `resumen_equipo()` en la HU-06 y `resumen_avance()` en la
+        HU-09: un «guardado» obliga a volver a mirar la pantalla para saber qué
+        quedó.
+        """
+        if encuesta.proxima_visita:
+            return (
+                "Borrador guardado. Anotado para volver el "
+                f"{encuesta.proxima_visita:%d-%m-%Y}."
+            )
+
+        return "Borrador guardado. Podrás continuar donde lo dejaste."
+
+    def contexto(self, formulario):
+        return {
+            "titulo_pagina": f"Borrador de {self.encuesta.direccion}",
+            "form": formulario,
+            "encuesta": self.encuesta,
+            "pendientes": self.encuesta.pasos_pendientes(),
+        }
+
+
+class CompletarEncuestaView(EncuestaPropiaMixin, View):
+    """Da la encuesta por terminada y la manda a revisión. GET confirma, POST ejecuta.
+
+    URL: /encuestas/<pk>/completar/
+
+    ----------------------------------------------------------------------
+    ES LA ÚNICA SALIDA DEL BORRADOR, Y HASTA AHORA NO EXISTÍA
+    ----------------------------------------------------------------------
+    Desde la HU-07 el estado COMPLETADA estaba definido y ninguna pantalla lo
+    producía: todo lo que el encuestador tocaba quedaba en BORRADOR para siempre y
+    el supervisor no recibía nada. Esta vista cierra ese hueco, y con ella el
+    ciclo de vida completo tiene por fin un camino de ida entero:
+
+        PENDIENTE -> BORRADOR -> COMPLETADA -> (el supervisor valida u observa)
+
+    ----------------------------------------------------------------------
+    NO SE PUEDE COMPLETAR UNA ENCUESTA INCOMPLETA
+    ----------------------------------------------------------------------
+    Se comprueba `Encuesta.puede_completarse`, que exige la vivienda descrita, el
+    hogar registrado, su jefe identificado y todas las personas declaradas
+    presentes. Y se comprueba en el GET **y** en el POST: ocultar el botón no es una
+    validación.
+
+    La pantalla no dice «no puedes»: muestra LA LISTA de lo que falta con un enlace
+    a cada paso. Es la razón por la que `pasos_pendientes()` devuelve rutas y no
+    textos —ver su docstring—: «falta describir la vivienda → [ir]» se resuelve en
+    un toque, y «no puedes completar la encuesta» obliga a buscar el problema
+    pantalla por pantalla.
+
+    ----------------------------------------------------------------------
+    UNA VEZ COMPLETADA, EL ENCUESTADOR NO PUEDE REABRIRLA
+    ----------------------------------------------------------------------
+    Y es a propósito. Reabrir lo que ya se envió a revisión permitiría cambiar los
+    datos que el supervisor está mirando en ese momento, o los que ya aprobó. El
+    camino de vuelta existe y es del supervisor: devolverla como OBSERVADA, que la
+    convierte otra vez en trabajo abierto. `puede_registrarse()` ya lo impide, así
+    que esta vista no necesita añadir ninguna regla nueva.
+    """
+
+    template_name = "fichas/encuesta_completar.html"
+
+    def get(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_abierta()) is not None:
+            return respuesta
+
+        return render(request, self.template_name, self.contexto())
+
+    def post(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_abierta()) is not None:
+            return respuesta
+
+        pendientes = self.encuesta.pasos_pendientes()
+
+        if pendientes:
+            messages.error(
+                request,
+                "No se puede dar por terminada: falta "
+                f"{pendientes[0]['texto'].rstrip('.').lower()}.",
+            )
+            return render(request, self.template_name, self.contexto())
+
+        self.encuesta.cambiar_estado(EstadoEncuesta.COMPLETADA)
+
+        messages.success(
+            request,
+            f"Encuesta de {self.encuesta.direccion} terminada y enviada a revisión. "
+            "Tu supervisor la validará o te la devolverá con observaciones.",
+        )
+        return redirect("fichas:mis_encuestas")
+
+    def contexto(self):
+        hogar = getattr(self.encuesta, "grupo_familiar", None)
+
+        return {
+            "titulo_pagina": f"Terminar {self.encuesta.direccion}",
+            "encuesta": self.encuesta,
+            "hogar": hogar,
+            "pendientes": self.encuesta.pasos_pendientes(),
+            "integrantes": (
+                hogar.integrantes_ordenados() if hogar is not None else []
+            ),
+        }
+
+
+class CerrarSinDatosView(EncuestaPropiaMixin, View):
+    """Cierra una encuesta que no se pudo levantar. GET muestra, POST ejecuta.
+
+    URL: /encuestas/<pk>/cerrar/
+
+    Produce NO_UBICADA o RECHAZADA, los dos estados que la HU-07 definió como
+    RESULTADOS y no como fracasos: sin ellos, una dirección que no existe quedaría
+    pendiente para siempre y el avance del operativo mentiría hacia abajo.
+
+    Lo que esta historia agrega es el motivo. La HU-07 dejó los estados sin ningún
+    campo donde escribir por qué, y una encuesta cerrada sin explicación no es
+    información: el supervisor no puede decidir si manda a otra persona a esa
+    dirección. `motivo_cierre` y su restricción lo resuelven, y el formulario exige
+    además que sea legible.
+
+    Se puede cerrar una encuesta EN CUALQUIER PUNTO del borrador, incluso sin haber
+    registrado nada: es el caso más frecuente —se llega, no hay nadie, se cierra— y
+    exigir el hogar registrado obligaría a inventar una familia para poder decir que
+    no se encontró a ninguna.
+    """
+
+    template_name = "fichas/encuesta_cerrar.html"
+
+    def formulario(self, datos=None):
+        return CerrarSinDatosForm(datos)
+
+    def get(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_abierta()) is not None:
+            return respuesta
+
+        return render(request, self.template_name, self.contexto(self.formulario()))
+
+    def post(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_abierta()) is not None:
+            return respuesta
+
+        formulario = self.formulario(request.POST)
+
+        if not formulario.is_valid():
+            return render(request, self.template_name, self.contexto(formulario))
+
+        # El estado se aplica con cambiar_estado() y no con el save() del
+        # formulario, porque hay que mover también las dos fechas. El formulario
+        # solo aporta el motivo y cuál de los dos estados es.
+        nuevo_estado = formulario.cleaned_data["estado"]
+
+        with transaction.atomic():
+            self.encuesta.motivo_cierre = formulario.cleaned_data["motivo_cierre"]
+            # La próxima visita se borra: la encuesta ya no espera a nadie, y
+            # dejarla haría que el listado siguiera avisando de una visita que no
+            # hay que hacer.
+            self.encuesta.proxima_visita = None
+            self.encuesta.save(update_fields=["motivo_cierre", "proxima_visita"])
+            self.encuesta.cambiar_estado(nuevo_estado)
+
+        messages.success(
+            request,
+            f"Encuesta de {self.encuesta.direccion} cerrada como "
+            f"«{self.encuesta.get_estado_display()}». El motivo quedó registrado.",
+        )
+        return redirect("fichas:mis_encuestas")
+
+    def contexto(self, formulario):
+        return {
+            "titulo_pagina": f"Cerrar {self.encuesta.direccion}",
+            "form": formulario,
+            "encuesta": self.encuesta,
+        }
+
+

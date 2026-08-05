@@ -1,0 +1,191 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   TERMINAR LA ENCUESTA — /encuestas/<pk>/completar/
+
+   La salida del borrador, y hasta la HU-10 no existía: el estado COMPLETADA estaba
+   definido desde la HU-07 y ninguna pantalla lo producía, así que todo quedaba en
+   borrador para siempre y el supervisor no recibía nada.
+
+   La pantalla tiene dos caras y las dos importan:
+
+     - Si FALTA algo, no dice «no puedes»: muestra la lista de lo que falta con un
+       enlace a cada paso, y esconde el botón.
+     - Si NO falta nada, muestra un resumen de lo que se va a enviar —la casa, el
+       hogar y las personas— para que se pueda revisar antes de mandarlo. Después de
+       enviarlo, el encuestador ya no puede modificarlo.
+
+   Ese resumen no es decorativo: es la última oportunidad de detectar un dato mal
+   escrito antes de que la ficha pase a revisión.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Terminar {{ encuesta.direccion }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'fichas:mis_encuestas' %}">Mis encuestas</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}">{{ encuesta.direccion }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Terminar</li>
+  </ol>
+</nav>
+
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+    {% if pendientes %}Todavía no se puede terminar{% else %}¿Dar por terminada la encuesta?{% endif %}
+  </h1>
+  <p class="text-secondary mb-0">
+    {{ encuesta.direccion }} · {{ encuesta.zona.nombre }} ·
+    {{ encuesta.zona.sector.nombre }}
+  </p>
+</div>
+
+{% if pendientes %}
+
+  {# ---------- Falta algo: se dice QUÉ y se enlaza ---------- #}
+  <div class="card-opso p-4 mb-3">
+    <h2 class="h6 fw-semibold mb-3">Falta esto por registrar</h2>
+    {% include "fichas/_pasos_pendientes.html" with pendientes=pendientes encuesta=encuesta %}
+  </div>
+
+  <div class="d-flex gap-2 flex-wrap">
+    <a href="{% url 'fichas:guardar_borrador' encuesta.pk %}" class="btn btn-opso">
+      Guardar el borrador y seguir después
+    </a>
+    <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}" class="btn btn-outline-secondary">
+      Volver a la encuesta
+    </a>
+  </div>
+
+{% else %}
+
+  {# ---------- Está completa: resumen y confirmación ---------- #}
+  <div class="alert alert-success small d-flex gap-2" role="alert">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+    <div>
+      Está todo registrado. Revisa el resumen antes de enviarla: al terminarla
+      <strong>ya no podrás modificarla</strong>, y solo tu supervisor podrá
+      devolvértela.
+    </div>
+  </div>
+
+  {% comment %} La ubicación AVISA pero no bloquea (HU-11). El GPS depende de la
+     señal, del permiso del sistema y de estar al aire libre: nada de eso lo
+     controla el encuestador, y exigirlo dejaría fichas completas atrapadas en
+     borrador por un fallo de cobertura. Se bloquea lo que se puede resolver y se
+     avisa de lo que quizá no. {% endcomment %}
+  {% if not encuesta.vivienda.tiene_ubicacion %}
+    <div class="alert alert-warning small d-flex justify-content-between align-items-center gap-2 flex-wrap" role="alert">
+      <span>
+        Esta vivienda <strong>no tiene ubicación capturada</strong>. No impide
+        terminar la encuesta, pero si todavía estás en la puerta son diez segundos.
+      </span>
+      <a href="{% url 'fichas:capturar_ubicacion' encuesta.vivienda.pk %}"
+         class="btn btn-sm btn-outline-dark">Capturar ahora</a>
+    </div>
+  {% elif not encuesta.vivienda.precision_aceptable %}
+    <div class="alert alert-warning small d-flex justify-content-between align-items-center gap-2 flex-wrap" role="alert">
+      <span>
+        La ubicación tiene poca precisión
+        {% if encuesta.vivienda.precision_metros %}
+          (±{{ encuesta.vivienda.precision_metros }} m){% endif %}.
+        Si puedes, vuelve a capturarla al aire libre.
+      </span>
+      <a href="{% url 'fichas:capturar_ubicacion' encuesta.vivienda.pk %}"
+         class="btn btn-sm btn-outline-dark">Volver a capturar</a>
+    </div>
+  {% endif %}
+
+  <div class="row g-3 mb-3">
+    <div class="col-12 col-lg-6">
+      <div class="card-opso p-4 h-100">
+        <h2 class="h6 fw-semibold mb-3">La vivienda</h2>
+        <dl class="row mb-0 small">
+          <dt class="col-5 text-secondary fw-normal">Dirección</dt>
+          <dd class="col-7 fw-semibold">{{ encuesta.direccion }}</dd>
+
+          <dt class="col-5 text-secondary fw-normal">Tipo</dt>
+          <dd class="col-7">{{ encuesta.vivienda.get_tipo_display }}</dd>
+
+          <dt class="col-5 text-secondary fw-normal">Tenencia</dt>
+          <dd class="col-7">{{ encuesta.vivienda.get_tenencia_display }}</dd>
+
+          <dt class="col-5 text-secondary fw-normal">Muros</dt>
+          <dd class="col-7 mb-0">{{ encuesta.vivienda.get_materialidad_muros_display }}</dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="col-12 col-lg-6">
+      <div class="card-opso p-4 h-100">
+        <h2 class="h6 fw-semibold mb-3">El hogar</h2>
+        <dl class="row mb-0 small">
+          <dt class="col-5 text-secondary fw-normal">Jefatura</dt>
+          <dd class="col-7 fw-semibold">{{ hogar.jefe_hogar_nombre }}</dd>
+
+          <dt class="col-5 text-secondary fw-normal">Personas</dt>
+          <dd class="col-7">
+            {{ hogar.total_integrantes }} registrada{{ hogar.total_integrantes|pluralize }}
+            de {{ hogar.integrantes_declarados }} declarada{{ hogar.integrantes_declarados|pluralize }}
+          </dd>
+
+          <dt class="col-5 text-secondary fw-normal">Ingreso</dt>
+          <dd class="col-7 mb-0">
+            {% if hogar.ingreso_mensual %}
+              ${{ hogar.ingreso_mensual|floatformat:"0" }}
+            {% else %}
+              No entregado
+            {% endif %}
+          </dd>
+        </dl>
+      </div>
+    </div>
+
+    <div class="col-12">
+      <div class="card-opso p-4">
+        <h2 class="h6 fw-semibold mb-3">
+          Las personas
+          <span class="badge text-bg-light border">{{ integrantes|length }}</span>
+        </h2>
+        <div class="table-responsive">
+          <table class="table table-sm align-middle mb-0">
+            <thead>
+              <tr class="small text-secondary">
+                <th scope="col" class="fw-normal ps-0">Persona</th>
+                <th scope="col" class="fw-normal">Parentesco</th>
+                <th scope="col" class="fw-normal text-center">Edad</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for integrante in integrantes %}
+                <tr>
+                  <td class="ps-0">{{ integrante.nombre_completo }}</td>
+                  <td class="small text-secondary">{{ integrante.get_parentesco_display }}</td>
+                  <td class="text-center small">{{ integrante.edad }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <form method="post" class="d-flex gap-2 flex-wrap">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-opso">
+      Sí, terminar y enviar a revisión
+    </button>
+    <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}" class="btn btn-outline-secondary">
+      Todavía no
+    </a>
+  </form>
+
+{% endif %}
+
+{% endblock %}

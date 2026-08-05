@@ -120,3 +120,24 @@ urlpatterns = [
         views.QuitarIntegranteView.as_view(),
         name="integrante_quitar",
     ),
+    # ------------------------------------------------------------------
+    # EL BORRADOR Y EL CIERRE (HU-10)
+    #
+    # Las tres son verbos sobre UNA encuesta, así que van bajo su <pk> con un
+    # sufijo que dice qué hacen. Mismo criterio que /operativos/<pk>/estado/ en la
+    # HU-05: la acción se nombra en la dirección, y el objeto sobre el que actúa la
+    # identifica el <pk> que ya está delante.
+    # ------------------------------------------------------------------
+        name="guardar_borrador",
+    ),
+    path(
+        "<int:pk>/completar/",
+        views.CompletarEncuestaView.as_view(),
+        name="completar_encuesta",
+    ),
+    path(
+        "<int:pk>/cerrar/",
+        views.CerrarSinDatosView.as_view(),
+        name="cerrar_encuesta",
+    ),
+]
