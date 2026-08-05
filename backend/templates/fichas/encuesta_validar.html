@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   VALIDAR UNA ENCUESTA — /encuestas/<pk>/validar/
+
+   Dos pasos: esta pantalla confirma y el POST ejecuta. Si validar se pudiera hacer
+   con un GET, un <img src="..."> incrustado en cualquier página aprobaría fichas con
+   la sesión del supervisor.
+
+   Y la pantalla intermedia no es solo una barrera contra eso: es la última
+   oportunidad de mirar el resumen antes de firmar. Una vez validada, el encuestador
+   ya no puede modificarla.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Validar {{ encuesta.direccion }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:bandeja_revision' %}">Revisión de encuestas</a>
+    </li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:revisar_encuesta' encuesta.pk %}">{{ encuesta.direccion }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Validar</li>
+  </ol>
+</nav>
+
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+    ¿Validar esta encuesta?
+  </h1>
+  <p class="text-secondary mb-0">
+    {{ encuesta.direccion }} · {{ encuesta.zona.nombre }} ·
+    {{ encuesta.zona.sector.nombre }}
+  </p>
+</div>
+
+{# ---------- El resumen: la última mirada antes de firmar ---------- #}
+<div class="card-opso p-4 mb-3">
+  <h2 class="h6 fw-semibold mb-3">Lo que estás aprobando</h2>
+  <dl class="row mb-0 small">
+    <dt class="col-6 col-sm-4 text-secondary fw-normal">Levantó</dt>
+    <dd class="col-6 col-sm-8">
+      {{ encuesta.censista.get_full_name|default:encuesta.censista.email }}
+    </dd>
+
+    <dt class="col-6 col-sm-4 text-secondary fw-normal">Jefatura de hogar</dt>
+    <dd class="col-6 col-sm-8">{{ hogar.jefe_hogar_nombre|default:"Sin hogar registrado" }}</dd>
+
+    <dt class="col-6 col-sm-4 text-secondary fw-normal">Personas</dt>
+    <dd class="col-6 col-sm-8">
+      {{ resumen.personas }} registrada{{ resumen.personas|pluralize }}
+      de {{ resumen.declaradas }} declarada{{ resumen.declaradas|pluralize }}
+    </dd>
+
+    <dt class="col-6 col-sm-4 text-secondary fw-normal">Vivienda</dt>
+    <dd class="col-6 col-sm-8">
+      {% if resumen.vivienda_descrita %}descrita{% else %}
+        <span class="text-warning-emphasis fw-semibold">sin describir</span>
+      {% endif %}
+    </dd>
+
+    <dt class="col-6 col-sm-4 text-secondary fw-normal">Ubicación</dt>
+    <dd class="col-6 col-sm-8">
+      {% if resumen.tiene_ubicacion %}capturada{% else %}sin capturar{% endif %}
+    </dd>
+
+    <dt class="col-6 col-sm-4 text-secondary fw-normal">Fotografías</dt>
+    <dd class="col-6 col-sm-8 mb-0">{{ resumen.fotografias }}</dd>
+  </dl>
+
+  <a href="{% url 'fichas:revisar_encuesta' encuesta.pk %}" class="small d-inline-block mt-3">
+    Volver a verla completa antes de decidir
+  </a>
+</div>
+
+{% comment %} Si algo no cuadra, se dice AQUÍ y no después. No bloquea —el supervisor
+   puede tener motivos para aprobarla igual, por ejemplo si no había señal para el
+   GPS— pero aprobar sin verlo sería aprobar a ciegas. {% endcomment %}
+{% if resumen.personas < resumen.declaradas or not resumen.vivienda_descrita %}
+  <div class="alert alert-warning small d-flex gap-2" role="alert">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+    </svg>
+    <div>
+      <strong>Esta ficha tiene datos incompletos.</strong>
+      {% comment %} La resta la hace el modelo (`integrantes_pendientes`, HU-09) y no
+         la plantilla: el lenguaje de plantillas no resta, y el número ya existía.
+         {% endcomment %}
+      {% if resumen.personas < resumen.declaradas %}
+        Faltan {{ hogar.integrantes_pendientes }} persona{{ hogar.integrantes_pendientes|pluralize }} de las declaradas.
+      {% endif %}
+      {% if not resumen.vivienda_descrita %}
+        La vivienda no está descrita.
+      {% endif %}
+      Si quieres que se corrija,
+      <a href="{% url 'fichas:revisar_encuesta' encuesta.pk %}" class="fw-semibold">devuélvela
+      con observaciones</a> en lugar de validarla.
+    </div>
+  </div>
+{% endif %}
+
+<form method="post" novalidate>
+  {% csrf_token %}
+
+  <div class="card-opso p-4 mb-3">
+    <div class="row g-3">
+      {% include "usuarios/gestion/_campo.html" with campo=form.comentario ancho="col-12" %}
+    </div>
+    <p class="text-secondary small mb-0 mt-2">
+      El comentario es opcional: aprobar es el resultado esperado y exigir un texto
+      por cada ficha buena solo produciría cientos de «ok».
+    </p>
+  </div>
+
+  <div class="alert alert-info small" role="alert">
+    Al validarla, <strong>el encuestador ya no podrá modificarla</strong> y la ficha
+    sale de la cola de revisión.
+  </div>
+
+  <div class="d-flex gap-2 flex-wrap">
+    <button type="submit" class="btn btn-opso">Sí, validar la encuesta</button>
+    <a href="{% url 'fichas:revisar_encuesta' encuesta.pk %}" class="btn btn-outline-secondary">
+      Cancelar
+    </a>
+  </div>
+</form>
+
+{% endblock %}

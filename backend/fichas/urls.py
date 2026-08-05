@@ -181,6 +181,29 @@ urlpatterns = [
         views.RevisarEncuestaView.as_view(),
         name="revisar_encuesta",
     ),
+    # ------------------------------------------------------------------
+    # RESOLVER: APROBAR, ANULAR (HU-14) O DEVOLVER (HU-15)
+    #
+    # Verbos sobre UNA encuesta, con el mismo patrón que las tres acciones de la
+    # HU-10. Exigen `fichas.validar`, no `fichas.ver_todas`: leer el trabajo de
+    # todos y firmarlo son capacidades distintas.
+    #
+    # Las tres salidas de una revisión, y las tres direcciones se leen como lo que
+    # hacen: validar cierra bien, anular cierra mal, devolver reabre.
+    # ------------------------------------------------------------------
+    path(
+        "<int:pk>/validar/",
+        views.ValidarEncuestaView.as_view(),
+        name="validar_encuesta",
+    ),
+    path(
+        "<int:pk>/anular/",
+        views.AnularEncuestaView.as_view(),
+        name="anular_encuesta",
+    ),
+    path(
+        "<int:pk>/devolver/",
+        views.DevolverEncuestaView.as_view(),
         name="guardar_borrador",
     ),
     path(

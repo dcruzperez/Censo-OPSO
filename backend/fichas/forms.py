@@ -1376,3 +1376,129 @@ class FiltroRevisionForm(forms.Form):
         return self.cleaned_data.get("estado") or self.GRUPO_RECIBIDAS
 
 
+# ==========================================================================
+# HU-14 — APROBAR O ANULAR
+# ==========================================================================
+
+
+class ValidarEncuestaForm(forms.Form):
+    """Aprobar una encuesta. El comentario es OPCIONAL.
+
+    Y esa es la única decisión de este formulario, así que conviene explicarla:
+    aprobar es el resultado esperado de una revisión, y exigir un texto por cada
+    ficha buena produciría cientos de «ok» que nadie va a leer nunca. Cuando el
+    supervisor quiera anotar algo —«revisada junto al encuestador», «el ingreso está
+    confirmado con la familia»— tiene dónde.
+
+    Es un `Form` de un solo campo opcional y no un formulario vacío, porque la
+    pantalla necesita algo que dibujar y porque el día en que aprobar exija otro
+    dato, el sitio ya está.
+    """
+
+    comentario = forms.CharField(
+        label="Comentario (opcional)",
+        required=False,
+        max_length=500,
+        widget=forms.Textarea(
+            attrs={
+                "class": CLASE_TEXTO,
+                "rows": 2,
+                "placeholder": (
+                    "Ej.: revisada junto al encuestador; el ingreso está confirmado."
+                ),
+            }
+        ),
+        help_text="Queda guardado en la ficha y el encuestador puede leerlo.",
+    )
+
+    def clean_comentario(self):
+        return (self.cleaned_data.get("comentario") or "").strip()
+
+
+class AnularEncuestaForm(forms.Form):
+    """Descartar una encuesta que no sirve. El motivo es OBLIGATORIO.
+
+    ----------------------------------------------------------------------
+    ANULAR NO ES DEVOLVER, Y EL FORMULARIO LO DICE
+    ----------------------------------------------------------------------
+    Devolver con observaciones —la historia siguiente— reabre la encuesta para que
+    el encuestador la corrija. Anular la cierra sin corregir, porque no hay nada que
+    arreglar: está duplicada, se levantó en la dirección equivocada o sus datos no
+    son creíbles.
+
+    La diferencia importa para quien pulsa el botón: anular TIRA el trabajo de otra
+    persona y esa casa vuelve a quedar sin datos. Por eso el motivo es obligatorio y
+    con un mínimo de largo, y por eso el formulario ofrece las causas típicas en un
+    desplegable: quien anula tiene que poder decir cuál de ellas es.
+
+    ----------------------------------------------------------------------
+    POR QUÉ HAY UNA CAUSA ADEMÁS DEL TEXTO
+    ----------------------------------------------------------------------
+    El texto explica ESTE caso; la causa permite contar. «Cuántas fichas se anulan
+    por duplicado» es una pregunta de calidad del operativo que un campo libre no
+    responde: habría que leer doscientos textos. La causa se guarda al principio del
+    comentario, en una sola columna, en vez de agregar otra al modelo para un dato
+    que solo tiene sentido junto a su explicación.
+    """
+
+    #: Largo mínimo del motivo, igual que en CerrarSinDatosForm (HU-10) y por lo
+    #: mismo: tiene un lector concreto y «x» no le sirve para nada.
+    MOTIVO_MINIMO = 15
+
+    CAUSAS = (
+        ("", "Elige la causa"),
+        ("Duplicada", "Está duplicada: la vivienda ya se encuestó"),
+        ("Dirección equivocada", "Se levantó en una dirección distinta"),
+        ("Datos no creíbles", "Los datos no son creíbles o son inconsistentes"),
+        ("Fuera del operativo", "La vivienda no pertenece a este operativo"),
+        ("Otra", "Otra causa"),
+    )
+
+    causa = forms.ChoiceField(
+        label="Causa",
+        choices=CAUSAS,
+        widget=forms.Select(attrs={"class": CLASE_SELECT}),
+    )
+    motivo = forms.CharField(
+        label="Explicación",
+        max_length=500,
+        widget=forms.Textarea(
+            attrs={
+                "class": CLASE_TEXTO,
+                "rows": 3,
+                "placeholder": (
+                    "Ej.: la misma vivienda está levantada en la ficha de Pasaje 4 "
+                    "N° 12, con el mismo jefe de hogar."
+                ),
+            }
+        ),
+        help_text=(
+            "Lo va a leer el encuestador cuyo trabajo se descarta. Que se entienda."
+        ),
+    )
+    confirmar = forms.BooleanField(
+        label="Entiendo que la encuesta se descarta y que esa vivienda queda sin datos",
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+    )
+
+    def clean_motivo(self):
+        motivo = (self.cleaned_data.get("motivo") or "").strip()
+
+        if len(motivo) < self.MOTIVO_MINIMO:
+            raise forms.ValidationError(
+                "Explícalo con una frase: quien lea esto es la persona cuyo trabajo "
+                "se descarta."
+            )
+
+        return motivo
+
+    def comentario_completo(self):
+        """La causa y la explicación en un solo texto, como se guardan.
+
+        Se juntan aquí y no en la vista para que el formato quede escrito en un solo
+        sitio: si mañana los reportes tienen que contar anulaciones por causa,
+        buscarán este prefijo y conviene que solo exista una forma de generarlo.
+        """
+        return f"{self.cleaned_data['causa']}: {self.cleaned_data['motivo']}"
+
+

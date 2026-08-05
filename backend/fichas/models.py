@@ -942,6 +942,79 @@ class Encuesta(models.Model):
         help_text="Quién encargó esta encuesta. Vacío si la creó el encuestador.",
     )
     # ------------------------------------------------------------------
+    # LA RESOLUCIÓN DEL SUPERVISOR (HU-14, y la usará también la HU-15)
+    #
+    # Tres columnas y no un modelo aparte, por la razón CONTRARIA a la que llevó a
+    # crear AsignacionSector en la HU-06. Allí se necesitaba una tabla porque una
+    # asignación tiene historia: la misma persona entra y sale de un sector varias
+    # veces, y cada paso importa.
+    #
+    # Aquí no. Una encuesta se resuelve UNA vez: se valida, se anula o se devuelve.
+    # Si vuelve devuelta y se vuelve a resolver, lo que interesa es la resolución
+    # VIGENTE, no la anterior —que ya cumplió su función haciendo que el encuestador
+    # corrigiera—. Un modelo con historial guardaría filas que nadie consulta.
+    #
+    # Y NO SE USA RegistroAuditoria: esa bitácora registra acciones ADMINISTRATIVAS
+    # sobre cuentas, roles y territorio, no decisiones sobre el dato del censo. La
+    # resolución no es solo un hecho auditable: es un DATO QUE SE CONSULTA a diario
+    # —el encuestador lee por qué le devolvieron su ficha— y eso no se resuelve
+    # leyendo una bitácora. Es el mismo argumento con el que la HU-06 justificó su
+    # tabla propia, aplicado aquí a tres columnas.
+    # ------------------------------------------------------------------
+    revisada_por = models.ForeignKey(
+        "usuarios.Usuario",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="encuestas_revisadas",
+        verbose_name="revisada por",
+        help_text="Quién la validó, anuló o devolvió.",
+    )
+    revisada_en = models.DateTimeField(
+        "revisada en",
+        null=True,
+        blank=True,
+        help_text="Cuándo se resolvió. Vacío mientras no se haya revisado.",
+    )
+    comentario_revision = models.TextField(
+        "comentario de la revisión",
+        blank=True,
+        help_text=(
+            "Lo que el supervisor deja escrito al resolver. Obligatorio al anular y "
+            "al devolver: una ficha descartada o devuelta sin explicación no sirve "
+            "de nada."
+        ),
+    )
+    veces_devuelta = models.PositiveSmallIntegerField(
+        "veces devuelta",
+        default=0,
+        help_text=(
+            "Cuántas veces el supervisor la ha devuelto con observaciones. Una "
+            "ficha devuelta tres veces señala un problema de formación, no de esa "
+            "ficha."
+        ),
+    )
+    creada_en = models.DateTimeField("creada en", auto_now_add=True)
+    actualizada_en = models.DateTimeField("actualizada en", auto_now=True)
+    iniciada_en = models.DateTimeField(
+        "iniciada en",
+        null=True,
+        blank=True,
+        help_text=(
+            "Primera visita a la vivienda. Vacío mientras la encuesta sigue "
+            "pendiente."
+        ),
+    )
+    cerrada_en = models.DateTimeField(
+        "cerrada en",
+        null=True,
+        blank=True,
+        help_text=(
+            "Cuándo dejó de depender del encuestador. Vacío mientras siga siendo "
+            "trabajo suyo."
+        ),
+    )
+
     class Meta:
         db_table = "fichas_encuesta"
         verbose_name = "encuesta"
@@ -1447,6 +1520,121 @@ class Encuesta(models.Model):
             "tiene_ubicacion": self.vivienda.tiene_ubicacion,
             "fotografias": self.vivienda.fotografias.count(),
         }
+
+    # ------------------------------------------------------------------
+    # RESOLVER: VALIDAR O ANULAR (HU-14)
+    # ------------------------------------------------------------------
+
+    @property
+    def esta_resuelta(self):
+        """True si un supervisor ya la validó, anuló o devolvió."""
+        return self.estado in ESTADOS_RESUELTOS
+
+    def puede_resolverla(self, usuario):
+        """¿Puede esta persona validar o anular esta encuesta? (True, "") o (False, motivo).
+
+        Dos reglas, y la segunda es la importante.
+
+        1. SOLO SE RESUELVE LO QUE ESTÁ EN LA BANDEJA. Es decir, lo que está
+           COMPLETADA. Una encuesta en borrador todavía no la ha enviado nadie; una
+           ya validada está cerrada; una observada volvió al encuestador y hay que
+           esperar a que la reenvíe. Resolver algo que no está esperando resolución
+           produciría estados que nadie pidió.
+
+        2. QUIEN LEVANTA NO VALIDA. Es la separación de funciones que la HU-03
+           estableció al concentrar la administración de cuentas, y que la HU-04
+           dejó escrita al sembrar los permisos: «CENSISTA -> solo sus propias
+           fichas. Ni ve las de otros ni valida nada, porque validar su propio
+           trabajo anularía el control cruzado».
+
+           El reparto de permisos ya lo impide para el rol Censista, pero NO basta:
+           un supervisor puede tener encuestas propias, y el administrador tiene
+           todos los permisos por definición. Sin esta comprobación, cualquiera de
+           los dos podría firmar su propio trabajo, que es exactamente lo que un
+           control de calidad no debe permitir.
+
+           Se comprueba en el MODELO y no solo en la vista porque es una regla del
+           negocio, no de una pantalla: cualquier camino que resuelva una encuesta
+           —una vista futura, un comando, una acción del admin— tiene que
+           respetarla.
+        """
+        if self.estado != EstadoEncuesta.COMPLETADA:
+            return False, (
+                f"Esta encuesta está «{self.get_estado_display()}» y no está "
+                "esperando revisión. Solo se resuelven las que el encuestador ya "
+                "envió."
+            )
+
+        if self.censista_id == usuario.pk:
+            return False, (
+                "No puedes validar tu propia encuesta. Quien levanta la información "
+                "no puede ser quien la aprueba: eso anularía el control cruzado."
+            )
+
+        return True, ""
+
+    def resolver(self, nuevo_estado, usuario, comentario=""):
+        """Aplica una resolución del supervisor y deja constancia de quién y cuándo.
+
+        Es a la resolución lo que `cambiar_estado()` es al ciclo de vida: el único
+        camino correcto, porque hay cuatro columnas que tienen que moverse juntas
+        —estado, revisada_por, revisada_en y el comentario— y repartir eso por las
+        vistas garantiza que alguna se olvide una.
+
+        NO comprueba si la persona puede: eso lo responde `puede_resolverla()`, y se
+        mantienen separados a propósito. Una pregunta es «¿está permitido?» y la
+        otra «hazlo»; mezclarlas obligaría a que cada llamada interpretara un
+        resultado en vez de confiar en que la comprobación ya se hizo, que es
+        justamente el patrón que hace que las comprobaciones se salten.
+        """
+        nuevo_estado = EstadoEncuesta(nuevo_estado)
+
+        self.revisada_por = usuario
+        self.revisada_en = timezone.now()
+        self.comentario_revision = (comentario or "").strip()
+
+        # cambiar_estado() se encarga de las fechas del ciclo de vida y guarda; las
+        # tres columnas de la resolución se escriben antes para que viajen en el
+        # mismo save() y la fila nunca quede a medias.
+        self.save(
+            update_fields=["revisada_por", "revisada_en", "comentario_revision"]
+        )
+        self.cambiar_estado(nuevo_estado)
+
+        return self
+
+    def puede_registrarse(self):
+        """¿Se puede escribir en esta encuesta? (True, "") o (False, motivo). HU-08.
+
+        Tres reglas, cada una por un motivo distinto, y todas comprobadas EN EL
+        SERVIDOR además de ocultar el botón en la plantilla. Ocultar un botón no es
+        una validación: la HU-03 lo documentó y la HU-06 lo repitió al comprobar el
+        reparto en el GET y en el POST por separado.
+
+          1. El territorio tiene que admitir trabajo (operativo abierto, sector y
+             zona activos). La regla vive en Vivienda.puede_registrarse_trabajo() y
+             aquí solo se delega: es la misma pregunta y no debe tener dos
+             respuestas.
+          2. Una encuesta CERRADA no se toca. Si el supervisor ya la validó,
+             modificarla por detrás dejaría una ficha aprobada que dice algo
+             distinto de lo que se aprobó. Para corregirla, el supervisor la
+             observa y vuelve a ser trabajo abierto: ese es el camino, y existe.
+          3. OBSERVADA sí se puede escribir, y es justamente el caso para el que se
+             creó ese estado.
+        """
+        permitido, motivo = self.vivienda.puede_registrarse_trabajo()
+
+        if not permitido:
+            return False, motivo
+
+        if self.esta_cerrada:
+            return False, (
+                f"Esta encuesta está «{self.get_estado_display()}» y ya no admite "
+                "cambios. Si hay algo que corregir, pídele a tu supervisor que te "
+                "la devuelva con observaciones."
+            )
+
+        return True, ""
 
     # ------------------------------------------------------------------
     def clean(self):

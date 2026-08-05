@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   ANULAR UNA ENCUESTA — /encuestas/<pk>/anular/
+
+   La decisión más grave de la supervisión: tira el trabajo de otra persona y deja
+   esa vivienda sin datos en el censo.
+
+   NO es lo mismo que devolver con observaciones. Devolver reabre la encuesta para
+   que se corrija; anular la cierra sin corregir, porque no hay nada que arreglar o
+   porque arreglarlo exigiría levantarla de cero. La pantalla lo dice arriba, porque
+   es la confusión que hay que evitar antes de pulsar el botón.
+
+   De ahí las tres cosas que pide el formulario —causa, explicación y una casilla que
+   nombra la consecuencia—: la ficha anulada la va a leer el encuestador cuyo trabajo
+   se descarta.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Anular {{ encuesta.direccion }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:bandeja_revision' %}">Revisión de encuestas</a>
+    </li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:revisar_encuesta' encuesta.pk %}">{{ encuesta.direccion }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Anular</li>
+  </ol>
+</nav>
+
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+    ¿Anular esta encuesta?
+  </h1>
+  <p class="text-secondary mb-0">
+    {{ encuesta.direccion }} · levantada por
+    {{ encuesta.censista.get_full_name|default:encuesta.censista.email }}
+  </p>
+</div>
+
+{# ---------- La distinción que hay que entender antes de seguir ---------- #}
+<div class="alert alert-danger small d-flex gap-2" role="alert">
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+  </svg>
+  <div>
+    <strong>Anular no es devolver.</strong> Anular descarta la ficha y esa vivienda
+    queda <strong>sin datos en el censo</strong>: el encuestador no la puede
+    corregir, porque no hay nada que corregir.
+    <div class="mt-1">
+      Si lo que quieres es que se arregle algo, no anules:
+      <a href="{% url 'fichas:revisar_encuesta' encuesta.pk %}" class="fw-semibold">devuélvela
+      con observaciones</a>.
+    </div>
+  </div>
+</div>
+
+{# ---------- Qué se está descartando ---------- #}
+<div class="card-opso p-4 mb-3">
+  <h2 class="h6 fw-semibold mb-3">Lo que se descarta</h2>
+  <dl class="row mb-0 small">
+    <dt class="col-6 col-sm-4 text-secondary fw-normal">Jefatura de hogar</dt>
+    <dd class="col-6 col-sm-8">{{ hogar.jefe_hogar_nombre|default:"Sin hogar registrado" }}</dd>
+
+    <dt class="col-6 col-sm-4 text-secondary fw-normal">Personas registradas</dt>
+    <dd class="col-6 col-sm-8">{{ resumen.personas }}</dd>
+
+    <dt class="col-6 col-sm-4 text-secondary fw-normal">Fotografías</dt>
+    <dd class="col-6 col-sm-8">{{ resumen.fotografias }}</dd>
+
+    <dt class="col-6 col-sm-4 text-secondary fw-normal">Enviada</dt>
+    <dd class="col-6 col-sm-8 mb-0">{{ encuesta.cerrada_en|date:"d-m-Y H:i" }}</dd>
+  </dl>
+
+  {% comment %} Se dice explícitamente que los datos no se borran. Es la respuesta a
+     la pregunta obvia —«¿se pierde todo?»— y además la decisión correcta: el registro
+     de que alguien levantó esa ficha y de que otra persona la descartó, con su
+     motivo, es lo que permite auditar el operativo. {% endcomment %}
+  <p class="text-secondary small mb-0 mt-3">
+    Los datos <strong>no se borran</strong>: quedan guardados y marcados como
+    anulados, junto a tu motivo. Es lo que permite auditar después qué se descartó y
+    por qué.
+  </p>
+</div>
+
+{% if form.non_field_errors %}
+  <div class="alert alert-danger small" role="alert">
+    {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+  </div>
+{% endif %}
+
+<form method="post" novalidate>
+  {% csrf_token %}
+
+  <div class="card-opso p-4 mb-3">
+    <div class="row g-3">
+      {% include "usuarios/gestion/_campo.html" with campo=form.causa ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.motivo ancho="col-12" %}
+    </div>
+
+    <div class="form-check mt-3">
+      {{ form.confirmar }}
+      <label class="form-check-label small" for="{{ form.confirmar.id_for_label }}">
+        {{ form.confirmar.label }}
+      </label>
+      {% for error in form.confirmar.errors %}
+        <div class="text-danger small mt-1">{{ error }}</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="d-flex gap-2 flex-wrap">
+    <button type="submit" class="btn btn-danger">Sí, anular la encuesta</button>
+    <a href="{% url 'fichas:revisar_encuesta' encuesta.pk %}" class="btn btn-outline-secondary">
+      Cancelar
+    </a>
+  </div>
+</form>
+
+{% endblock %}

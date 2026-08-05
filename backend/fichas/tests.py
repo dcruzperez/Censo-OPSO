@@ -6511,3 +6511,619 @@ class IntegracionHU13Test(BaseRevisionTest):
         self.assertEqual(self.client.get(self.url_detalle(antigua)).status_code, 200)
 
 
+# ==========================================================================
+# HU-14 — 62. APROBAR O ANULAR
+# ==========================================================================
+
+
+class BaseResolucionTest(BaseRevisionTest):
+    """Escenario común: una encuesta recibida, lista para resolverse."""
+
+    def setUp(self):
+        super().setUp()
+        self.encuesta = self.recibida(direccion="Av. Central 100", hace_dias=2)
+        self.hogar = self.con_hogar(self.encuesta, declarados=2, personas=2)
+        self.url_validar = reverse(
+            "fichas:validar_encuesta", kwargs={"pk": self.encuesta.pk}
+        )
+        self.url_anular = reverse(
+            "fichas:anular_encuesta", kwargs={"pk": self.encuesta.pk}
+        )
+
+    def datos_anulacion(self, **extra):
+        base = {
+            "causa": "Duplicada",
+            "motivo": "La misma vivienda está levantada en la ficha del Pasaje 4.",
+            "confirmar": "on",
+        }
+        base.update(extra)
+        return base
+
+
+class EstadoAnuladaTest(BaseResolucionTest):
+    """El octavo estado y su diferencia con los dos que se le parecen."""
+
+    def test_anulada_es_un_estado_cerrado(self):
+        encuesta = self.crear(direccion="Anulada 1", estado=EstadoEncuesta.ANULADA)
+
+        self.assertTrue(encuesta.esta_cerrada)
+        self.assertFalse(encuesta.requiere_trabajo)
+
+    def test_los_dos_grupos_siguen_cubriendo_todos_los_estados(self):
+        """La partición de la HU-07 tiene que seguir siendo exhaustiva con ocho."""
+        agrupados = set(ESTADOS_ABIERTOS) | set(ESTADOS_CERRADOS)
+
+        self.assertEqual(agrupados, set(EstadoEncuesta.values))
+
+    def test_anulada_no_es_lo_mismo_que_rechazada(self):
+        """Una la decide el supervisor y la otra la familia: no se pueden mezclar."""
+        self.assertNotEqual(EstadoEncuesta.ANULADA, EstadoEncuesta.RECHAZADA)
+        self.assertNotIn(EstadoEncuesta.ANULADA, ESTADOS_SIN_LEVANTAR)
+
+    def test_anulada_es_una_resolucion_del_supervisor(self):
+        self.assertIn(EstadoEncuesta.ANULADA, ESTADOS_RESUELTOS)
+        self.assertIn(EstadoEncuesta.VALIDADA, ESTADOS_RESUELTOS)
+        self.assertIn(EstadoEncuesta.OBSERVADA, ESTADOS_RESUELTOS)
+
+    def test_una_encuesta_anulada_no_admite_cambios_del_encuestador(self):
+        encuesta = self.crear(direccion="Anulada 2", estado=EstadoEncuesta.ANULADA)
+
+        permitido, _ = encuesta.puede_registrarse()
+
+        self.assertFalse(permitido)
+
+    def test_anular_exige_comentario_en_la_base_de_datos(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Encuesta.objects.create(
+                    vivienda=self.crear_vivienda(direccion="Otra 1"),
+                    censista=self.marta,
+                    estado=EstadoEncuesta.ANULADA,
+                    iniciada_en=timezone.now(),
+                    cerrada_en=timezone.now(),
+                    comentario_revision="",
+                )
+
+    def test_validar_no_exige_comentario(self):
+        """Aprobar es el resultado esperado: exigir un texto daría cientos de «ok»."""
+        encuesta = self.crear(direccion="Validada 1", estado=EstadoEncuesta.VALIDADA)
+
+        self.assertEqual(encuesta.comentario_revision, "")
+
+
+class PuedeResolverlaTest(BaseResolucionTest):
+    def test_una_recibida_se_puede_resolver(self):
+        permitido, motivo = self.encuesta.puede_resolverla(self.supervisor)
+
+        self.assertTrue(permitido)
+        self.assertEqual(motivo, "")
+
+    def test_un_borrador_no_se_puede_resolver(self):
+        """No lo ha enviado nadie todavía."""
+        encuesta = self.crear(direccion="Borrador 1", estado=EstadoEncuesta.BORRADOR)
+
+        permitido, motivo = encuesta.puede_resolverla(self.supervisor)
+
+        self.assertFalse(permitido)
+        self.assertIn("no está esperando revisión", motivo)
+
+    def test_una_ya_validada_no_se_vuelve_a_resolver(self):
+        encuesta = self.crear(direccion="Validada 1", estado=EstadoEncuesta.VALIDADA)
+
+        permitido, _ = encuesta.puede_resolverla(self.supervisor)
+
+        self.assertFalse(permitido)
+
+    def test_una_observada_tampoco(self):
+        """Volvió al encuestador: hay que esperar a que la reenvíe."""
+        encuesta = self.crear(direccion="Observada 1", estado=EstadoEncuesta.OBSERVADA)
+
+        permitido, _ = encuesta.puede_resolverla(self.supervisor)
+
+        self.assertFalse(permitido)
+
+    def test_nadie_valida_su_propia_encuesta(self):
+        """La separación de funciones de la HU-03, comprobada en el modelo."""
+        propia = self.recibida(direccion="Del supervisor", censista=self.supervisor)
+
+        permitido, motivo = propia.puede_resolverla(self.supervisor)
+
+        self.assertFalse(permitido)
+        self.assertIn("control cruzado", motivo)
+
+    def test_ni_siquiera_el_administrador_valida_la_suya(self):
+        """Tiene todos los permisos por definición, y aun así no puede."""
+        propia = self.recibida(direccion="Del admin", censista=self.admin)
+
+        permitido, _ = propia.puede_resolverla(self.admin)
+
+        self.assertFalse(permitido)
+
+    def test_otra_persona_si_puede_resolverla(self):
+        propia = self.recibida(direccion="Del supervisor", censista=self.supervisor)
+
+        permitido, _ = propia.puede_resolverla(self.admin)
+
+        self.assertTrue(permitido)
+
+
+class ResolverTest(BaseResolucionTest):
+    def test_resolver_deja_constancia_de_quien_y_cuando(self):
+        self.encuesta.resolver(EstadoEncuesta.VALIDADA, usuario=self.supervisor)
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.revisada_por, self.supervisor)
+        self.assertIsNotNone(self.encuesta.revisada_en)
+
+    def test_resolver_cambia_el_estado(self):
+        self.encuesta.resolver(EstadoEncuesta.VALIDADA, usuario=self.supervisor)
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.VALIDADA)
+
+    def test_resolver_guarda_el_comentario_recortado(self):
+        self.encuesta.resolver(
+            EstadoEncuesta.VALIDADA, usuario=self.supervisor, comentario="  Revisada  "
+        )
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.comentario_revision, "Revisada")
+
+    def test_anular_con_comentario_funciona(self):
+        self.encuesta.resolver(
+            EstadoEncuesta.ANULADA,
+            usuario=self.supervisor,
+            comentario="Duplicada: ya está en otra ficha.",
+        )
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.ANULADA)
+
+    def test_resolver_marca_la_encuesta_como_resuelta(self):
+        self.encuesta.resolver(EstadoEncuesta.VALIDADA, usuario=self.supervisor)
+
+        self.assertTrue(self.encuesta.esta_resuelta)
+
+    def test_una_recibida_todavia_no_esta_resuelta(self):
+        self.assertFalse(self.encuesta.esta_resuelta)
+
+    def test_resolver_conserva_la_fecha_de_envio(self):
+        """Validar no cambia cuándo el encuestador terminó su trabajo."""
+        enviada = self.encuesta.cerrada_en
+
+        self.encuesta.resolver(EstadoEncuesta.VALIDADA, usuario=self.supervisor)
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.cerrada_en, enviada)
+
+    def test_devuelve_la_propia_encuesta(self):
+        self.assertIs(
+            self.encuesta.resolver(EstadoEncuesta.VALIDADA, usuario=self.supervisor),
+            self.encuesta,
+        )
+
+
+# ==========================================================================
+# HU-14 — 63. LOS FORMULARIOS
+# ==========================================================================
+
+
+class ValidarFormTest(BaseResolucionTest):
+    def test_sin_comentario_es_valido(self):
+        formulario = ValidarEncuestaForm({"comentario": ""})
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_recorta_el_comentario(self):
+        formulario = ValidarEncuestaForm({"comentario": "  ok  "})
+        formulario.is_valid()
+
+        self.assertEqual(formulario.cleaned_data["comentario"], "ok")
+
+
+class AnularFormTest(BaseResolucionTest):
+    def test_un_formulario_completo_es_valido(self):
+        formulario = AnularEncuestaForm(self.datos_anulacion())
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_la_causa_es_obligatoria(self):
+        formulario = AnularEncuestaForm(self.datos_anulacion(causa=""))
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("causa", formulario.errors)
+
+    def test_una_causa_inventada_se_rechaza(self):
+        formulario = AnularEncuestaForm(self.datos_anulacion(causa="Porque sí"))
+
+        self.assertFalse(formulario.is_valid())
+
+    def test_el_motivo_es_obligatorio(self):
+        formulario = AnularEncuestaForm(self.datos_anulacion(motivo=""))
+
+        self.assertFalse(formulario.is_valid())
+
+    def test_un_motivo_de_una_letra_no_sirve(self):
+        """Lo va a leer la persona cuyo trabajo se descarta."""
+        formulario = AnularEncuestaForm(self.datos_anulacion(motivo="x"))
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("motivo", formulario.errors)
+
+    def test_hay_que_confirmar_la_consecuencia(self):
+        datos = self.datos_anulacion()
+        del datos["confirmar"]
+
+        formulario = AnularEncuestaForm(datos)
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("confirmar", formulario.errors)
+
+    def test_el_comentario_junta_la_causa_y_la_explicacion(self):
+        """La causa permite contar; el texto explica el caso concreto."""
+        formulario = AnularEncuestaForm(self.datos_anulacion())
+        formulario.is_valid()
+
+        completo = formulario.comentario_completo()
+
+        self.assertTrue(completo.startswith("Duplicada: "))
+        self.assertIn("Pasaje 4", completo)
+
+
+# ==========================================================================
+# HU-14 — 64. LA PANTALLA DE VALIDAR
+# ==========================================================================
+
+
+class ValidarEncuestaVistaTest(BaseResolucionTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.supervisor)
+
+    def test_muestra_la_confirmacion(self):
+        respuesta = self.client.get(self.url_validar)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "¿Validar esta encuesta?")
+
+    def test_muestra_el_resumen_de_lo_que_se_aprueba(self):
+        """Última mirada antes de firmar: después el encuestador no la puede tocar."""
+        respuesta = self.client.get(self.url_validar)
+
+        self.assertContains(respuesta, "Rosa Elena Millán")
+        self.assertContains(respuesta, "Lo que estás aprobando")
+
+    def test_avisa_si_la_ficha_esta_incompleta(self):
+        otra = self.recibida(direccion="Calle 2")
+        self.con_hogar(otra, declarados=5, personas=1)
+
+        respuesta = self.client.get(
+            reverse("fichas:validar_encuesta", kwargs={"pk": otra.pk})
+        )
+
+        self.assertContains(respuesta, "datos incompletos")
+        self.assertContains(respuesta, "Faltan 4 personas")
+
+    def test_el_post_valida_la_encuesta(self):
+        self.client.post(self.url_validar, {"comentario": ""})
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.VALIDADA)
+
+    def test_registra_quien_valido(self):
+        self.client.post(self.url_validar, {"comentario": ""})
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.revisada_por, self.supervisor)
+
+    def test_guarda_el_comentario_opcional(self):
+        self.client.post(self.url_validar, {"comentario": "Revisada con la familia."})
+
+        self.encuesta.refresh_from_db()
+        self.assertIn("Revisada con la familia", self.encuesta.comentario_revision)
+
+    def test_vuelve_a_la_bandeja(self):
+        respuesta = self.client.post(self.url_validar, {"comentario": ""})
+
+        self.assertRedirects(respuesta, reverse("fichas:bandeja_revision"))
+
+    def test_el_get_no_valida_nada(self):
+        """Con un GET capaz de validar, un <img src> ajeno aprobaría fichas."""
+        self.client.get(self.url_validar)
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.COMPLETADA)
+
+    # -- acceso ------------------------------------------------------------
+
+    def test_sin_el_permiso_de_validar_no_se_entra(self):
+        self.rol_supervisor.permisos.remove(
+            Permiso.objects.get(codigo="fichas.validar")
+        )
+
+        respuesta = self.client.get(self.url_validar)
+
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_el_encuestador_no_entra(self):
+        self.client.force_login(self.marta)
+
+        self.assertEqual(self.client.get(self.url_validar).status_code, 302)
+
+    def test_no_se_puede_validar_la_propia(self):
+        propia = self.recibida(direccion="Del supervisor", censista=self.supervisor)
+
+        respuesta = self.client.get(
+            reverse("fichas:validar_encuesta", kwargs={"pk": propia.pk})
+        )
+
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_el_post_sobre_la_propia_tampoco(self):
+        """Ocultar el botón no es una validación."""
+        propia = self.recibida(direccion="Del supervisor", censista=self.supervisor)
+
+        self.client.post(
+            reverse("fichas:validar_encuesta", kwargs={"pk": propia.pk}),
+            {"comentario": ""},
+        )
+
+        propia.refresh_from_db()
+        self.assertEqual(propia.estado, EstadoEncuesta.COMPLETADA)
+
+    def test_una_ya_validada_no_se_vuelve_a_validar(self):
+        """Dos supervisores en la misma bandeja no pueden pisarse."""
+        self.encuesta.resolver(EstadoEncuesta.VALIDADA, usuario=self.admin)
+
+        respuesta = self.client.post(self.url_validar, {"comentario": "otra vez"})
+
+        self.assertEqual(respuesta.status_code, 302)
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.revisada_por, self.admin)
+
+    def test_una_pendiente_no_se_puede_validar(self):
+        pendiente = self.crear(direccion="Nunca visitada")
+
+        respuesta = self.client.get(
+            reverse("fichas:validar_encuesta", kwargs={"pk": pendiente.pk})
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+
+
+# ==========================================================================
+# HU-14 — 65. LA PANTALLA DE ANULAR
+# ==========================================================================
+
+
+class AnularEncuestaVistaTest(BaseResolucionTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.supervisor)
+
+    def test_muestra_el_formulario(self):
+        respuesta = self.client.get(self.url_anular)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "¿Anular esta encuesta?")
+
+    def test_explica_que_anular_no_es_devolver(self):
+        """Es la confusión que hay que evitar antes de pulsar el botón."""
+        respuesta = self.client.get(self.url_anular)
+
+        self.assertContains(respuesta, "Anular no es devolver")
+
+    def test_avisa_de_que_los_datos_no_se_borran(self):
+        respuesta = self.client.get(self.url_anular)
+
+        self.assertContains(respuesta, "no se borran")
+
+    def test_muestra_lo_que_se_descarta(self):
+        respuesta = self.client.get(self.url_anular)
+
+        self.assertContains(respuesta, "Rosa Elena Millán")
+
+    def test_el_post_anula_la_encuesta(self):
+        self.client.post(self.url_anular, self.datos_anulacion())
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.ANULADA)
+
+    def test_guarda_la_causa_y_el_motivo(self):
+        self.client.post(self.url_anular, self.datos_anulacion())
+
+        self.encuesta.refresh_from_db()
+        self.assertTrue(self.encuesta.comentario_revision.startswith("Duplicada: "))
+
+    def test_registra_quien_anulo(self):
+        self.client.post(self.url_anular, self.datos_anulacion())
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.revisada_por, self.supervisor)
+
+    def test_sin_confirmar_no_anula(self):
+        datos = self.datos_anulacion()
+        del datos["confirmar"]
+
+        self.client.post(self.url_anular, datos)
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.COMPLETADA)
+
+    def test_sin_motivo_no_anula(self):
+        self.client.post(self.url_anular, self.datos_anulacion(motivo=""))
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.COMPLETADA)
+
+    def test_no_borra_el_hogar_ni_a_las_personas(self):
+        """El registro de que alguien la levantó y otro la descartó es lo auditable."""
+        self.client.post(self.url_anular, self.datos_anulacion())
+
+        self.assertTrue(GrupoFamiliar.objects.filter(pk=self.hogar.pk).exists())
+        self.assertEqual(self.hogar.integrantes.count(), 2)
+
+    def test_el_encuestador_no_puede_anular(self):
+        self.client.force_login(self.marta)
+
+        self.assertEqual(self.client.get(self.url_anular).status_code, 302)
+
+    def test_no_se_puede_anular_la_propia(self):
+        propia = self.recibida(direccion="Del supervisor", censista=self.supervisor)
+
+        self.client.post(
+            reverse("fichas:anular_encuesta", kwargs={"pk": propia.pk}),
+            self.datos_anulacion(),
+        )
+
+        propia.refresh_from_db()
+        self.assertEqual(propia.estado, EstadoEncuesta.COMPLETADA)
+
+
+# ==========================================================================
+# HU-14 — 66. LO QUE CAMBIA EN LAS PANTALLAS ANTERIORES
+# ==========================================================================
+
+
+class ResolucionEnLasPantallasTest(BaseResolucionTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.supervisor)
+        self.url_revisar_esta = self.url_revisar(self.encuesta)
+
+    def test_la_pantalla_de_revision_ofrece_las_dos_acciones(self):
+        respuesta = self.client.get(self.url_revisar_esta)
+
+        self.assertTrue(respuesta.context["puede_validar"])
+        self.assertContains(respuesta, self.url_validar)
+        self.assertContains(respuesta, self.url_anular)
+
+    def test_explica_por_que_no_se_puede_resolver_la_propia(self):
+        """Esconder los botones sin decir nada parecería un fallo."""
+        propia = self.recibida(direccion="Del supervisor", censista=self.supervisor)
+
+        respuesta = self.client.get(self.url_revisar(propia))
+
+        self.assertFalse(respuesta.context["puede_validar"])
+        self.assertContains(respuesta, "control cruzado")
+
+    def test_muestra_la_resolucion_ya_tomada(self):
+        self.encuesta.resolver(
+            EstadoEncuesta.ANULADA,
+            usuario=self.supervisor,
+            comentario="Duplicada: ya estaba levantada.",
+        )
+
+        respuesta = self.client.get(self.url_revisar_esta)
+
+        self.assertContains(respuesta, "Resolución")
+        self.assertContains(respuesta, "Duplicada: ya estaba levantada")
+
+    def test_la_bandeja_cuenta_las_anuladas(self):
+        self.crear(direccion="Anulada 1", estado=EstadoEncuesta.ANULADA)
+
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertEqual(respuesta.context["resumen"]["anuladas"], 1)
+
+    def test_la_bandeja_filtra_las_anuladas(self):
+        self.crear(direccion="Anulada 1", estado=EstadoEncuesta.ANULADA)
+
+        respuesta = self.client.get(
+            self.url_bandeja, {"estado": EstadoEncuesta.ANULADA}
+        )
+        direcciones = [e.direccion for e in respuesta.context["encuestas"]]
+
+        self.assertEqual(direcciones, ["Anulada 1"])
+
+    def test_el_grupo_revisadas_incluye_las_anuladas(self):
+        self.crear(direccion="Anulada 1", estado=EstadoEncuesta.ANULADA)
+        self.crear(direccion="Validada 1", estado=EstadoEncuesta.VALIDADA)
+
+        respuesta = self.client.get(self.url_bandeja, {"estado": "REVISADAS"})
+
+        self.assertEqual(len(respuesta.context["encuestas"]), 2)
+
+    def test_una_validada_sale_de_la_cola(self):
+        self.client.post(self.url_validar, {"comentario": ""})
+
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertEqual(respuesta.context["resumen"]["recibidas"], 0)
+
+    def test_el_encuestador_ve_el_comentario_en_su_ficha(self):
+        """La resolución es un dato que se consulta, no solo un hecho auditable."""
+        self.encuesta.resolver(
+            EstadoEncuesta.ANULADA,
+            usuario=self.supervisor,
+            comentario="Duplicada: ya estaba levantada.",
+        )
+        self.client.force_login(self.marta)
+
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertEqual(respuesta.status_code, 200)
+
+
+# ==========================================================================
+# HU-14 — 67. RECORRIDO COMPLETO
+# ==========================================================================
+
+
+class IntegracionHU14Test(BaseRevisionTest):
+    def test_una_se_valida_y_otra_se_anula(self):
+        buena = self.recibida(direccion="Av. Central 100", hace_dias=3)
+        self.con_hogar(buena, declarados=2, personas=2)
+        mala = self.recibida(direccion="Av. Central 118", hace_dias=1)
+        self.con_hogar(mala, declarados=2, personas=2)
+
+        self.client.force_login(self.supervisor)
+
+        # 1. Las dos están en la cola.
+        respuesta = self.client.get(self.url_bandeja)
+        self.assertEqual(respuesta.context["resumen"]["recibidas"], 2)
+
+        # 2. La primera se valida, con un comentario opcional.
+        self.client.post(
+            reverse("fichas:validar_encuesta", kwargs={"pk": buena.pk}),
+            {"comentario": "Revisada junto al encuestador."},
+        )
+        buena.refresh_from_db()
+        self.assertEqual(buena.estado, EstadoEncuesta.VALIDADA)
+        self.assertEqual(buena.revisada_por, self.supervisor)
+
+        # 3. La segunda resulta estar duplicada y se anula.
+        self.client.post(
+            reverse("fichas:anular_encuesta", kwargs={"pk": mala.pk}),
+            {
+                "causa": "Duplicada",
+                "motivo": "Es la misma vivienda que Av. Central 100.",
+                "confirmar": "on",
+            },
+        )
+        mala.refresh_from_db()
+        self.assertEqual(mala.estado, EstadoEncuesta.ANULADA)
+        self.assertIn("Duplicada", mala.comentario_revision)
+
+        # 4. Los datos de la anulada NO se borraron.
+        self.assertTrue(hasattr(mala, "grupo_familiar"))
+
+        # 5. La cola quedó vacía y los contadores lo reflejan.
+        respuesta = self.client.get(self.url_bandeja)
+        self.assertEqual(respuesta.context["resumen"]["recibidas"], 0)
+        self.assertEqual(respuesta.context["resumen"]["validadas"], 1)
+        self.assertEqual(respuesta.context["resumen"]["anuladas"], 1)
+
+        # 6. Ninguna de las dos la puede modificar ya el encuestador.
+        for encuesta in (buena, mala):
+            permitido, _ = encuesta.puede_registrarse()
+            self.assertFalse(permitido)
+
+        # 7. Y el supervisor no puede resolver una encuesta suya.
+        propia = self.recibida(direccion="Del supervisor", censista=self.supervisor)
+        respuesta = self.client.get(
+            reverse("fichas:validar_encuesta", kwargs={"pk": propia.pk})
+        )
+        self.assertEqual(respuesta.status_code, 302)
+
+

@@ -2096,3 +2096,211 @@ class RevisarEncuestaView(RevisionMixin, DetailView):
         return contexto
 
 
+# ==========================================================================
+# HU-14 — APROBAR O ANULAR
+# ==========================================================================
+
+
+class ResolverEncuestaMixin(PermisoRequeridoMixin):
+    """Puerta de las pantallas que RESUELVEN una encuesta.
+
+    Aquí sí se exige `fichas.validar`, y no `fichas.ver_todas` como en la HU-13. Es
+    el corte que aquella historia dejó preparado: leer el trabajo de todos y
+    firmarlo son dos capacidades distintas, y separarlas permite que un coordinador
+    mire el operativo sin quedar habilitado para aprobar fichas.
+
+    El permiso lo sembró la HU-04 con esta descripción, escrita cuando no existía
+    ninguna pantalla de fichas: «Revisar el trabajo de un censista y aprobarlo o
+    devolverlo con observaciones. Es el control de calidad del censo.» Dos historias
+    después, es exactamente lo que hace.
+    """
+
+    permisos_requeridos = ("fichas.validar",)
+    mensaje_sin_permiso = "No tienes permiso para aprobar ni anular encuestas."
+
+    @cached_property
+    def encuesta(self):
+        """Cualquier encuesta ya levantada: quien resuelve no necesita ser su dueño.
+
+        Es lo contrario de las pantallas del encuestador, que filtran por
+        `censista=request.user`. Aquí el filtro sería absurdo —resolver es
+        precisamente actuar sobre el trabajo de otra persona— y la regla que
+        importa es la inversa: no resolver el PROPIO. Eso lo comprueba
+        `puede_resolverla()`.
+        """
+        return get_object_or_404(
+            Encuesta.objects.exclude(estado=EstadoEncuesta.PENDIENTE).select_related(
+                "vivienda",
+                "vivienda__zona",
+                "vivienda__zona__sector",
+                "censista",
+                "grupo_familiar",
+            ),
+            pk=self.kwargs["pk"],
+        )
+
+    def comprobar_resoluble(self):
+        """None si se puede resolver, o una redirección con el motivo si no.
+
+        Se comprueba en el GET y en el POST. No es paranoia: la dirección del POST
+        se puede enviar a mano, y dos supervisores mirando la misma bandeja pueden
+        pulsar el botón de la misma ficha con segundos de diferencia. El segundo
+        tiene que encontrarse con «ya está resuelta» y no sobrescribir la decisión
+        del primero.
+        """
+        permitido, motivo = self.encuesta.puede_resolverla(self.request.user)
+
+        if permitido:
+            return None
+
+        messages.error(self.request, motivo)
+        return redirect("fichas:revisar_encuesta", pk=self.encuesta.pk)
+
+    def contexto_base(self):
+        """Lo que las dos pantallas muestran de la encuesta que se va a resolver.
+
+        Las dos enseñan un resumen antes de pedir la confirmación, porque las dos
+        decisiones son difíciles de revertir: una encuesta validada ya no la puede
+        tocar el encuestador, y una anulada descarta su trabajo. Confirmar a ciegas
+        es exactamente lo que no debe pasar.
+        """
+        hogar = getattr(self.encuesta, "grupo_familiar", None)
+
+        return {
+            "encuesta": self.encuesta,
+            "hogar": hogar,
+            "resumen": self.encuesta.resumen_para_revision(),
+            "integrantes": hogar.integrantes_ordenados() if hogar else [],
+        }
+
+
+class ValidarEncuestaView(ResolverEncuestaMixin, View):
+    """Aprueba una encuesta. GET confirma, POST ejecuta.
+
+    URL: /encuestas/<pk>/validar/
+
+    ----------------------------------------------------------------------
+    LO QUE SIGNIFICA VALIDAR
+    ----------------------------------------------------------------------
+    La ficha pasa a VALIDADA y sale definitivamente del circuito: el encuestador ya
+    no puede modificarla —`puede_registrarse()` lo impide desde la HU-08— y deja de
+    aparecer en la cola de revisión. Es el final feliz del recorrido que empezó en
+    la HU-07.
+
+    Dos pasos y no un botón directo desde la bandeja, por lo mismo que en toda la
+    aplicación: un GET debe ser seguro, y si validar se pudiera hacer con un GET, un
+    `<img src="...">` incrustado en cualquier página aprobaría fichas con la sesión
+    del supervisor. Además, la pantalla intermedia es la última oportunidad de mirar
+    el resumen antes de firmar.
+    """
+
+    template_name = "fichas/encuesta_validar.html"
+
+    def get(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_resoluble()) is not None:
+            return respuesta
+
+        return render(request, self.template_name, self.contexto(ValidarEncuestaForm()))
+
+    def post(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_resoluble()) is not None:
+            return respuesta
+
+        formulario = ValidarEncuestaForm(request.POST)
+
+        if not formulario.is_valid():
+            return render(request, self.template_name, self.contexto(formulario))
+
+        with transaction.atomic():
+            self.encuesta.resolver(
+                EstadoEncuesta.VALIDADA,
+                usuario=request.user,
+                comentario=formulario.cleaned_data["comentario"],
+            )
+
+        messages.success(
+            request,
+            f"Encuesta de {self.encuesta.direccion} validada. El encuestador ya no "
+            "puede modificarla.",
+        )
+        return redirect("fichas:bandeja_revision")
+
+    def contexto(self, formulario):
+        return {
+            **self.contexto_base(),
+            "titulo_pagina": f"Validar {self.encuesta.direccion}",
+            "form": formulario,
+        }
+
+
+class AnularEncuestaView(ResolverEncuestaMixin, View):
+    """Descarta una encuesta que no sirve. GET muestra el formulario, POST ejecuta.
+
+    URL: /encuestas/<pk>/anular/
+
+    ----------------------------------------------------------------------
+    ANULAR ES LA DECISIÓN MÁS GRAVE DE ESTA PANTALLA
+    ----------------------------------------------------------------------
+    Tira el trabajo de otra persona y deja esa vivienda sin datos en el censo. No es
+    lo mismo que devolverla con observaciones —la historia siguiente—, que la reabre
+    para que se corrija: anular cierra sin corregir, porque no hay nada que arreglar
+    o porque arreglarlo exigiría levantarla de cero.
+
+    De ahí las tres cosas que pide el formulario: una causa de una lista cerrada,
+    una explicación de al menos una frase y una casilla de confirmación que dice en
+    voz alta la consecuencia. Ninguna de las tres es burocracia: la ficha anulada la
+    va a leer el encuestador cuyo trabajo se descarta.
+
+    ----------------------------------------------------------------------
+    LO QUE NO HACE, Y ES A PROPÓSITO
+    ----------------------------------------------------------------------
+    No borra nada. La encuesta, su hogar, sus integrantes y sus fotografías siguen
+    ahí, marcados como anulados. Borrarlos sería tentador —«no sirven»— y sería un
+    error: el registro de que ALGUIEN levantó esa ficha y de que otra persona la
+    descartó, con su motivo, es justamente lo que permite auditar el operativo y
+    detectar si un encuestador está inventando datos.
+
+    Es la misma distinción que la HU-09 razonó al permitir borrar un integrante: allí
+    se borraba un dato capturado por error, sin pasado que explicar. Aquí hay pasado
+    y explica algo.
+    """
+
+    template_name = "fichas/encuesta_anular.html"
+
+    def get(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_resoluble()) is not None:
+            return respuesta
+
+        return render(request, self.template_name, self.contexto(AnularEncuestaForm()))
+
+    def post(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_resoluble()) is not None:
+            return respuesta
+
+        formulario = AnularEncuestaForm(request.POST)
+
+        if not formulario.is_valid():
+            return render(request, self.template_name, self.contexto(formulario))
+
+        with transaction.atomic():
+            self.encuesta.resolver(
+                EstadoEncuesta.ANULADA,
+                usuario=request.user,
+                comentario=formulario.comentario_completo(),
+            )
+
+        messages.warning(
+            request,
+            f"Encuesta de {self.encuesta.direccion} anulada. Esa vivienda quedó sin "
+            "datos: si hay que volver a levantarla, cárgala de nuevo.",
+        )
+        return redirect("fichas:bandeja_revision")
+
+    def contexto(self, formulario):
+        return {
+            **self.contexto_base(),
+            "titulo_pagina": f"Anular {self.encuesta.direccion}",
+            "form": formulario,
+        }
+
+
