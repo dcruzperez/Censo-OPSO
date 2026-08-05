@@ -87,6 +87,393 @@ from django.utils import timezone
 from usuarios.validators import limpiar_rut, validar_rut
 
 
+# ==========================================================================
+# 1. LA VIVIENDA: EL OBJETO FÍSICO (HU-08)
+# ==========================================================================
+
+
+# --------------------------------------------------------------------------
+# LOS LÍMITES DEL TERRITORIO NACIONAL (HU-11)
+#
+# Se escriben UNA vez, aquí, y los usan la restricción de la tabla y la validación
+# del formulario. Dos copias con números distintos darían dos veredictos para el
+# mismo punto, y la que fallara sería la que nadie mira.
+#
+# Van a nivel de módulo y no dentro de la clase por una limitación del lenguaje: el
+# cuerpo de una clase anidada —`class Meta`— no ve los nombres de la clase que la
+# contiene, así que una constante declarada junto a los campos no se podría usar en
+# `constraints`.
+#
+# El rango incluye el territorio INSULAR. Acotarlo a Chile continental (-76 a -66 de
+# longitud) dejaría fuera Rapa Nui, que está en -109,4 y es territorio nacional.
+# --------------------------------------------------------------------------
+LATITUD_MINIMA = Decimal("-56.6")
+LATITUD_MAXIMA = Decimal("-17.4")
+LONGITUD_MINIMA = Decimal("-109.6")
+LONGITUD_MAXIMA = Decimal("-66.3")
+
+
+class TipoVivienda(models.TextChoices):
+    """Qué clase de vivienda es.
+
+    Las opciones no se inventaron: siguen la clasificación con que el Instituto
+    Nacional de Estadísticas describe las viviendas en el censo chileno. Usar el
+    vocabulario oficial tiene una ventaja concreta y no es de estilo: permite
+    comparar los resultados de OPSO con las cifras nacionales. Una categoría
+    propia («casa chica», «casa grande») produciría datos que no se pueden cruzar
+    con nada.
+    """
+
+    CASA = "CASA", "Casa"
+    DEPARTAMENTO = "DEPARTAMENTO", "Departamento en edificio"
+    PIEZA = "PIEZA", "Pieza en casa antigua o conventillo"
+    MEDIAGUA = "MEDIAGUA", "Mediagua o mejora"
+    RANCHO = "RANCHO", "Rancho o choza"
+    PRECARIA = "PRECARIA", "Vivienda precaria de materiales reutilizados"
+    OTRA = "OTRA", "Otra"
+
+
+class TenenciaVivienda(models.TextChoices):
+    """A qué título la ocupa la familia.
+
+    Es el dato que más pesa en la focalización social de todo el formulario: una
+    familia arrendando y una propietaria con la casa pagada pueden tener el mismo
+    ingreso y una vulnerabilidad muy distinta.
+    """
+
+    PROPIA_PAGADA = "PROPIA_PAGADA", "Propia, totalmente pagada"
+    PROPIA_PAGANDOSE = "PROPIA_PAGANDOSE", "Propia, pagándose"
+    ARRENDADA = "ARRENDADA", "Arrendada"
+    CEDIDA = "CEDIDA", "Cedida por trabajo o por un familiar"
+    IRREGULAR = "IRREGULAR", "Ocupación irregular"
+    OTRA = "OTRA", "Otra"
+
+
+class MaterialidadMuros(models.TextChoices):
+    """De qué están hechos los muros exteriores.
+
+    Se pregunta solo por los muros y no también por el techo y el piso, que es lo
+    que hace el censo completo. La razón es que el formulario lo llena una persona
+    de pie en la puerta: cada pregunta cuesta tiempo y cansa a quien responde, y
+    los muros son el indicador que mejor resume la calidad constructiva. Si un
+    operativo necesitara el detalle, se agregan dos columnas; empezar por las tres
+    habría sido pedir datos «por si acaso».
+    """
+
+    HORMIGON = "HORMIGON", "Hormigón armado"
+    ALBANILERIA = "ALBANILERIA", "Albañilería (ladrillo, bloque, piedra)"
+    TABIQUE_FORRADO = "TABIQUE_FORRADO", "Tabique forrado por ambas caras"
+    TABIQUE_SIN_FORRO = "TABIQUE_SIN_FORRO", "Tabique sin forro interior"
+    ADOBE = "ADOBE", "Adobe, barro o quincha"
+    PRECARIO = "PRECARIO", "Materiales precarios o de desecho"
+
+
+class OrigenAgua(models.TextChoices):
+    """De dónde llega el agua."""
+
+    RED_PUBLICA = "RED_PUBLICA", "Red pública"
+    POZO = "POZO", "Pozo o noria"
+    CAMION = "CAMION", "Camión aljibe"
+    SUPERFICIAL = "SUPERFICIAL", "Río, vertiente, estero o lago"
+    OTRO = "OTRO", "Otro"
+
+
+class SistemaSanitario(models.TextChoices):
+    """Cómo se eliminan las aguas servidas."""
+
+    ALCANTARILLADO = "ALCANTARILLADO", "Conectado al alcantarillado"
+    FOSA = "FOSA", "Fosa séptica"
+    LETRINA = "LETRINA", "Letrina sanitaria conectada a pozo"
+    CAJON = "CAJON", "Cajón sobre pozo negro"
+    NO_TIENE = "NO_TIENE", "No dispone de servicio higiénico"
+
+
+class Vivienda(models.Model):
+    """Una vivienda concreta dentro de una zona: el objeto físico del censo.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 1 — la vivienda es una tabla, no columnas de la encuesta
+    ----------------------------------------------------------------------
+    Ver la explicación larga en la cabecera del módulo. En corto: la vivienda es
+    estable y la encuesta es efímera, y una misma vivienda puede alojar más de un
+    hogar. Guardar la materialidad en la encuesta obligaría a repetirla en cada
+    hogar de la misma casa, con dos copias que pueden contradecirse.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 2 — sigue sin haber unicidad por dirección
+    ----------------------------------------------------------------------
+    Ahora que las viviendas son filas propias, sería tentador exigir que no se
+    repita una dirección dentro de una zona. Sigue siendo incorrecto, pero por un
+    motivo distinto del de la HU-07: el caso de los dos hogares ya está resuelto
+    por el modelo, y lo que queda es el sitio con DOS VIVIENDAS en la misma
+    dirección —la casa del fondo y la de adelante—, que en terreno es
+    frecuentísimo y no tiene numeración propia.
+
+    Lo que sí hace el sistema es AVISAR: al registrar una vivienda en una
+    dirección donde ya hay otra, el formulario se detiene y pide confirmar que se
+    trata de una vivienda distinta y no de un duplicado (ver ViviendaForm). La
+    diferencia entre bloquear y avisar es la diferencia entre perder un dato real
+    y perder cinco segundos.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 3 — obligatorias EN EL FORMULARIO, opcionales EN LA COLUMNA
+    ----------------------------------------------------------------------
+    Las seis características admiten vacío en la base de datos y sin embargo el
+    formulario de registro las exige todas. La asimetría es deliberada y tiene un
+    motivo concreto, no es una imprecisión.
+
+    Un censo con la mitad de las viviendas «sin dato» no permite calcular nada, y
+    la persona que está en la puerta puede responderlas todas mirando: por eso el
+    formulario no deja guardar sin ellas.
+
+    Pero la columna tiene que admitir el vacío porque YA EXISTEN FILAS SIN ESA
+    INFORMACIÓN: la HU-07 creó encuestas —el padrón por visitar— cuando la
+    vivienda todavía no se había descrito. La migración que introduce esta tabla
+    tiene que convertir esas encuestas en viviendas, y la única alternativa a
+    dejar el dato vacío sería INVENTARLO («pongamos casa, que es lo más común»).
+    Eso es fabricar datos del censo, y un dato inventado es peor que un dato
+    ausente porque nadie puede distinguirlo después.
+
+    El sistema lo hace visible en vez de esconderlo: `datos_completos` responde si
+    la vivienda está descrita, y la ficha muestra «sin describir» con el enlace
+    para completarla.
+
+    `observaciones` es opcional también en el formulario: es donde cabe lo que el
+    formulario no previó, y obligarlo produciría texto de relleno.
+    """
+
+    zona = models.ForeignKey(
+        "operativos.Zona",
+        on_delete=models.PROTECT,
+        related_name="viviendas",
+        verbose_name="zona",
+        help_text="Zona del sector en la que se ubica la vivienda.",
+    )
+    direccion = models.CharField(
+        "dirección",
+        max_length=200,
+        help_text="Calle y número. Ej.: Pasaje Los Robles 1425.",
+    )
+    referencia = models.CharField(
+        "referencia",
+        max_length=200,
+        blank=True,
+        help_text=(
+            "Cómo reconocerla desde la calle. Ej.: casa verde, portón negro, "
+            "la del fondo del sitio."
+        ),
+    )
+    # Las seis características. Todas admiten vacío en la columna y ninguna en el
+    # formulario: ver la decisión de diseño 3.
+    tipo = models.CharField(
+        "tipo de vivienda",
+        max_length=20,
+        choices=TipoVivienda.choices,
+        blank=True,
+        help_text="Clasificación según el censo.",
+    )
+    tenencia = models.CharField(
+        "tenencia",
+        max_length=20,
+        choices=TenenciaVivienda.choices,
+        blank=True,
+        help_text="A qué título ocupa la familia esta vivienda.",
+    )
+    materialidad_muros = models.CharField(
+        "materialidad de los muros",
+        max_length=20,
+        choices=MaterialidadMuros.choices,
+        blank=True,
+        help_text="Material predominante de los muros exteriores.",
+    )
+    origen_agua = models.CharField(
+        "origen del agua",
+        max_length=20,
+        choices=OrigenAgua.choices,
+        blank=True,
+        help_text="De dónde proviene el agua que usa la vivienda.",
+    )
+    sistema_sanitario = models.CharField(
+        "sistema sanitario",
+        max_length=20,
+        choices=SistemaSanitario.choices,
+        blank=True,
+        help_text="Cómo se eliminan las aguas servidas.",
+    )
+    # Nulo y no False: «no sabemos» y «no tiene luz» son cosas distintas, y un
+    # booleano de dos valores obligaría a elegir una de las dos al migrar las
+    # viviendas que la HU-07 dejó sin describir.
+    tiene_electricidad = models.BooleanField(
+        "tiene electricidad",
+        null=True,
+        blank=True,
+        help_text="Si cuenta con suministro eléctrico regular.",
+    )
+    observaciones = models.TextField(
+        "observaciones",
+        blank=True,
+        help_text="Lo que el formulario no previó y conviene dejar anotado.",
+    )
+    # ------------------------------------------------------------------
+    class Meta:
+        db_table = "fichas_vivienda"
+        verbose_name = "vivienda"
+        verbose_name_plural = "viviendas"
+        # Orden del recorrido: es como se camina una calle.
+        ordering = ["zona__sector__nombre", "zona__nombre", "direccion"]
+        constraints = [
+            # El vacío se admite (vivienda sin describir todavía), pero un valor
+            # inventado no: o es una de las opciones del catálogo, o no es nada.
+            models.CheckConstraint(
+                condition=models.Q(tipo__in=TipoVivienda.values) | models.Q(tipo=""),
+                name="vivienda_tipo_valido",
+            ),
+            # --------------------------------------------------------------
+            # HU-11: las dos coordenadas van juntas o no va ninguna.
+            #
+            # Media coordenada no ubica nada: una latitud sin longitud es una línea
+            # que cruza el planeta. Y sin la restricción, un formulario a medio
+            # enviar o un script dejarían filas que parecen tener ubicación y no la
+            # tienen, que es peor que no tenerla, porque un mapa las dibujaría en
+            # cualquier parte.
+            # --------------------------------------------------------------
+            models.CheckConstraint(
+                condition=(
+                    models.Q(latitud__isnull=True, longitud__isnull=True)
+                    | models.Q(latitud__isnull=False, longitud__isnull=False)
+                ),
+                name="vivienda_coordenadas_completas",
+            ),
+            # --------------------------------------------------------------
+            # HU-11: el punto tiene que caer en Chile.
+            #
+            # No es una comprobación decorativa: el error más común al escribir
+            # coordenadas a mano es OLVIDAR EL SIGNO, y una latitud +36 en vez de
+            # -36 pone la vivienda en Argelia sin que nada avise. También atrapa el
+            # clásico de intercambiar latitud y longitud.
+            #
+            # El rango incluye el territorio INSULAR y no solo el continental: si
+            # se acotara a la longitud de Chile continental (-76 a -66), Rapa Nui
+            # (-109,4) quedaría fuera, y es territorio nacional donde puede haber un
+            # operativo. Un límite que rechaza datos verdaderos es peor que no
+            # tenerlo.
+            # --------------------------------------------------------------
+            models.CheckConstraint(
+                condition=(
+                    models.Q(latitud__isnull=True)
+                    | models.Q(
+                        latitud__gte=LATITUD_MINIMA,
+                        latitud__lte=LATITUD_MAXIMA,
+                        longitud__gte=LONGITUD_MINIMA,
+                        longitud__lte=LONGITUD_MAXIMA,
+                    )
+                ),
+                name="vivienda_coordenadas_en_chile",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(tenencia__in=TenenciaVivienda.values)
+                    | models.Q(tenencia="")
+                ),
+                name="vivienda_tenencia_valida",
+            ),
+        ]
+        indexes = [
+            # La consulta del aviso de duplicado y la del listado por zona.
+            models.Index(fields=["zona", "direccion"], name="idx_vivienda_zona"),
+        ]
+
+    def __str__(self):
+        return self.direccion
+
+    def get_absolute_url(self):
+        return reverse("fichas:vivienda_detalle", kwargs={"pk": self.pk})
+
+    # -- atajos por la jerarquía territorial --------------------------------
+
+    @property
+    def sector(self):
+        return self.zona.sector
+
+    @property
+    def comuna(self):
+        return self.zona.sector.comuna
+
+    @property
+    def operativo(self):
+        return self.zona.sector.operativo
+
+    @property
+    def nombre_completo(self):
+        """«Pasaje Los Robles 1425 · Zona 1 · Los Boldos»."""
+        return f"{self.direccion} · {self.zona.nombre} · {self.zona.sector.nombre}"
+
+    # -- ¿está descrita? ----------------------------------------------------
+
+    #: Las características que hacen que una vivienda cuente como descrita.
+    CARACTERISTICAS = (
+        "tipo",
+        "tenencia",
+        "materialidad_muros",
+        "origen_agua",
+        "sistema_sanitario",
+    )
+
+    @property
+    def datos_completos(self):
+        """True si la vivienda tiene sus seis características registradas.
+
+        Existe para que «sin describir» sea una respuesta explícita del modelo y no
+        una deducción que cada pantalla haga a su manera. Sin esto, el listado
+        preguntaría por `tipo`, la ficha por `tipo` y `tenencia`, y las dos
+        estarían mostrando cosas distintas con la misma etiqueta.
+        """
+        if self.tiene_electricidad is None:
+            return False
+
+        return all(getattr(self, campo) for campo in self.CARACTERISTICAS)
+
+    # -- hogares ------------------------------------------------------------
+
+    def total_hogares(self):
+        """Cuántas encuestas —es decir, cuántos hogares— hay en esta vivienda."""
+        return self.encuestas.count()
+
+    @property
+    def tiene_varios_hogares(self):
+        return self.total_hogares() > 1
+
+    def puede_registrarse_trabajo(self):
+        """¿Se puede levantar información aquí? (True, "") o (False, motivo).
+
+        Se devuelve el MOTIVO y no un booleano suelto, por lo mismo que
+        Comuna.puede_desactivarse() en la HU-05 y Sector.puede_recibir_asignaciones()
+        en la HU-06: la vista tiene que poder EXPLICAR el rechazo. «No se puede
+        porque el operativo está cerrado» es accionable; «no se puede» obliga a
+        adivinar.
+        """
+        if not self.zona.sector.operativo.admite_cambios_de_territorio:
+            return False, (
+                f"El operativo «{self.zona.sector.operativo.nombre}» está cerrado: "
+                "no se puede registrar ni modificar información en él."
+            )
+
+        if not self.zona.sector.activo:
+            return False, (
+                f"El sector «{self.zona.sector.nombre}» está desactivado: no forma "
+                "parte del territorio vigente del operativo."
+            )
+
+        if not self.zona.activa:
+            return False, (
+                f"La zona «{self.zona.nombre}» está desactivada: no se cuenta en el "
+                "avance del sector."
+            )
+
+        return True, ""
+
+
+# ==========================================================================
 # 2. LA ENCUESTA: EL TRABAJO Y SU ESTADO (HU-07)
 # ==========================================================================
 
@@ -506,6 +893,25 @@ class Encuesta(models.Model):
         return self.vivienda.nombre_completo
 
     # ------------------------------------------------------------------
+    # El dato levantado (HU-08)
+    # ------------------------------------------------------------------
+
+    @property
+    def tiene_grupo_familiar(self):
+        """True si ya se registró el hogar de esta encuesta.
+
+        Se comprueba con hasattr y no con un try/except sobre el acceso, porque en
+        una relación uno a uno Django lanza RelatedObjectDoesNotExist cuando el
+        otro lado no existe, y `hasattr` es la forma que la documentación de
+        Django recomienda para preguntarlo.
+
+        Existe porque «¿ya empecé a levantar esta encuesta?» es una pregunta que se
+        hacen la plantilla, la vista y la historia de borradores, y las tres deben
+        responderla igual.
+        """
+        return hasattr(self, "grupo_familiar")
+
+    # ------------------------------------------------------------------
     # Estado
     # ------------------------------------------------------------------
 
@@ -686,3 +1092,164 @@ class Encuesta(models.Model):
 
 
 # ==========================================================================
+# 3. EL GRUPO FAMILIAR: EL DATO LEVANTADO (HU-08)
+# ==========================================================================
+
+
+class GrupoFamiliar(models.Model):
+    """El hogar que vive en la vivienda: lo que la encuesta viene a averiguar.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 1 — uno a uno con la encuesta, y no columnas de ella
+    ----------------------------------------------------------------------
+    Todo esto cabría como columnas de `Encuesta`, y sería un error por dos razones
+    distintas:
+
+      a) MEZCLARÍA GESTIÓN Y CONTENIDO. `Encuesta` gobierna el trabajo (quién,
+         estado, fechas) y esta tabla guarda el censo (quién vive, cuántos son,
+         cuánto ingresan). Con las historias que faltan del sprint, `Encuesta`
+         acabaría con treinta columnas de las que la mitad no tienen nada que ver
+         con su función.
+
+      b) PERDERÍA UNA INFORMACIÓN QUE HOY ES GRATIS. Que la fila EXISTA significa
+         «aquí ya se levantó algo», y que no exista significa «esto no se ha
+         tocado». Con columnas nulas dentro de Encuesta habría que preguntar
+         «¿está vacío el nombre del jefe de hogar?» para deducir lo mismo, y esa
+         deducción se escribiría distinta en cada pantalla.
+
+    Por eso `Encuesta.tiene_grupo_familiar` es una comprobación de existencia y no
+    de contenido.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 2 — CASCADE, al revés que casi todo el proyecto
+    ----------------------------------------------------------------------
+    OPSO desactiva en vez de borrar prácticamente en todas partes: cuentas (HU-03),
+    comunas y sectores (HU-05), asignaciones (HU-06). Aquí se usa CASCADE, y no es
+    un descuido: este dato no tiene ninguna existencia fuera de su encuesta. No es
+    «el hogar de la casa 1425», que sobreviviría al levantamiento; es «lo que se
+    respondió en ESTA encuesta». Sin la encuesta, la fila no significa nada y no
+    hay ningún historial que preservar en ella.
+
+    La encuesta, en cambio, sigue sin borrarse nunca: se cierra con un estado.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 3 — `integrantes_declarados` existe aunque venga la HU-09
+    ----------------------------------------------------------------------
+    La historia siguiente registra a las personas del hogar una por una, así que
+    este número se podría calcular contándolas. Se guarda igual, y por el mismo
+    motivo por el que la HU-05 guarda `viviendas_estimadas` en la zona teniendo
+    después las viviendas reales: son dos datos distintos y su DIFERENCIA es
+    información.
+
+    «La señora dijo que viven seis y hay tres personas registradas» significa que
+    la encuesta está incompleta, y eso solo se puede detectar si se guardó lo que
+    la señora dijo. Sin este campo, una ficha a medias sería indistinguible de una
+    ficha terminada de un hogar de tres.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 4 — el RUT del jefe de hogar es OPCIONAL
+    ----------------------------------------------------------------------
+    Es el único dato identificatorio fuerte del formulario y por eso da la
+    tentación de exigirlo. No se exige, por una razón de terreno y otra legal:
+
+      - En terreno, mucha gente no lo recuerda de memoria y no siempre está
+        dispuesta a ir a buscar el carnet a la primera visita. Exigirlo
+        convertiría una encuesta completa en una encuesta que no se puede guardar.
+      - Legalmente, el RUT es un dato personal y pedirlo como condición para
+        registrar un hogar es recoger más de lo necesario para el fin declarado
+        (Ley N° 19.628 y Ley N° 21.719).
+
+    Cuando SÍ se entrega, se valida con el mismo validador de la HU-01
+    (`validar_rut`, con dígito verificador) y se normaliza con `limpiar_rut`, para
+    que «12.345.678-5» y «12345678-5» sean el mismo dato y no dos.
+    """
+
+    encuesta = models.OneToOneField(
+        Encuesta,
+        on_delete=models.CASCADE,
+        related_name="grupo_familiar",
+        verbose_name="encuesta",
+        help_text="Encuesta en la que se levantó este hogar.",
+    )
+    jefe_hogar_nombre = models.CharField(
+        "nombre del jefe o jefa de hogar",
+        max_length=150,
+        help_text="Nombre completo de quien la familia reconoce como jefe de hogar.",
+    )
+    jefe_hogar_rut = models.CharField(
+        "RUT del jefe o jefa de hogar",
+        max_length=12,
+        blank=True,
+        validators=[validar_rut],
+        help_text="Formato 12345678-9. Opcional: no se exige para poder registrar.",
+    )
+    telefono_contacto = models.CharField(
+        "teléfono de contacto",
+        max_length=20,
+        blank=True,
+        help_text="Para coordinar una segunda visita si la encuesta queda a medias.",
+    )
+    integrantes_declarados = models.PositiveSmallIntegerField(
+        "personas que viven en el hogar",
+        help_text=(
+            "Cuántas personas declara la familia. Se contrasta con las que se "
+            "registren una por una."
+        ),
+    )
+    ingreso_mensual = models.PositiveIntegerField(
+        "ingreso mensual del hogar",
+        null=True,
+        blank=True,
+        help_text=(
+            "Suma aproximada en pesos de todos los ingresos del hogar. Opcional: "
+            "es la pregunta que más se prefiere no contestar."
+        ),
+    )
+    observaciones = models.TextField(
+        "observaciones",
+        blank=True,
+        help_text="Situaciones que el formulario no recoge y conviene dejar por escrito.",
+    )
+    registrado_en = models.DateTimeField("registrado en", auto_now_add=True)
+    actualizado_en = models.DateTimeField("actualizado en", auto_now=True)
+
+    class Meta:
+        db_table = "fichas_grupo_familiar"
+        verbose_name = "grupo familiar"
+        verbose_name_plural = "grupos familiares"
+        ordering = ["jefe_hogar_nombre"]
+        constraints = [
+            # Un hogar tiene al menos una persona: el propio jefe de hogar. Un cero
+            # no es un dato desconocido —para eso el campo sería nulo—, es un dato
+            # imposible, y aceptarlo desviaría cualquier promedio del operativo.
+            models.CheckConstraint(
+                condition=models.Q(integrantes_declarados__gte=1),
+                name="grupo_familiar_al_menos_una_persona",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Hogar de {self.jefe_hogar_nombre}"
+
+    def save(self, *args, **kwargs):
+        """Normaliza el RUT antes de escribir, igual que hace Usuario.save()."""
+        self.jefe_hogar_rut = limpiar_rut(self.jefe_hogar_rut) or ""
+        super().save(*args, **kwargs)
+
+    @property
+    def ingreso_por_persona(self):
+        """Ingreso mensual dividido por el número de personas declaradas.
+
+        Es el indicador que de verdad se usa para focalizar: 600.000 pesos son
+        holgura para una persona sola y pobreza para un hogar de seis. Se calcula
+        aquí y no en la plantilla porque es una regla del negocio, y porque una
+        división en una plantilla obliga a repetir la comprobación del cero.
+
+        Devuelve None si no se declaró el ingreso, que es distinto de cero.
+        """
+        if self.ingreso_mensual is None or not self.integrantes_declarados:
+            return None
+
+        return self.ingreso_mensual // self.integrantes_declarados
+
+    # ------------------------------------------------------------------

@@ -445,3 +445,388 @@ class EncuestaDetailView(PermisoRequeridoMixin, DetailView):
         return contexto
 
 
+# ==========================================================================
+# HU-08 — REGISTRAR LA VIVIENDA Y SU GRUPO FAMILIAR
+# ==========================================================================
+
+
+class RegistroEnTerrenoMixin(PermisoRequeridoMixin):
+    """Puerta de las pantallas que ESCRIBEN información del censo.
+
+    `fichas.crear` y `fichas.editar` los sembró la HU-04 y el reparto inicial se
+    los dio al rol Censista y a nadie más —ni siquiera al Supervisor, que valida
+    pero no levanta—. Esa separación de funciones venía de la HU-03 y aquí se
+    cumple sola: el supervisor no puede registrar fichas porque no tiene el
+    permiso, no porque una vista lo compruebe a mano.
+
+    Basta con uno de los dos: quien puede crear una ficha puede corregir lo que
+    acaba de escribir, y exigir los dos obligaría a conceder siempre ambos.
+    """
+
+    permisos_requeridos = ("fichas.crear", "fichas.editar")
+    mensaje_sin_permiso = (
+        "No tienes permiso para registrar información de terreno en OPSO."
+    )
+
+
+class RegistrarViviendaView(RegistroEnTerrenoMixin, View):
+    """Alta de una vivienda nueva y de su primera encuesta. GET muestra, POST guarda.
+
+    URL: /encuestas/viviendas/nueva/
+
+    ----------------------------------------------------------------------
+    UNA VIVIENDA NUEVA NACE SIEMPRE CON UNA ENCUESTA
+    ----------------------------------------------------------------------
+    Guardar la vivienda crea además la encuesta de quien la registró, en estado
+    BORRADOR. Las dos cosas ocurren en la misma transacción y no hay pantalla para
+    hacer solo una.
+
+    Es deliberado: nadie registra una vivienda en terreno «por si acaso». Se
+    registra porque se está ahí, tocando esa puerta, y por lo tanto el trabajo
+    empezó. Dejar la vivienda sin encuesta produciría casas que no le aparecen a
+    nadie en «Mis encuestas» y que nadie va a levantar; dejar la encuesta en
+    PENDIENTE diría que todavía no se visita, y la visita es justamente lo que
+    acaba de pasar.
+
+    ----------------------------------------------------------------------
+    POR QUÉ View Y NO CreateView
+    ----------------------------------------------------------------------
+    Mismo motivo que AsignarSectorView en la HU-06: aquí no se guarda UN objeto.
+    Se guardan dos, en una transacción, y el destino depende del segundo. Con
+    CreateView habría que sobrescribir `form_valid`, `get_form_kwargs` y
+    `get_success_url` hasta no dejar nada del comportamiento original.
+    """
+
+    template_name = "fichas/vivienda_form.html"
+
+    def formulario(self, datos=None):
+        return ViviendaForm(datos, censista=self.request.user)
+
+    def hay_donde_registrar(self):
+        """¿Tiene esta persona alguna zona donde registrar? Si no, no hay pantalla.
+
+        Se comprueba antes de dibujar el formulario porque un formulario cuyo
+        primer desplegable está vacío no se puede completar, y dejar que la persona
+        lo descubra rellenando los otros nueve campos es maltratarla.
+        """
+        return zonas_disponibles(self.request.user).exists()
+
+    def get(self, request, *args, **kwargs):
+        if not self.hay_donde_registrar():
+            return render(request, "fichas/sin_territorio.html", self.contexto_vacio())
+
+        return render(request, self.template_name, self.contexto(self.formulario()))
+
+    def post(self, request, *args, **kwargs):
+        if not self.hay_donde_registrar():
+            return render(request, "fichas/sin_territorio.html", self.contexto_vacio())
+
+        formulario = self.formulario(request.POST)
+
+        if not formulario.is_valid():
+            return render(request, self.template_name, self.contexto(formulario))
+
+        # Las dos escrituras en una sola transacción: una vivienda sin su encuesta
+        # sería una casa que no le aparece a nadie, y es peor que no haber
+        # guardado nada.
+        with transaction.atomic():
+            vivienda = formulario.save()
+            encuesta = Encuesta.objects.create(
+                vivienda=vivienda, censista=request.user
+            )
+            encuesta.cambiar_estado(EstadoEncuesta.BORRADOR)
+
+        messages.success(
+            request,
+            f"Vivienda «{vivienda.direccion}» registrada. Ahora completa los datos "
+            "del hogar.",
+        )
+        return redirect("fichas:registrar_hogar", pk=encuesta.pk)
+
+    def contexto(self, formulario):
+        return {
+            "titulo_pagina": "Registrar una vivienda",
+            "form": formulario,
+            "duplicadas": getattr(formulario, "duplicadas", None),
+            "es_alta": True,
+        }
+
+    def contexto_vacio(self):
+        return {"titulo_pagina": "Registrar una vivienda"}
+
+
+class EditarViviendaView(RegistroEnTerrenoMixin, View):
+    """Corrige o completa los datos de una vivienda ya registrada.
+
+    URL: /encuestas/viviendas/<pk>/editar/
+
+    Existe por dos motivos distintos, y el segundo no es un caso raro:
+
+      - Corregir un error: se puso «casa» y era una pieza en un conventillo.
+      - COMPLETAR una vivienda del padrón antiguo. Las encuestas que la HU-07
+        cargó se convirtieron en viviendas sin describir (ver la migración 0002), y
+        esta es la pantalla donde se les llenan las características al llegar.
+    """
+
+    template_name = "fichas/vivienda_form.html"
+
+    @cached_property
+    def vivienda(self):
+        """La vivienda, y solo si la persona tiene algo que ver con ella.
+
+        Se restringe por las zonas asignadas y NO por «tener una encuesta aquí»,
+        porque el segundo caso de uso —completar una vivienda que registró un
+        compañero de sector— es legítimo: el sector puede estar repartido entre
+        varias personas y la casa es la misma para todas.
+
+        404 y no 403 cuando no corresponde, por lo mismo que en la ficha de una
+        encuesta ajena: un 403 confirmaría que esa vivienda existe.
+        """
+        return get_object_or_404(
+            Vivienda.objects.filter(
+                zona__in=zonas_disponibles(self.request.user)
+            ).select_related("zona", "zona__sector", "zona__sector__comuna"),
+            pk=self.kwargs["pk"],
+        )
+
+    def formulario(self, datos=None):
+        return ViviendaForm(datos, censista=self.request.user, instance=self.vivienda)
+
+    def get(self, request, *args, **kwargs):
+        return render(request, self.template_name, self.contexto(self.formulario()))
+
+    def post(self, request, *args, **kwargs):
+        formulario = self.formulario(request.POST)
+
+        if not formulario.is_valid():
+            return render(request, self.template_name, self.contexto(formulario))
+
+        vivienda = formulario.save()
+
+        messages.success(
+            request, f"Datos de «{vivienda.direccion}» actualizados."
+        )
+        return redirect("fichas:vivienda_detalle", pk=vivienda.pk)
+
+    def contexto(self, formulario):
+        return {
+            "titulo_pagina": f"Editar {self.vivienda.direccion}",
+            "form": formulario,
+            "vivienda": self.vivienda,
+            "duplicadas": getattr(formulario, "duplicadas", None),
+            "es_alta": False,
+        }
+
+
+class RegistrarHogarView(RegistroEnTerrenoMixin, View):
+    """Registra o corrige el grupo familiar de una encuesta.
+
+    URL: /encuestas/<pk>/hogar/
+
+    Es el segundo paso del registro y la pantalla que de verdad «almacena la
+    información del censo». Sirve para crear el hogar y para corregirlo: el mismo
+    formulario con `instance` cuando ya existe, que es lo que hace que volver a
+    entrar muestre lo que se escribió antes en vez de una pantalla en blanco.
+
+    ----------------------------------------------------------------------
+    GUARDAR DEJA LA ENCUESTA EN BORRADOR, NO EN COMPLETADA
+    ----------------------------------------------------------------------
+    Y es a propósito. Al hogar todavía le faltan sus integrantes uno por uno, que
+    es la historia siguiente; darla por COMPLETADA aquí haría que el supervisor
+    recibiera para validar fichas a las que les falta la mitad.
+
+    La transición a COMPLETADA es de la historia de borradores, que es la que
+    define cuándo una encuesta está terminada. Aquí solo se garantiza que una
+    encuesta con datos nunca se quede en PENDIENTE, porque «pendiente» significa
+    «sin visitar» y esta ya se visitó.
+    """
+
+    template_name = "fichas/hogar_form.html"
+
+    @cached_property
+    def encuesta(self):
+        """Solo las encuestas PROPIAS. Aquí no vale `fichas.ver_todas`.
+
+        Ver la ficha de otra persona es supervisión; ESCRIBIR en ella sería
+        levantar información en su nombre, y el dato quedaría atribuido a quien no
+        estuvo en la puerta. La ficha del censo tiene que poder responder quién la
+        levantó, y esa respuesta es `encuesta.censista`.
+        """
+        return get_object_or_404(
+            Encuesta.objects.select_related(
+                "vivienda", "vivienda__zona", "vivienda__zona__sector"
+            ),
+            pk=self.kwargs["pk"],
+            censista=self.request.user,
+        )
+
+    def comprobar_abierta(self):
+        """None si se puede escribir, o una redirección con el motivo si no.
+
+        Se comprueba en el GET y en el POST, no solo al dibujar la pantalla: la
+        URL del POST se puede enviar a mano. Es la misma lección que la HU-06
+        documentó al comprobar el reparto en los dos verbos.
+        """
+        permitido, motivo = self.encuesta.puede_registrarse()
+
+        if permitido:
+            return None
+
+        messages.error(self.request, motivo)
+        return redirect("fichas:encuesta_detalle", pk=self.encuesta.pk)
+
+    def formulario(self, datos=None):
+        return GrupoFamiliarForm(
+            datos,
+            instance=getattr(self.encuesta, "grupo_familiar", None),
+        )
+
+    def get(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_abierta()) is not None:
+            return respuesta
+
+        return render(request, self.template_name, self.contexto(self.formulario()))
+
+    def post(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_abierta()) is not None:
+            return respuesta
+
+        formulario = self.formulario(request.POST)
+
+        if not formulario.is_valid():
+            return render(request, self.template_name, self.contexto(formulario))
+
+        ya_existia = self.encuesta.tiene_grupo_familiar
+
+        with transaction.atomic():
+            hogar = formulario.save(commit=False)
+            hogar.encuesta = self.encuesta
+            hogar.save()
+
+            # Una encuesta con datos no puede seguir diciendo «sin visitar».
+            if self.encuesta.estado == EstadoEncuesta.PENDIENTE:
+                self.encuesta.cambiar_estado(EstadoEncuesta.BORRADOR)
+
+        messages.success(
+            request,
+            (
+                f"Datos del hogar de {hogar.jefe_hogar_nombre} "
+                f"{'actualizados' if ya_existia else 'registrados'}. "
+                "La encuesta queda como borrador hasta que registres a sus "
+                "integrantes."
+            ),
+        )
+        return redirect("fichas:encuesta_detalle", pk=self.encuesta.pk)
+
+    def contexto(self, formulario):
+        return {
+            "titulo_pagina": f"Hogar de {self.encuesta.direccion}",
+            "form": formulario,
+            "encuesta": self.encuesta,
+            "vivienda": self.encuesta.vivienda,
+            "ya_existia": self.encuesta.tiene_grupo_familiar,
+        }
+
+
+class AgregarHogarView(RegistroEnTerrenoMixin, View):
+    """Crea una encuesta más sobre una vivienda que ya existe. Solo POST.
+
+    URL: /encuestas/viviendas/<pk>/hogar/nuevo/
+
+    Es la respuesta operativa al caso que dio origen al modelo de la HU-08: se
+    llega a una casa ya registrada y resulta que vive una segunda familia. Sin
+    esta pantalla habría que registrar la vivienda otra vez, que es exactamente el
+    duplicado que el sistema pide confirmar.
+
+    Solo POST, y con token CSRF, porque CREA una fila. Si un GET pudiera hacerlo,
+    bastaría con que alguien incrustara la dirección en un <img src="..."> para
+    llenar la base de encuestas vacías con la sesión de quien mirara la página. Es
+    la misma razón por la que retirar una asignación en la HU-06 son dos pasos.
+    """
+
+    @cached_property
+    def vivienda(self):
+        return get_object_or_404(
+            Vivienda.objects.filter(
+                zona__in=zonas_disponibles(self.request.user)
+            ).select_related("zona", "zona__sector"),
+            pk=self.kwargs["pk"],
+        )
+
+    def post(self, request, *args, **kwargs):
+        permitido, motivo = self.vivienda.puede_registrarse_trabajo()
+
+        if not permitido:
+            messages.error(request, motivo)
+            return redirect("fichas:vivienda_detalle", pk=self.vivienda.pk)
+
+        with transaction.atomic():
+            encuesta = Encuesta.objects.create(
+                vivienda=self.vivienda, censista=request.user
+            )
+            encuesta.cambiar_estado(EstadoEncuesta.BORRADOR)
+
+        messages.success(
+            request,
+            f"Se agregó un hogar más en «{self.vivienda.direccion}». Completa sus "
+            "datos.",
+        )
+        return redirect("fichas:registrar_hogar", pk=encuesta.pk)
+
+
+class ViviendaDetalleView(PermisoRequeridoMixin, DetailView):
+    """La vivienda y los hogares que la habitan.
+
+    URL: /encuestas/viviendas/<pk>/
+
+    Es donde se ve el caso que la HU-08 vino a modelar bien: una casa, dos
+    hogares, una sola descripción del inmueble. Y es el sitio desde el que se
+    agrega el segundo hogar.
+    """
+
+    permisos_requeridos = ("fichas.ver_propias", "fichas.ver_todas")
+    mensaje_sin_permiso = "No tienes permiso para consultar el módulo de encuestas."
+
+    model = Vivienda
+    template_name = "fichas/vivienda_detalle.html"
+    context_object_name = "vivienda"
+
+    def get_queryset(self):
+        consulta = Vivienda.objects.select_related(
+            "zona",
+            "zona__sector",
+            "zona__sector__comuna",
+            "zona__sector__comuna__region",
+            "zona__sector__operativo",
+            "registrada_por",
+        )
+
+        if self.request.user.tiene_permiso("fichas.ver_todas"):
+            return consulta
+
+        # Sin `ver_todas`, se ve una vivienda si se tiene trabajo en ella o si
+        # está en el territorio asignado. Lo segundo es lo que permite completar
+        # los datos de una casa que registró un compañero del mismo sector.
+        return consulta.filter(
+            Q(encuestas__censista=self.request.user)
+            | Q(zona__in=zonas_disponibles(self.request.user))
+        ).distinct()
+
+    def get_context_data(self, **kwargs):
+        contexto = super().get_context_data(**kwargs)
+        vivienda = self.object
+
+        contexto["titulo_pagina"] = vivienda.direccion
+        contexto["hogares"] = (
+            vivienda.encuestas.select_related("censista")
+            .prefetch_related("grupo_familiar")
+            .order_by("id")
+        )
+        permitido, motivo = vivienda.puede_registrarse_trabajo()
+        contexto["puede_registrar"] = permitido and self.request.user.tiene_algun_permiso(
+            "fichas.crear", "fichas.editar"
+        )
+        contexto["motivo_bloqueo"] = motivo
+        return contexto
+
+

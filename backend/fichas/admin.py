@@ -33,6 +33,54 @@ class EncuestaInline(admin.TabularInline):
     show_change_link = True
 
 
+@admin.register(Vivienda)
+class ViviendaAdmin(admin.ModelAdmin):
+    list_display = (
+        "direccion",
+        "zona",
+        "sector",
+        "tipo",
+        "datos_completos",
+        "total_hogares",
+    )
+    list_filter = (
+        "tipo",
+        "tenencia",
+        "zona__sector__operativo",
+        "zona__sector__comuna__region",
+    )
+    search_fields = ("direccion", "referencia", "zona__nombre", "zona__sector__nombre")
+    readonly_fields = ("creada_en", "actualizada_en")
+    autocomplete_fields = ("zona", "registrada_por")
+    inlines = (EncuestaInline, FotografiaInline)
+    list_select_related = ("zona", "zona__sector")
+
+    @admin.display(description="sector", ordering="zona__sector__nombre")
+    def sector(self, obj):
+        return obj.zona.sector.nombre
+
+    @admin.display(description="descrita", boolean=True)
+    def datos_completos(self, obj):
+        return obj.datos_completos
+
+    @admin.display(description="hogares")
+    def total_hogares(self, obj):
+        return obj.encuestas.count()
+
+
+class GrupoFamiliarInline(admin.StackedInline):
+    """El hogar levantado, dentro de su encuesta.
+
+    Es una relación uno a uno, así que `max_num=1`: ofrecer un segundo formulario
+    invitaría a intentar algo que la base de datos va a rechazar.
+    """
+
+    model = GrupoFamiliar
+    extra = 0
+    max_num = 1
+    readonly_fields = ("registrado_en", "actualizado_en")
+
+
 @admin.register(Encuesta)
 class EncuestaAdmin(admin.ModelAdmin):
     list_display = (
@@ -86,5 +134,42 @@ class EncuestaAdmin(admin.ModelAdmin):
     @admin.display(description="sector", ordering="vivienda__zona__sector__nombre")
     def sector(self, obj):
         return obj.vivienda.zona.sector.nombre
+
+
+@admin.register(GrupoFamiliar)
+class GrupoFamiliarAdmin(admin.ModelAdmin):
+    """Los hogares levantados, con su propia pantalla además del inline.
+
+    Sirve para lo que el inline no permite: buscar un jefe de hogar por nombre
+    entre todos los operativos. Es consulta técnica sobre datos personales, así que
+    la protege el mismo `is_staff` que el resto del admin.
+    """
+
+    list_display = (
+        "jefe_hogar_nombre",
+        "direccion",
+        "integrantes_declarados",
+        "registradas",
+        "ingreso_mensual",
+        "registrado_en",
+    )
+    list_filter = ("encuesta__estado", "encuesta__vivienda__zona__sector__operativo")
+    search_fields = (
+        "jefe_hogar_nombre",
+        "jefe_hogar_rut",
+        "encuesta__vivienda__direccion",
+    )
+    readonly_fields = ("registrado_en", "actualizado_en")
+    autocomplete_fields = ("encuesta",)
+    inlines = (IntegranteInline,)
+    list_select_related = ("encuesta", "encuesta__vivienda")
+
+    @admin.display(description="dirección")
+    def direccion(self, obj):
+        return obj.encuesta.vivienda.direccion
+
+    @admin.display(description="personas registradas")
+    def registradas(self, obj):
+        return obj.integrantes.count()
 
 

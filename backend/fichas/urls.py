@@ -37,10 +37,51 @@ app_name = "fichas"
 urlpatterns = [
     path("", views.MisEncuestasView.as_view(), name="mis_encuestas"),
     # ------------------------------------------------------------------
+    # VIVIENDAS (HU-08) — rutas fijas antes de las que llevan <int:pk>
+    #
+    # /encuestas/viviendas/nueva/ tiene que declararse antes de
+    # /encuestas/<int:pk>/, por la misma razón que la HU-05 puso /comunas/ antes
+    # de /<int:pk>/: Django recorre la lista en orden y se queda con la primera
+    # que coincide. El conversor «int» nunca haría coincidir la palabra
+    # «viviendas», así que hoy funcionaría igual, pero el orden explícito deja
+    # claro cuál manda si mañana el conversor cambiara.
+    # ------------------------------------------------------------------
+    path(
+        "viviendas/nueva/",
+        views.RegistrarViviendaView.as_view(),
+        name="vivienda_registrar",
+    ),
+    path(
+        "viviendas/<int:pk>/",
+        views.ViviendaDetalleView.as_view(),
+        name="vivienda_detalle",
+    ),
+    path(
+        "viviendas/<int:pk>/editar/",
+        views.EditarViviendaView.as_view(),
+        name="vivienda_editar",
+    ),
+    # Agregar un segundo hogar a una vivienda existente. Solo POST (ver la vista).
+    path(
+        "viviendas/<int:pk>/hogar/nuevo/",
+        views.AgregarHogarView.as_view(),
+        name="hogar_agregar",
+    ),
+    # ------------------------------------------------------------------
     # ENCUESTAS — <int:pk> al final, porque es la más genérica
     # ------------------------------------------------------------------
     path(
         "<int:pk>/",
         views.EncuestaDetailView.as_view(),
         name="encuesta_detalle",
+    ),
+    # El hogar va ANIDADO en su encuesta y no en /hogares/<pk>/, porque una
+    # relación uno a uno no necesita identificador propio en la dirección: la
+    # encuesta ya identifica sin ambigüedad de qué hogar se habla, y una URL con
+    # dos identificadores para el mismo objeto es un dato más que verificar. Es el
+    # mismo criterio con que la HU-05 anidó «crear» y no «editar».
+    path(
+        "<int:pk>/hogar/",
+        views.RegistrarHogarView.as_view(),
+        name="registrar_hogar",
     ),

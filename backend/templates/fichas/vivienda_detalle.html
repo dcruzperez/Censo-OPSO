@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   FICHA DE UNA VIVIENDA — /encuestas/viviendas/<pk>/
+
+   Es donde se ve, de un vistazo, lo que la HU-08 vino a modelar bien: UNA casa,
+   UNA descripción del inmueble y los HOGARES que la habitan, que pueden ser más de
+   uno.
+
+   Y es el sitio desde el que se agrega el segundo hogar. Ese botón es un
+   formulario POST y no un enlace, porque CREA una fila: con un enlace, cualquier
+   página que incrustara la dirección en un <img> crearía encuestas vacías con la
+   sesión de quien la mirara.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}{{ vivienda.direccion }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'fichas:mis_encuestas' %}">Mis encuestas</a></li>
+    <li class="breadcrumb-item active" aria-current="page">{{ vivienda.direccion }}</li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+      {{ vivienda.direccion }}
+    </h1>
+    <p class="text-secondary mb-0">
+      {{ vivienda.zona.nombre }} · {{ vivienda.zona.sector.nombre }} ·
+      {{ vivienda.zona.sector.comuna.nombre }}
+    </p>
+  </div>
+  <div class="text-end">
+    {% if vivienda.datos_completos %}
+      <span class="badge text-bg-success">Descrita</span>
+    {% else %}
+      <span class="badge text-bg-warning">Sin describir</span>
+    {% endif %}
+    <div class="text-secondary small mt-1">{{ vivienda.zona.sector.operativo.nombre }}</div>
+  </div>
+</div>
+
+{% if not puede_registrar and motivo_bloqueo %}
+  <div class="alert alert-secondary small" role="alert">{{ motivo_bloqueo }}</div>
+{% endif %}
+
+<div class="row g-3">
+
+  {# ---------- Las características ---------- #}
+  <div class="col-12 col-lg-7">
+    <div class="card-opso p-4 h-100">
+      <div class="d-flex justify-content-between align-items-center gap-2 mb-3">
+        <h2 class="h6 fw-semibold mb-0">La vivienda</h2>
+        {% if puede_registrar %}
+          <a href="{% url 'fichas:vivienda_editar' vivienda.pk %}" class="btn btn-sm btn-outline-secondary">
+            {% if vivienda.datos_completos %}Editar{% else %}Completar datos{% endif %}
+          </a>
+        {% endif %}
+      </div>
+
+      <dl class="row mb-0 small">
+        <dt class="col-5 text-secondary fw-normal">Referencia</dt>
+        <dd class="col-7">{{ vivienda.referencia|default:"—" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Tipo</dt>
+        <dd class="col-7">{{ vivienda.get_tipo_display|default:"Sin describir" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Muros</dt>
+        <dd class="col-7">{{ vivienda.get_materialidad_muros_display|default:"Sin describir" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Tenencia</dt>
+        <dd class="col-7">{{ vivienda.get_tenencia_display|default:"Sin describir" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Agua</dt>
+        <dd class="col-7">{{ vivienda.get_origen_agua_display|default:"Sin describir" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Sistema sanitario</dt>
+        <dd class="col-7">{{ vivienda.get_sistema_sanitario_display|default:"Sin describir" }}</dd>
+
+        <dt class="col-5 text-secondary fw-normal">Electricidad</dt>
+        <dd class="col-7 mb-0">
+          {% if vivienda.tiene_electricidad is None %}
+            Sin describir
+          {% elif vivienda.tiene_electricidad %}
+            Sí
+          {% else %}
+            No
+          {% endif %}
+        </dd>
+      </dl>
+
+      {# ---------- La ubicación (HU-11) ---------- #}
+      <hr class="my-3">
+      <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+        <h3 class="h6 fw-semibold mb-0">Ubicación</h3>
+        {% if puede_registrar %}
+          <a href="{% url 'fichas:capturar_ubicacion' vivienda.pk %}" class="small">
+            {% if vivienda.tiene_ubicacion %}Volver a capturar{% else %}Capturar{% endif %}
+          </a>
+        {% endif %}
+      </div>
+
+      {% if vivienda.tiene_ubicacion %}
+        <p class="small mb-0">
+          <span class="font-monospace">{{ vivienda.coordenadas }}</span>
+          {% if vivienda.precision_metros %}
+            {% if vivienda.precision_aceptable %}
+              <span class="badge text-bg-success">±{{ vivienda.precision_metros }} m</span>
+            {% else %}
+              {% comment %} Un punto con mucho error se guarda igual, pero no puede
+                 parecer tan bueno como uno bien tomado: a doscientos metros no se
+                 distingue una casa de la de enfrente. {% endcomment %}
+              <span class="badge text-bg-warning">±{{ vivienda.precision_metros }} m, poco precisa</span>
+            {% endif %}
+          {% else %}
+            <span class="badge text-bg-secondary">sin dato de precisión</span>
+          {% endif %}
+          {% if vivienda.ubicacion_manual %}
+            <span class="badge text-bg-secondary">escrita a mano</span>
+          {% endif %}
+        </p>
+      {% else %}
+        <p class="small text-secondary mb-0">
+          Sin ubicación capturada. Se toma en la puerta, al aire libre, y son diez
+          segundos.
+        </p>
+      {% endif %}
+
+      {% if vivienda.observaciones %}
+        <p class="text-secondary small mt-3 mb-0">{{ vivienda.observaciones|linebreaksbr }}</p>
+      {% endif %}
+
+      {# ---------- Las fotografías (HU-12) ---------- #}
+      <hr class="my-3">
+      <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+        <h3 class="h6 fw-semibold mb-0">
+          Fotografías
+          {% if vivienda.fotografias.all %}
+            <span class="badge text-bg-light border">{{ vivienda.fotografias.all|length }}</span>
+          {% endif %}
+        </h3>
+        {% if puede_registrar %}
+          <a href="{% url 'fichas:subir_fotografia' vivienda.pk %}" class="small">Adjuntar</a>
+        {% endif %}
+      </div>
+
+      {% if vivienda.fotografias.all %}
+        <div class="row g-2">
+          {% for foto in vivienda.fotografias.all %}
+            <div class="col-6 col-sm-4">
+              {% comment %} El src apunta a la VISTA que sirve el archivo, nunca a
+                 MEDIA_URL: OPSO no publica esa carpeta, y es ahí donde se comprueba
+                 quién pregunta. {% endcomment %}
+              <a href="{% url 'fichas:ver_fotografia' foto.pk %}" target="_blank" rel="noopener">
+                <img src="{% url 'fichas:ver_fotografia' foto.pk %}"
+                     alt="{{ foto.descripcion }}"
+                     class="img-fluid rounded border" loading="lazy">
+              </a>
+              <div class="small text-secondary mt-1">
+                {{ foto.get_tipo_display }}
+                {% if puede_registrar %}
+                  · <a href="{% url 'fichas:quitar_fotografia' foto.pk %}"
+                       class="text-danger">quitar</a>
+                {% endif %}
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="small text-secondary mb-0">
+          Sin fotografías. Se adjuntan solo cuando hacen falta: un número borrado, un
+          acceso difícil de explicar, una condición de la vivienda que conviene
+          documentar.
+        </p>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ---------- Los hogares ---------- #}
+  <div class="col-12 col-lg-5">
+    <div class="card-opso p-4 h-100">
+      <h2 class="h6 fw-semibold mb-3">
+        Hogares en esta vivienda
+        <span class="badge text-bg-light border">{{ hogares|length }}</span>
+      </h2>
+
+      {% for encuesta in hogares %}
+        <div class="border-bottom pb-2 mb-2">
+          <div class="d-flex justify-content-between align-items-start gap-2">
+            <div>
+              {% if encuesta.grupo_familiar %}
+                <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}" class="fw-semibold text-decoration-none">
+                  {{ encuesta.grupo_familiar.jefe_hogar_nombre }}
+                </a>
+                <div class="text-secondary small">
+                  {{ encuesta.grupo_familiar.integrantes_declarados }}
+                  persona{{ encuesta.grupo_familiar.integrantes_declarados|pluralize }}
+                </div>
+              {% else %}
+                <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}" class="fw-semibold text-decoration-none">
+                  Hogar sin registrar
+                </a>
+                <div class="text-secondary small">Todavía no se han tomado los datos</div>
+              {% endif %}
+              <div class="text-secondary small">
+                {{ encuesta.censista.get_full_name|default:encuesta.censista.email }}
+              </div>
+            </div>
+            {% include "fichas/_estado_encuesta.html" with encuesta=encuesta %}
+          </div>
+        </div>
+      {% empty %}
+        <p class="text-secondary small">Esta vivienda no tiene ningún hogar registrado.</p>
+      {% endfor %}
+
+      {% if puede_registrar %}
+        {% comment %} POST y con token CSRF: crea una fila. Ver la vista. {% endcomment %}
+        <form method="post" action="{% url 'fichas:hogar_agregar' vivienda.pk %}" class="mt-3">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-opso btn-sm w-100">
+            Agregar otro hogar en esta vivienda
+          </button>
+        </form>
+        <p class="text-secondary small mt-2 mb-0">
+          Úsalo solo si en la misma casa vive <strong>más de una familia</strong>.
+        </p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<div class="mt-4">
+  <a href="{% url 'fichas:mis_encuestas' %}" class="btn btn-outline-secondary btn-sm">
+    Volver a mis encuestas
+  </a>
+</div>
+
+{% endblock %}

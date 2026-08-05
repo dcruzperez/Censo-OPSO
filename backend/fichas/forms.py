@@ -220,3 +220,339 @@ class FiltroMisEncuestasForm(forms.Form):
         return (self.cleaned_data.get("q") or "").strip()
 
 
+# ==========================================================================
+# HU-08 — REGISTRAR LA VIVIENDA
+# ==========================================================================
+
+
+class CampoZona(forms.ModelChoiceField):
+    """Selector de zona que muestra el sector y la comuna.
+
+    «Zona 1» a secas no identifica nada: casi todos los sectores tienen una. Es el
+    mismo problema que Zona.nombre_completo resolvió para la bitácora en la HU-05,
+    y aquí importa más todavía, porque elegir la zona equivocada manda la vivienda
+    a otro pedazo del mapa sin que nada avise.
+    """
+
+    def label_from_instance(self, obj):
+        return f"{obj.nombre} · {obj.sector.nombre} · {obj.sector.comuna.nombre}"
+
+
+class ViviendaForm(forms.ModelForm):
+    """Alta y corrección de una vivienda.
+
+    ----------------------------------------------------------------------
+    LAS SEIS CARACTERÍSTICAS SON OBLIGATORIAS AQUÍ Y OPCIONALES EN LA COLUMNA
+    ----------------------------------------------------------------------
+    El modelo las declara `blank=True` porque existen filas antiguas sin ellas
+    (ver la decisión 3 de Vivienda). Eso haría que el ModelForm las diera por
+    opcionales, que es justo lo contrario de lo que se quiere en el momento de
+    registrar: la persona está en la puerta y puede responderlas mirando.
+
+    Se fuerza `required = True` en __init__ en vez de redeclarar los seis campos a
+    mano, para no repetir sus etiquetas, sus opciones y sus textos de ayuda —que
+    ya están en el modelo— y arriesgarse a que las dos copias se separen.
+
+    ----------------------------------------------------------------------
+    EL AVISO DE DUPLICADO: POR QUÉ NO BLOQUEA
+    ----------------------------------------------------------------------
+    Si ya hay una vivienda registrada en la misma dirección y zona, el formulario
+    NO la rechaza: pide confirmar. La razón está en el modelo (dos viviendas en un
+    mismo sitio son frecuentísimas en terreno), y la consecuencia de diseño es
+    esta: bloquear haría perder un dato real, y avisar solo cuesta un clic.
+
+    Se implementa con una casilla que aparece únicamente cuando hay conflicto. El
+    primer envío falla con un mensaje que explica qué se encontró; el segundo, con
+    la casilla marcada, guarda. No hace falta JavaScript ni una pantalla
+    intermedia.
+    """
+
+    #: Campos que el formulario exige aunque el modelo los admita vacíos.
+    OBLIGATORIOS = (
+        "tipo",
+        "tenencia",
+        "materialidad_muros",
+        "origen_agua",
+        "sistema_sanitario",
+        "tiene_electricidad",
+    )
+
+    zona = CampoZona(
+        label="Zona",
+        queryset=Zona.objects.none(),  # se ajusta en __init__
+        empty_label="Elige la zona",
+        widget=forms.Select(attrs={"class": CLASE_SELECT}),
+        help_text="Solo aparecen las zonas de los sectores que tienes asignados.",
+    )
+    confirmar_duplicado = forms.BooleanField(
+        label="Confirmo que es una vivienda distinta y no la misma cargada dos veces",
+        required=False,
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
+    )
+
+    class Meta:
+        model = Vivienda
+        fields = (
+            "zona",
+            "direccion",
+            "referencia",
+            "tipo",
+            "tenencia",
+            "materialidad_muros",
+            "origen_agua",
+            "sistema_sanitario",
+            "tiene_electricidad",
+            "observaciones",
+        )
+        widgets = {
+            "direccion": forms.TextInput(
+                attrs={
+                    "class": CLASE_TEXTO,
+                    "placeholder": "Pasaje Los Robles 1425",
+                    "autocomplete": "off",
+                }
+            ),
+            "referencia": forms.TextInput(
+                attrs={
+                    "class": CLASE_TEXTO,
+                    "placeholder": "Casa verde, portón negro",
+                    "autocomplete": "off",
+                }
+            ),
+            "tipo": forms.Select(attrs={"class": CLASE_SELECT}),
+            "tenencia": forms.Select(attrs={"class": CLASE_SELECT}),
+            "materialidad_muros": forms.Select(attrs={"class": CLASE_SELECT}),
+            "origen_agua": forms.Select(attrs={"class": CLASE_SELECT}),
+            "sistema_sanitario": forms.Select(attrs={"class": CLASE_SELECT}),
+            "tiene_electricidad": forms.Select(
+                attrs={"class": CLASE_SELECT},
+                choices=((True, "Sí"), (False, "No")),
+            ),
+            "observaciones": forms.Textarea(
+                attrs={
+                    "class": CLASE_TEXTO,
+                    "rows": 2,
+                    "placeholder": "Lo que convenga dejar anotado de la vivienda.",
+                }
+            ),
+        }
+
+    def __init__(self, *args, censista, **kwargs):
+        """`censista` es obligatorio y va por nombre.
+
+        Se exige después de `*` para que ninguna llamada pueda pasarlo por posición
+        y confundirlo con `data`. Sin él no se puede armar la lista de zonas, y un
+        formulario con la lista completa de zonas del país sería precisamente el
+        agujero que esta historia tiene que evitar. Mismo cuidado que
+        AsignarSectorForm en la HU-06 con su argumento `sector`.
+        """
+        self.censista = censista
+        super().__init__(*args, **kwargs)
+
+        self.fields["zona"].queryset = zonas_disponibles(censista)
+
+        for nombre in self.OBLIGATORIOS:
+            self.fields[nombre].required = True
+
+        # El desplegable de electricidad no debe ofrecer «---------»: es una
+        # pregunta de sí o no, y dejarla en blanco no es una respuesta.
+        self.fields["tiene_electricidad"].widget.choices = (
+            ("", "Elige una opción"),
+            (True, "Sí"),
+            (False, "No"),
+        )
+
+    def clean_tiene_electricidad(self):
+        """«No sé» no es una respuesta válida al registrar.
+
+        Hay que comprobarlo a mano porque el campo del modelo admite nulos y Django
+        lo traduce a un NullBooleanField, cuyo `validate()` NO hace nada: marcarlo
+        como `required` no basta, y el formulario aceptaría el vacío en silencio.
+        Es justo el tipo de detalle que sin una prueba no se descubre hasta que
+        media zona quedó sin el dato.
+        """
+        tiene = self.cleaned_data.get("tiene_electricidad")
+
+        if tiene is None:
+            raise forms.ValidationError("Indica si la vivienda tiene electricidad.")
+
+        return tiene
+
+    # -- duplicados ---------------------------------------------------------
+
+    def viviendas_en_la_misma_direccion(self):
+        """Otras viviendas ya registradas en esa zona y esa dirección."""
+        zona = self.cleaned_data.get("zona")
+        direccion = (self.cleaned_data.get("direccion") or "").strip()
+
+        if not zona or not direccion:
+            return Vivienda.objects.none()
+
+        consulta = Vivienda.objects.filter(zona=zona, direccion__iexact=direccion)
+
+        # Al EDITAR, la propia vivienda no es un duplicado de sí misma.
+        if self.instance.pk:
+            consulta = consulta.exclude(pk=self.instance.pk)
+
+        return consulta.select_related("zona")
+
+    def clean_direccion(self):
+        return (self.cleaned_data.get("direccion") or "").strip()
+
+    def clean(self):
+        datos = super().clean()
+
+        self.duplicadas = self.viviendas_en_la_misma_direccion()
+
+        if self.duplicadas.exists() and not datos.get("confirmar_duplicado"):
+            cuantas = self.duplicadas.count()
+            self.add_error(
+                "confirmar_duplicado",
+                (
+                    f"Ya hay {cuantas} vivienda{'s' if cuantas != 1 else ''} "
+                    f"registrada{'s' if cuantas != 1 else ''} en esa dirección. Si "
+                    "es la misma casa y solo quieres agregar otro hogar, vuelve a "
+                    "la ficha de esa vivienda. Si de verdad es otra vivienda, marca "
+                    "esta casilla."
+                ),
+            )
+
+        return datos
+
+    def save(self, commit=True):
+        vivienda = super().save(commit=False)
+
+        # Solo al crear: quien corrige una vivienda no pasa a ser quien la registró.
+        if vivienda.pk is None:
+            vivienda.registrada_por = self.censista
+
+        if commit:
+            vivienda.save()
+
+        return vivienda
+
+
+# ==========================================================================
+# HU-08 — REGISTRAR EL GRUPO FAMILIAR
+# ==========================================================================
+
+
+class GrupoFamiliarForm(forms.ModelForm):
+    """El hogar que vive en la vivienda.
+
+    Es el formulario que de verdad «almacena la información del censo», y por eso
+    la validación más cuidada está aquí y no en el de la vivienda.
+
+    ----------------------------------------------------------------------
+    POR QUÉ EL RUT SE VALIDA PERO NO SE EXIGE
+    ----------------------------------------------------------------------
+    El campo es opcional (ver la decisión 4 de GrupoFamiliar: en terreno mucha
+    gente no lo recuerda, y legalmente no se puede condicionar el registro a
+    entregar un dato personal que no es imprescindible). Pero cuando SÍ se
+    entrega, se valida con `validar_rut` de la HU-01 —el mismo con dígito
+    verificador que se usa para las cuentas— porque un RUT mal escrito es peor que
+    ninguno: parece un identificador y no identifica a nadie.
+
+    ----------------------------------------------------------------------
+    LA VALIDACIÓN QUE NO ES OBVIA: EL INGRESO
+    ----------------------------------------------------------------------
+    Se rechaza un ingreso desmesurado, no porque sea imposible, sino porque casi
+    siempre es un dedo de más al teclear en un teléfono. En un operativo social,
+    un ingreso con un cero de sobra no se nota en la pantalla y sí desplaza el
+    promedio de toda una zona.
+    """
+
+    #: Tope de cordura del ingreso mensual del hogar, en pesos.
+    #: No es un límite legal ni un juicio sobre la familia: es el umbral a partir
+    #: del cual lo más probable es que sobre un dígito.
+    INGRESO_MAXIMO = 100_000_000
+
+    class Meta:
+        model = GrupoFamiliar
+        fields = (
+            "jefe_hogar_nombre",
+            "jefe_hogar_rut",
+            "telefono_contacto",
+            "integrantes_declarados",
+            "ingreso_mensual",
+            "observaciones",
+        )
+        widgets = {
+            "jefe_hogar_nombre": forms.TextInput(
+                attrs={
+                    "class": CLASE_TEXTO,
+                    "placeholder": "Nombre y apellidos",
+                    "autocomplete": "off",
+                }
+            ),
+            "jefe_hogar_rut": forms.TextInput(
+                attrs={
+                    "class": CLASE_TEXTO,
+                    "placeholder": "12345678-9",
+                    "autocomplete": "off",
+                }
+            ),
+            "telefono_contacto": forms.TextInput(
+                attrs={
+                    "class": CLASE_TEXTO,
+                    "placeholder": "+56 9 1234 5678",
+                    "autocomplete": "off",
+                }
+            ),
+            "integrantes_declarados": forms.NumberInput(
+                attrs={"class": CLASE_TEXTO, "min": 1, "max": 30}
+            ),
+            "ingreso_mensual": forms.NumberInput(
+                attrs={"class": CLASE_TEXTO, "min": 0, "placeholder": "En pesos"}
+            ),
+            "observaciones": forms.Textarea(
+                attrs={
+                    "class": CLASE_TEXTO,
+                    "rows": 3,
+                    "placeholder": (
+                        "Situaciones que conviene dejar por escrito: personas con "
+                        "discapacidad, adultos mayores solos, etc."
+                    ),
+                }
+            ),
+        }
+
+    def clean_jefe_hogar_nombre(self):
+        nombre = (self.cleaned_data.get("jefe_hogar_nombre") or "").strip()
+
+        if len(nombre) < 3:
+            raise forms.ValidationError(
+                "Escribe el nombre completo de la persona, no una inicial."
+            )
+
+        return nombre
+
+    def clean_integrantes_declarados(self):
+        """Al menos una persona; el resto lo comprueba también la tabla.
+
+        El máximo no es una restricción de la base de datos a propósito: 30
+        personas en un hogar es rarísimo pero no imposible —una residencia, una
+        toma—, así que el sistema pregunta en vez de prohibir. Lo que sí es
+        imposible es cero, y eso lo garantiza el CheckConstraint del modelo.
+        """
+        cuantos = self.cleaned_data.get("integrantes_declarados")
+
+        if cuantos is not None and cuantos < 1:
+            raise forms.ValidationError(
+                "Un hogar tiene al menos una persona: la propia jefa o jefe de hogar."
+            )
+
+        return cuantos
+
+    def clean_ingreso_mensual(self):
+        ingreso = self.cleaned_data.get("ingreso_mensual")
+
+        if ingreso is not None and ingreso > self.INGRESO_MAXIMO:
+            raise forms.ValidationError(
+                "Ese ingreso parece tener un dígito de más. Revísalo: si es "
+                "correcto, anótalo en las observaciones."
+            )
+
+        return ingreso
+
+

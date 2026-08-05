@@ -1548,3 +1548,1135 @@ class IntegracionTest(BaseEncuestaTest):
         self.assertContains(respuesta, "Todavía no tienes encuestas")
 
 
+# ==========================================================================
+# HU-08 — 17. EL MODELO Vivienda
+# ==========================================================================
+
+
+class ViviendaModeloTest(BaseEncuestaTest):
+    def test_una_vivienda_se_crea_sin_describir(self):
+        """La columna admite el vacío: hay padrón heredado que no está descrito."""
+        vivienda = Vivienda.objects.create(zona=self.zona1, direccion="Calle 1")
+
+        self.assertEqual(vivienda.tipo, "")
+        self.assertIsNone(vivienda.tiene_electricidad)
+        self.assertFalse(vivienda.datos_completos)
+
+    def test_una_vivienda_descrita_lo_dice(self):
+        self.assertTrue(self.crear_vivienda().datos_completos)
+
+    def test_falta_una_caracteristica_y_ya_no_esta_completa(self):
+        """Las seis, o no está descrita: media descripción no sirve para calcular."""
+        for campo in Vivienda.CARACTERISTICAS:
+            with self.subTest(campo=campo):
+                vivienda = self.crear_vivienda(direccion=f"Calle {campo}", **{campo: ""})
+                self.assertFalse(vivienda.datos_completos)
+
+    def test_sin_saber_si_tiene_luz_tampoco_esta_completa(self):
+        vivienda = self.crear_vivienda(tiene_electricidad=None)
+
+        self.assertFalse(vivienda.datos_completos)
+
+    def test_el_texto_es_la_direccion(self):
+        self.assertEqual(str(self.crear_vivienda(direccion="Calle 9")), "Calle 9")
+
+    def test_el_nombre_completo_lleva_zona_y_sector(self):
+        vivienda = self.crear_vivienda(direccion="Calle 9")
+
+        self.assertEqual(vivienda.nombre_completo, "Calle 9 · Zona 1 · Los Boldos")
+
+    def test_atajos_a_la_jerarquia_territorial(self):
+        vivienda = self.crear_vivienda()
+
+        self.assertEqual(vivienda.sector, self.boldos)
+        self.assertEqual(vivienda.comuna, self.concepcion)
+        self.assertEqual(vivienda.operativo, self.operativo)
+
+    def test_cuenta_sus_hogares(self):
+        vivienda = self.crear_vivienda()
+        self.crear(vivienda=vivienda)
+        self.crear(vivienda=vivienda)
+
+        self.assertEqual(vivienda.total_hogares(), 2)
+        self.assertTrue(vivienda.tiene_varios_hogares)
+
+    def test_con_un_solo_hogar_no_es_compartida(self):
+        vivienda = self.crear_vivienda()
+        self.crear(vivienda=vivienda)
+
+        self.assertFalse(vivienda.tiene_varios_hogares)
+
+    def test_borrar_la_vivienda_se_lleva_sus_encuestas(self):
+        """CASCADE: una encuesta no significa nada sin la casa que levanta."""
+        vivienda = self.crear_vivienda()
+        self.crear(vivienda=vivienda)
+
+        vivienda.delete()
+
+        self.assertEqual(Encuesta.objects.count(), 0)
+
+    def test_un_tipo_inventado_lo_rechaza_la_base_de_datos(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Vivienda.objects.create(
+                    zona=self.zona1, direccion="Calle 1", tipo="MANSION"
+                )
+
+    def test_una_tenencia_inventada_la_rechaza_la_base_de_datos(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                Vivienda.objects.create(
+                    zona=self.zona1, direccion="Calle 1", tenencia="HEREDADA"
+                )
+
+    def test_el_vacio_si_se_admite(self):
+        """La contrapartida: sin describir es un valor legítimo."""
+        Vivienda.objects.create(zona=self.zona1, direccion="Calle 1", tipo="")
+
+        self.assertEqual(Vivienda.objects.count(), 1)
+
+
+class PuedeRegistrarseTrabajoTest(BaseEncuestaTest):
+    """Las tres condiciones del territorio, cada una con su motivo explicado."""
+
+    def test_en_un_operativo_en_curso_se_puede(self):
+        permitido, motivo = self.crear_vivienda().puede_registrarse_trabajo()
+
+        self.assertTrue(permitido)
+        self.assertEqual(motivo, "")
+
+    def test_en_un_operativo_cerrado_no(self):
+        vivienda = self.crear_vivienda(zona=self.operativo_cerrado())
+
+        permitido, motivo = vivienda.puede_registrarse_trabajo()
+
+        self.assertFalse(permitido)
+        self.assertIn("cerrado", motivo)
+
+    def test_en_un_sector_desactivado_no(self):
+        self.boldos.activo = False
+        self.boldos.save()
+
+        permitido, motivo = self.crear_vivienda().puede_registrarse_trabajo()
+
+        self.assertFalse(permitido)
+        self.assertIn("desactivado", motivo)
+
+    def test_en_una_zona_desactivada_no(self):
+        self.zona1.activa = False
+        self.zona1.save()
+
+        permitido, motivo = self.crear_vivienda().puede_registrarse_trabajo()
+
+        self.assertFalse(permitido)
+        self.assertIn("desactivada", motivo)
+
+    def test_el_motivo_nombra_el_obstaculo_concreto(self):
+        """«No se puede» obliga a adivinar; el motivo dice qué arreglar."""
+        vivienda = self.crear_vivienda(zona=self.operativo_cerrado())
+
+        _, motivo = vivienda.puede_registrarse_trabajo()
+
+        self.assertIn("Censo 2025", motivo)
+
+
+class PuedeRegistrarseEncuestaTest(BaseEncuestaTest):
+    def test_una_encuesta_abierta_admite_cambios(self):
+        for estado in ESTADOS_ABIERTOS:
+            with self.subTest(estado=estado):
+                encuesta = self.crear(direccion=f"Calle {estado}", estado=estado)
+                permitido, _ = encuesta.puede_registrarse()
+                self.assertTrue(permitido)
+
+    def test_una_encuesta_cerrada_no_admite_cambios(self):
+        for estado in ESTADOS_CERRADOS:
+            with self.subTest(estado=estado):
+                encuesta = self.crear(direccion=f"Calle {estado}", estado=estado)
+                permitido, motivo = encuesta.puede_registrarse()
+                self.assertFalse(permitido)
+                self.assertIn("supervisor", motivo)
+
+    def test_el_territorio_manda_sobre_el_estado(self):
+        """Aunque la encuesta esté abierta, un operativo cerrado la congela."""
+        encuesta = self.crear(zona=self.operativo_cerrado())
+
+        permitido, motivo = encuesta.puede_registrarse()
+
+        self.assertFalse(permitido)
+        self.assertIn("cerrado", motivo)
+
+
+# ==========================================================================
+# HU-08 — 18. EL MODELO GrupoFamiliar
+# ==========================================================================
+
+
+class GrupoFamiliarModeloTest(BaseEncuestaTest):
+    def setUp(self):
+        super().setUp()
+        self.encuesta = self.crear(estado=EstadoEncuesta.BORRADOR)
+
+    def hogar(self, **extra):
+        datos = {
+            "encuesta": self.encuesta,
+            "jefe_hogar_nombre": "Rosa Millán",
+            "integrantes_declarados": 4,
+        }
+        datos.update(extra)
+        return GrupoFamiliar.objects.create(**datos)
+
+    def test_se_crea_asociado_a_su_encuesta(self):
+        hogar = self.hogar()
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.grupo_familiar, hogar)
+
+    def test_la_encuesta_sabe_si_ya_tiene_hogar(self):
+        self.assertFalse(self.encuesta.tiene_grupo_familiar)
+
+        self.hogar()
+
+        self.assertTrue(Encuesta.objects.get(pk=self.encuesta.pk).tiene_grupo_familiar)
+
+    def test_el_texto_nombra_al_jefe_de_hogar(self):
+        self.assertEqual(str(self.hogar()), "Hogar de Rosa Millán")
+
+    def test_no_puede_haber_dos_hogares_en_la_misma_encuesta(self):
+        """Uno a uno: el segundo hogar va en OTRA encuesta de la misma vivienda."""
+        self.hogar()
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                GrupoFamiliar.objects.create(
+                    encuesta=self.encuesta,
+                    jefe_hogar_nombre="Otro",
+                    integrantes_declarados=2,
+                )
+
+    def test_un_hogar_no_puede_tener_cero_personas(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self.hogar(integrantes_declarados=0)
+
+    def test_borrar_la_encuesta_se_lleva_el_hogar(self):
+        """CASCADE: el dato no es «el hogar de la casa», es «lo que respondió esta
+        encuesta». Sin la encuesta no significa nada."""
+        self.hogar()
+
+        self.encuesta.delete()
+
+        self.assertEqual(GrupoFamiliar.objects.count(), 0)
+
+    def test_el_rut_se_normaliza_al_guardar(self):
+        hogar = self.hogar(jefe_hogar_rut="12.345.678-5")
+
+        hogar.refresh_from_db()
+        self.assertEqual(hogar.jefe_hogar_rut, "12345678-5")
+
+    def test_el_rut_puede_quedar_vacio(self):
+        hogar = self.hogar()
+
+        self.assertEqual(hogar.jefe_hogar_rut, "")
+
+    def test_calcula_el_ingreso_por_persona(self):
+        hogar = self.hogar(integrantes_declarados=4, ingreso_mensual=800000)
+
+        self.assertEqual(hogar.ingreso_por_persona, 200000)
+
+    def test_sin_ingreso_declarado_no_hay_ingreso_por_persona(self):
+        """None y no cero: no declarar no es lo mismo que no tener."""
+        self.assertIsNone(self.hogar().ingreso_por_persona)
+
+
+# ==========================================================================
+# HU-08 — 19. QUÉ ZONAS PUEDE USAR CADA PERSONA
+# ==========================================================================
+
+
+class ZonasDisponiblesTest(BaseEncuestaTest):
+    """La regla de negocio central de la HU-08, comprobada aparte de las vistas."""
+
+    def setUp(self):
+        super().setUp()
+        self.asignacion = AsignacionSector.objects.create(
+            sector=self.boldos, censista=self.marta, asignado_por=self.supervisor
+        )
+
+    def test_ofrece_las_zonas_del_sector_asignado(self):
+        self.assertEqual(
+            set(zonas_disponibles(self.marta)), {self.zona1, self.zona2}
+        )
+
+    def test_no_ofrece_zonas_de_sectores_ajenos(self):
+        self.assertNotIn(self.zona_norte, zonas_disponibles(self.marta))
+
+    def test_sin_asignacion_no_hay_ninguna_zona(self):
+        self.assertEqual(list(zonas_disponibles(self.juan)), [])
+
+    def test_una_asignacion_retirada_deja_de_dar_acceso(self):
+        """El reparto de la HU-06 no es informativo: es una regla de seguridad."""
+        self.asignacion.desactivar()
+
+        self.assertEqual(list(zonas_disponibles(self.marta)), [])
+
+    def test_un_operativo_cerrado_no_ofrece_sus_zonas(self):
+        self.operativo.estado = EstadoOperativo.CERRADO
+        self.operativo.save()
+
+        self.assertEqual(list(zonas_disponibles(self.marta)), [])
+
+    def test_un_sector_desactivado_no_ofrece_sus_zonas(self):
+        self.boldos.activo = False
+        self.boldos.save()
+
+        self.assertEqual(list(zonas_disponibles(self.marta)), [])
+
+    def test_una_zona_desactivada_no_se_ofrece(self):
+        self.zona1.activa = False
+        self.zona1.save()
+
+        self.assertEqual(list(zonas_disponibles(self.marta)), [self.zona2])
+
+    def test_el_supervisor_no_tiene_zonas_donde_registrar(self):
+        """Separación de funciones: quien valida no levanta."""
+        self.assertEqual(list(zonas_disponibles(self.supervisor)), [])
+
+
+# ==========================================================================
+# HU-08 — 20. EL FORMULARIO DE LA VIVIENDA
+# ==========================================================================
+
+
+class ViviendaFormTest(BaseEncuestaTest):
+    def setUp(self):
+        super().setUp()
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
+
+    def datos(self, **extra):
+        base = {
+            "zona": self.zona1.pk,
+            "direccion": "Pasaje Nuevo 10",
+            "referencia": "Casa amarilla",
+            "tipo": TipoVivienda.CASA,
+            "tenencia": TenenciaVivienda.ARRENDADA,
+            "materialidad_muros": MaterialidadMuros.ALBANILERIA,
+            "origen_agua": OrigenAgua.RED_PUBLICA,
+            "sistema_sanitario": SistemaSanitario.ALCANTARILLADO,
+            "tiene_electricidad": True,
+        }
+        base.update(extra)
+        return base
+
+    def test_un_formulario_completo_es_valido(self):
+        formulario = ViviendaForm(self.datos(), censista=self.marta)
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_el_desplegable_solo_ofrece_las_zonas_asignadas(self):
+        formulario = ViviendaForm(censista=self.marta)
+
+        self.assertEqual(
+            set(formulario.fields["zona"].queryset), {self.zona1, self.zona2}
+        )
+
+    def test_enviar_una_zona_ajena_no_sirve_de_nada(self):
+        """Si la opción no está en el formulario, mandarla a mano no la hace válida."""
+        formulario = ViviendaForm(
+            self.datos(zona=self.zona_norte.pk), censista=self.marta
+        )
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("zona", formulario.errors)
+
+    def test_las_seis_caracteristicas_son_obligatorias(self):
+        for campo in ViviendaForm.OBLIGATORIOS:
+            with self.subTest(campo=campo):
+                formulario = ViviendaForm(
+                    self.datos(**{campo: ""}), censista=self.marta
+                )
+                self.assertFalse(formulario.is_valid())
+                self.assertIn(campo, formulario.errors)
+
+    def test_la_referencia_y_las_observaciones_son_opcionales(self):
+        formulario = ViviendaForm(
+            self.datos(referencia="", observaciones=""), censista=self.marta
+        )
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_la_direccion_se_recorta(self):
+        formulario = ViviendaForm(
+            self.datos(direccion="   Calle 5   "), censista=self.marta
+        )
+
+        self.assertTrue(formulario.is_valid())
+        self.assertEqual(formulario.cleaned_data["direccion"], "Calle 5")
+
+    def test_registra_quien_la_dio_de_alta(self):
+        formulario = ViviendaForm(self.datos(), censista=self.marta)
+        formulario.is_valid()
+
+        vivienda = formulario.save()
+
+        self.assertEqual(vivienda.registrada_por, self.marta)
+
+    def test_editar_no_cambia_quien_la_registro(self):
+        vivienda = self.crear_vivienda(direccion="Calle 5")
+        vivienda.registrada_por = self.juan
+        vivienda.save()
+
+        formulario = ViviendaForm(
+            self.datos(direccion="Calle 5"), censista=self.marta, instance=vivienda
+        )
+        formulario.is_valid()
+        formulario.save()
+
+        vivienda.refresh_from_db()
+        self.assertEqual(vivienda.registrada_por, self.juan)
+
+    # -- el aviso de duplicado --------------------------------------------
+
+    def test_una_direccion_repetida_pide_confirmacion(self):
+        self.crear_vivienda(direccion="Pasaje Nuevo 10")
+
+        formulario = ViviendaForm(self.datos(), censista=self.marta)
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("confirmar_duplicado", formulario.errors)
+
+    def test_con_la_casilla_marcada_se_guarda(self):
+        """Avisar y no bloquear: dos viviendas en un sitio es un caso real."""
+        self.crear_vivienda(direccion="Pasaje Nuevo 10")
+
+        formulario = ViviendaForm(
+            self.datos(confirmar_duplicado=True), censista=self.marta
+        )
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_el_aviso_no_distingue_mayusculas(self):
+        self.crear_vivienda(direccion="PASAJE NUEVO 10")
+
+        formulario = ViviendaForm(self.datos(), censista=self.marta)
+
+        self.assertFalse(formulario.is_valid())
+
+    def test_una_direccion_igual_en_otra_zona_no_es_duplicado(self):
+        self.crear_vivienda(direccion="Pasaje Nuevo 10", zona=self.zona2)
+
+        formulario = ViviendaForm(self.datos(), censista=self.marta)
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_al_editar_una_vivienda_no_es_duplicado_de_si_misma(self):
+        vivienda = self.crear_vivienda(direccion="Pasaje Nuevo 10")
+
+        formulario = ViviendaForm(
+            self.datos(), censista=self.marta, instance=vivienda
+        )
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+
+# ==========================================================================
+# HU-08 — 21. EL FORMULARIO DEL GRUPO FAMILIAR
+# ==========================================================================
+
+
+class GrupoFamiliarFormTest(BaseEncuestaTest):
+    def datos(self, **extra):
+        base = {
+            "jefe_hogar_nombre": "Rosa Elena Millán",
+            "jefe_hogar_rut": "",
+            "telefono_contacto": "",
+            "integrantes_declarados": 3,
+            "ingreso_mensual": "",
+            "observaciones": "",
+        }
+        base.update(extra)
+        return base
+
+    def test_lo_minimo_es_el_nombre_y_cuantos_son(self):
+        formulario = GrupoFamiliarForm(self.datos())
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_el_nombre_es_obligatorio(self):
+        formulario = GrupoFamiliarForm(self.datos(jefe_hogar_nombre=""))
+
+        self.assertFalse(formulario.is_valid())
+
+    def test_una_inicial_no_es_un_nombre(self):
+        formulario = GrupoFamiliarForm(self.datos(jefe_hogar_nombre="R."))
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("jefe_hogar_nombre", formulario.errors)
+
+    def test_el_nombre_se_recorta(self):
+        formulario = GrupoFamiliarForm(self.datos(jefe_hogar_nombre="  Rosa Millán "))
+
+        self.assertTrue(formulario.is_valid())
+        self.assertEqual(formulario.cleaned_data["jefe_hogar_nombre"], "Rosa Millán")
+
+    def test_el_numero_de_personas_es_obligatorio(self):
+        formulario = GrupoFamiliarForm(self.datos(integrantes_declarados=""))
+
+        self.assertFalse(formulario.is_valid())
+
+    def test_cero_personas_no_es_un_hogar(self):
+        formulario = GrupoFamiliarForm(self.datos(integrantes_declarados=0))
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("integrantes_declarados", formulario.errors)
+
+    def test_un_rut_valido_se_acepta(self):
+        formulario = GrupoFamiliarForm(self.datos(jefe_hogar_rut="12345678-5"))
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_un_rut_con_digito_verificador_equivocado_se_rechaza(self):
+        """Un RUT mal escrito es peor que ninguno: parece identificar y no lo hace."""
+        formulario = GrupoFamiliarForm(self.datos(jefe_hogar_rut="12345678-9"))
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("jefe_hogar_rut", formulario.errors)
+
+    def test_sin_rut_tambien_se_guarda(self):
+        """No se puede condicionar el registro a entregar un dato personal."""
+        formulario = GrupoFamiliarForm(self.datos(jefe_hogar_rut=""))
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_un_ingreso_normal_se_acepta(self):
+        formulario = GrupoFamiliarForm(self.datos(ingreso_mensual=650000))
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_un_ingreso_con_un_digito_de_mas_se_rechaza(self):
+        formulario = GrupoFamiliarForm(self.datos(ingreso_mensual=650000000))
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("ingreso_mensual", formulario.errors)
+
+    def test_sin_ingreso_tambien_se_guarda(self):
+        formulario = GrupoFamiliarForm(self.datos(ingreso_mensual=""))
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+
+# ==========================================================================
+# HU-08 — 22. REGISTRAR UNA VIVIENDA (LA PANTALLA)
+# ==========================================================================
+
+
+class RegistrarViviendaTest(BaseEncuestaTest):
+    def setUp(self):
+        super().setUp()
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
+        self.url = reverse("fichas:vivienda_registrar")
+        self.client.force_login(self.marta)
+
+    def datos(self, **extra):
+        base = {
+            "zona": self.zona1.pk,
+            "direccion": "Pasaje Nuevo 10",
+            "referencia": "",
+            "tipo": TipoVivienda.CASA,
+            "tenencia": TenenciaVivienda.ARRENDADA,
+            "materialidad_muros": MaterialidadMuros.ALBANILERIA,
+            "origen_agua": OrigenAgua.RED_PUBLICA,
+            "sistema_sanitario": SistemaSanitario.ALCANTARILLADO,
+            "tiene_electricidad": True,
+            "observaciones": "",
+        }
+        base.update(extra)
+        return base
+
+    def test_el_encuestador_ve_el_formulario(self):
+        respuesta = self.client.get(self.url)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "Registrar una vivienda")
+
+    def test_guardar_crea_la_vivienda(self):
+        self.client.post(self.url, self.datos())
+
+        self.assertEqual(Vivienda.objects.count(), 1)
+
+    def test_guardar_crea_ademas_su_encuesta(self):
+        """Nadie registra una vivienda «por si acaso»: se registra porque se está ahí."""
+        self.client.post(self.url, self.datos())
+
+        encuesta = Encuesta.objects.get()
+        self.assertEqual(encuesta.censista, self.marta)
+        self.assertEqual(encuesta.estado, EstadoEncuesta.BORRADOR)
+
+    def test_la_encuesta_nueva_no_queda_como_pendiente(self):
+        """PENDIENTE significa «sin visitar», y la visita acaba de ocurrir."""
+        self.client.post(self.url, self.datos())
+
+        self.assertIsNotNone(Encuesta.objects.get().iniciada_en)
+
+    def test_despues_de_guardar_lleva_al_formulario_del_hogar(self):
+        respuesta = self.client.post(self.url, self.datos())
+
+        encuesta = Encuesta.objects.get()
+        self.assertRedirects(
+            respuesta, reverse("fichas:registrar_hogar", kwargs={"pk": encuesta.pk})
+        )
+
+    def test_un_formulario_incompleto_no_crea_nada(self):
+        self.client.post(self.url, self.datos(tipo=""))
+
+        self.assertEqual(Vivienda.objects.count(), 0)
+        self.assertEqual(Encuesta.objects.count(), 0)
+
+    def test_una_zona_ajena_no_crea_nada(self):
+        self.client.post(self.url, self.datos(zona=self.zona_norte.pk))
+
+        self.assertEqual(Vivienda.objects.count(), 0)
+
+    def test_sin_territorio_asignado_no_se_ofrece_el_formulario(self):
+        self.client.force_login(self.juan)
+
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, "No tienes territorio donde registrar")
+
+    def test_sin_territorio_asignado_tampoco_se_puede_enviar(self):
+        self.client.force_login(self.juan)
+
+        self.client.post(self.url, self.datos())
+
+        self.assertEqual(Vivienda.objects.count(), 0)
+
+    def test_con_el_operativo_cerrado_no_hay_donde_registrar(self):
+        self.operativo.estado = EstadoOperativo.CERRADO
+        self.operativo.save()
+
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, "No tienes territorio donde registrar")
+
+    def test_el_supervisor_no_puede_registrar(self):
+        """No tiene fichas.crear: la separación de funciones la aplica la matriz."""
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url)
+
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_sin_el_permiso_de_crear_no_se_entra(self):
+        self.rol_censista.permisos.remove(Permiso.objects.get(codigo="fichas.crear"))
+        self.rol_censista.permisos.remove(Permiso.objects.get(codigo="fichas.editar"))
+
+        respuesta = self.client.get(self.url)
+
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_una_direccion_repetida_no_se_guarda_a_la_primera(self):
+        self.crear_vivienda(direccion="Pasaje Nuevo 10")
+
+        self.client.post(self.url, self.datos())
+
+        self.assertEqual(Vivienda.objects.count(), 1)
+
+    def test_una_direccion_repetida_se_guarda_al_confirmar(self):
+        self.crear_vivienda(direccion="Pasaje Nuevo 10")
+
+        self.client.post(self.url, self.datos(confirmar_duplicado="on"))
+
+        self.assertEqual(Vivienda.objects.count(), 2)
+
+    def test_el_aviso_enlaza_la_vivienda_que_ya_existe(self):
+        otra = self.crear_vivienda(direccion="Pasaje Nuevo 10")
+
+        respuesta = self.client.post(self.url, self.datos())
+
+        self.assertContains(
+            respuesta, reverse("fichas:vivienda_detalle", kwargs={"pk": otra.pk})
+        )
+
+
+# ==========================================================================
+# HU-08 — 23. EDITAR UNA VIVIENDA
+# ==========================================================================
+
+
+class EditarViviendaTest(BaseEncuestaTest):
+    def setUp(self):
+        super().setUp()
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
+        self.vivienda = Vivienda.objects.create(
+            zona=self.zona1, direccion="Calle del padrón 1"
+        )
+        self.url = reverse("fichas:vivienda_editar", kwargs={"pk": self.vivienda.pk})
+        self.client.force_login(self.marta)
+
+    def datos(self, **extra):
+        base = {
+            "zona": self.zona1.pk,
+            "direccion": "Calle del padrón 1",
+            "referencia": "",
+            "tipo": TipoVivienda.MEDIAGUA,
+            "tenencia": TenenciaVivienda.IRREGULAR,
+            "materialidad_muros": MaterialidadMuros.PRECARIO,
+            "origen_agua": OrigenAgua.CAMION,
+            "sistema_sanitario": SistemaSanitario.NO_TIENE,
+            "tiene_electricidad": False,
+            "observaciones": "",
+        }
+        base.update(extra)
+        return base
+
+    def test_completa_una_vivienda_del_padron_antiguo(self):
+        """El caso de uso que justifica la pantalla: la migración no inventó datos."""
+        self.assertFalse(self.vivienda.datos_completos)
+
+        self.client.post(self.url, self.datos())
+
+        self.vivienda.refresh_from_db()
+        self.assertTrue(self.vivienda.datos_completos)
+
+    def test_avisa_de_que_todavia_no_esta_descrita(self):
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, "todavía no está descrita")
+
+    def test_guarda_los_cambios(self):
+        self.client.post(self.url, self.datos())
+
+        self.vivienda.refresh_from_db()
+        self.assertEqual(self.vivienda.tipo, TipoVivienda.MEDIAGUA)
+        self.assertFalse(self.vivienda.tiene_electricidad)
+
+    def test_lleva_a_la_ficha_de_la_vivienda(self):
+        respuesta = self.client.post(self.url, self.datos())
+
+        self.assertRedirects(
+            respuesta,
+            reverse("fichas:vivienda_detalle", kwargs={"pk": self.vivienda.pk}),
+        )
+
+    def test_una_vivienda_fuera_de_mi_territorio_responde_404(self):
+        ajena = Vivienda.objects.create(zona=self.zona_norte, direccion="Otra 1")
+
+        respuesta = self.client.get(
+            reverse("fichas:vivienda_editar", kwargs={"pk": ajena.pk})
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_un_compañero_del_mismo_sector_si_puede_completarla(self):
+        """El sector puede estar repartido y la casa es la misma para todos."""
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.juan)
+        self.client.force_login(self.juan)
+
+        self.assertEqual(self.client.get(self.url).status_code, 200)
+
+
+# ==========================================================================
+# HU-08 — 24. REGISTRAR EL GRUPO FAMILIAR
+# ==========================================================================
+
+
+class RegistrarHogarTest(BaseEncuestaTest):
+    def setUp(self):
+        super().setUp()
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
+        self.encuesta = self.crear(estado=EstadoEncuesta.BORRADOR)
+        self.url = reverse("fichas:registrar_hogar", kwargs={"pk": self.encuesta.pk})
+        self.client.force_login(self.marta)
+
+    def datos(self, **extra):
+        base = {
+            "jefe_hogar_nombre": "Rosa Elena Millán",
+            "jefe_hogar_rut": "12345678-5",
+            "telefono_contacto": "+56 9 1234 5678",
+            "integrantes_declarados": 4,
+            "ingreso_mensual": 700000,
+            "observaciones": "",
+        }
+        base.update(extra)
+        return base
+
+    def test_muestra_el_formulario(self):
+        respuesta = self.client.get(self.url)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "Registrar el grupo familiar")
+
+    def test_recuerda_de_que_vivienda_se_trata(self):
+        """Con dos hogares abiertos en la misma casa, sin esto se confunden."""
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, self.encuesta.direccion)
+
+    def test_guarda_el_hogar(self):
+        self.client.post(self.url, self.datos())
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(
+            self.encuesta.grupo_familiar.jefe_hogar_nombre, "Rosa Elena Millán"
+        )
+
+    def test_normaliza_el_rut(self):
+        self.client.post(self.url, self.datos(jefe_hogar_rut="12.345.678-5"))
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.grupo_familiar.jefe_hogar_rut, "12345678-5")
+
+    def test_lleva_a_la_ficha_de_la_encuesta(self):
+        respuesta = self.client.post(self.url, self.datos())
+
+        self.assertRedirects(respuesta, self.url_detalle(self.encuesta))
+
+    def test_una_encuesta_pendiente_pasa_a_borrador(self):
+        pendiente = self.crear(direccion="Calle 2")
+        url = reverse("fichas:registrar_hogar", kwargs={"pk": pendiente.pk})
+
+        self.client.post(url, self.datos())
+
+        pendiente.refresh_from_db()
+        self.assertEqual(pendiente.estado, EstadoEncuesta.BORRADOR)
+
+    def test_no_la_deja_completada(self):
+        """Faltan los integrantes: darla por terminada engañaría al supervisor."""
+        self.client.post(self.url, self.datos())
+
+        self.encuesta.refresh_from_db()
+        self.assertEqual(self.encuesta.estado, EstadoEncuesta.BORRADOR)
+
+    def test_volver_a_entrar_muestra_lo_ya_escrito(self):
+        self.client.post(self.url, self.datos())
+
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, "Rosa Elena Millán")
+        self.assertContains(respuesta, "Editar el grupo familiar")
+
+    def test_editar_no_crea_un_segundo_hogar(self):
+        self.client.post(self.url, self.datos())
+        self.client.post(self.url, self.datos(jefe_hogar_nombre="Otra Persona"))
+
+        self.assertEqual(GrupoFamiliar.objects.count(), 1)
+
+    def test_datos_invalidos_no_guardan_nada(self):
+        self.client.post(self.url, self.datos(integrantes_declarados=0))
+
+        self.assertEqual(GrupoFamiliar.objects.count(), 0)
+
+    def test_no_se_puede_escribir_en_la_encuesta_de_otra_persona(self):
+        """Escribir en nombre de otro dejaría el dato atribuido a quien no estuvo."""
+        ajena = self.crear(direccion="Calle de Juan", censista=self.juan)
+
+        respuesta = self.client.post(
+            reverse("fichas:registrar_hogar", kwargs={"pk": ajena.pk}), self.datos()
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_el_supervisor_tampoco_puede_aunque_vea_todas(self):
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url)
+
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_una_encuesta_validada_no_admite_cambios(self):
+        self.encuesta.cambiar_estado(EstadoEncuesta.VALIDADA)
+
+        respuesta = self.client.get(self.url)
+
+        self.assertRedirects(respuesta, self.url_detalle(self.encuesta))
+
+    def test_una_encuesta_validada_tampoco_por_POST(self):
+        """Ocultar el botón no es una validación: la URL se escribe a mano."""
+        self.encuesta.cambiar_estado(EstadoEncuesta.VALIDADA)
+
+        self.client.post(self.url, self.datos())
+
+        self.assertEqual(GrupoFamiliar.objects.count(), 0)
+
+    def test_una_encuesta_observada_si_admite_cambios(self):
+        """Es justamente el estado que existe para poder corregir."""
+        self.devolver(self.encuesta)
+
+        self.assertEqual(self.client.get(self.url).status_code, 200)
+
+    def test_con_el_operativo_cerrado_no_se_puede_escribir(self):
+        self.operativo.estado = EstadoOperativo.CERRADO
+        self.operativo.save()
+
+        self.client.post(self.url, self.datos())
+
+        self.assertEqual(GrupoFamiliar.objects.count(), 0)
+
+
+# ==========================================================================
+# HU-08 — 25. UN SEGUNDO HOGAR EN LA MISMA VIVIENDA
+# ==========================================================================
+
+
+class AgregarHogarTest(BaseEncuestaTest):
+    def setUp(self):
+        super().setUp()
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
+        self.encuesta = self.crear(estado=EstadoEncuesta.BORRADOR)
+        self.vivienda = self.encuesta.vivienda
+        self.url = reverse("fichas:hogar_agregar", kwargs={"pk": self.vivienda.pk})
+        self.client.force_login(self.marta)
+
+    def test_crea_una_encuesta_mas_en_la_misma_vivienda(self):
+        self.client.post(self.url)
+
+        self.assertEqual(self.vivienda.encuestas.count(), 2)
+
+    def test_no_duplica_la_vivienda(self):
+        """Es el punto: la casa se describe una vez para los dos hogares."""
+        self.client.post(self.url)
+
+        self.assertEqual(Vivienda.objects.count(), 1)
+
+    def test_lleva_al_formulario_del_hogar_nuevo(self):
+        respuesta = self.client.post(self.url)
+
+        nueva = self.vivienda.encuestas.exclude(pk=self.encuesta.pk).get()
+        self.assertRedirects(
+            respuesta, reverse("fichas:registrar_hogar", kwargs={"pk": nueva.pk})
+        )
+
+    def test_un_GET_no_crea_nada(self):
+        """Con un GET, un <img src="..."> ajeno llenaría la base de encuestas."""
+        respuesta = self.client.get(self.url)
+
+        self.assertEqual(respuesta.status_code, 405)
+        self.assertEqual(self.vivienda.encuestas.count(), 1)
+
+    def test_no_se_puede_en_una_vivienda_fuera_de_mi_territorio(self):
+        ajena = Vivienda.objects.create(zona=self.zona_norte, direccion="Otra 1")
+
+        respuesta = self.client.post(
+            reverse("fichas:hogar_agregar", kwargs={"pk": ajena.pk})
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_no_se_puede_con_el_operativo_cerrado(self):
+        self.operativo.estado = EstadoOperativo.CERRADO
+        self.operativo.save()
+
+        self.client.post(self.url)
+
+        self.assertEqual(self.vivienda.encuestas.count(), 1)
+
+
+# ==========================================================================
+# HU-08 — 26. LA FICHA DE LA VIVIENDA
+# ==========================================================================
+
+
+class ViviendaDetalleTest(BaseEncuestaTest):
+    def setUp(self):
+        super().setUp()
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
+        self.encuesta = self.crear(estado=EstadoEncuesta.BORRADOR)
+        self.vivienda = self.encuesta.vivienda
+        self.url = reverse("fichas:vivienda_detalle", kwargs={"pk": self.vivienda.pk})
+        self.client.force_login(self.marta)
+
+    def test_muestra_las_caracteristicas(self):
+        respuesta = self.client.get(self.url)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "Albañilería")
+
+    def test_muestra_los_hogares(self):
+        GrupoFamiliar.objects.create(
+            encuesta=self.encuesta,
+            jefe_hogar_nombre="Rosa Millán",
+            integrantes_declarados=3,
+        )
+
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, "Rosa Millán")
+
+    def test_muestra_los_dos_hogares_de_una_vivienda_compartida(self):
+        self.crear(vivienda=self.vivienda, censista=self.juan)
+
+        respuesta = self.client.get(self.url)
+
+        self.assertEqual(len(respuesta.context["hogares"]), 2)
+
+    def test_una_vivienda_sin_describir_lo_dice(self):
+        vivienda = Vivienda.objects.create(zona=self.zona1, direccion="Calle 9")
+
+        respuesta = self.client.get(
+            reverse("fichas:vivienda_detalle", kwargs={"pk": vivienda.pk})
+        )
+
+        self.assertContains(respuesta, "Sin describir")
+
+    def test_ofrece_agregar_otro_hogar(self):
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, "Agregar otro hogar")
+
+    def test_con_el_operativo_cerrado_no_lo_ofrece(self):
+        self.operativo.estado = EstadoOperativo.CERRADO
+        self.operativo.save()
+
+        respuesta = self.client.get(self.url)
+
+        self.assertNotContains(respuesta, "Agregar otro hogar")
+
+    def test_el_supervisor_la_ve_pero_no_puede_registrar(self):
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertNotContains(respuesta, "Agregar otro hogar")
+
+    def test_una_vivienda_ajena_responde_404(self):
+        ajena = Vivienda.objects.create(zona=self.zona_norte, direccion="Otra 1")
+
+        respuesta = self.client.get(
+            reverse("fichas:vivienda_detalle", kwargs={"pk": ajena.pk})
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+
+
+# ==========================================================================
+# HU-08 — 27. LO QUE LA HU-07 GANA CON LA HU-08
+# ==========================================================================
+
+
+class FichaConHogarTest(BaseEncuestaTest):
+    def setUp(self):
+        super().setUp()
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
+        self.encuesta = self.crear(estado=EstadoEncuesta.BORRADOR)
+        self.client.force_login(self.marta)
+
+    def test_la_ficha_ofrece_registrar_el_hogar_si_no_lo_tiene(self):
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertContains(respuesta, "Registrar el grupo familiar")
+
+    def test_la_ficha_muestra_el_hogar_cuando_existe(self):
+        GrupoFamiliar.objects.create(
+            encuesta=self.encuesta,
+            jefe_hogar_nombre="Rosa Millán",
+            integrantes_declarados=3,
+            ingreso_mensual=600000,
+        )
+
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertContains(respuesta, "Rosa Millán")
+        self.assertContains(respuesta, "Editar los datos del hogar")
+
+    def test_una_encuesta_cerrada_no_ofrece_editar(self):
+        self.encuesta.cambiar_estado(EstadoEncuesta.VALIDADA)
+
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertNotContains(respuesta, "Editar los datos del hogar")
+
+    def test_el_listado_ofrece_registrar_una_vivienda(self):
+        respuesta = self.client.get(self.url_lista)
+
+        self.assertContains(respuesta, reverse("fichas:vivienda_registrar"))
+
+    def test_al_supervisor_no_se_le_ofrece_registrar(self):
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_lista)
+
+        self.assertNotContains(respuesta, reverse("fichas:vivienda_registrar"))
+
+
+# ==========================================================================
+# HU-08 — 28. RECORRIDO COMPLETO DE LA HISTORIA
+# ==========================================================================
+
+
+class IntegracionHU08Test(BaseEncuestaTest):
+    """De la asignación del sector (HU-06) al hogar registrado (HU-08)."""
+
+    def test_recorrido_completo(self):
+        # 1. El supervisor reparte el sector (HU-06).
+        AsignacionSector.objects.create(
+            sector=self.boldos, censista=self.marta, asignado_por=self.supervisor
+        )
+        self.client.force_login(self.marta)
+
+        # 2. La encuestadora registra una vivienda al llegar a la puerta.
+        respuesta = self.client.post(
+            reverse("fichas:vivienda_registrar"),
+            {
+                "zona": self.zona1.pk,
+                "direccion": "Pasaje Los Robles 47",
+                "referencia": "Sitio con dos casas",
+                "tipo": TipoVivienda.CASA,
+                "tenencia": TenenciaVivienda.PROPIA_PAGADA,
+                "materialidad_muros": MaterialidadMuros.ALBANILERIA,
+                "origen_agua": OrigenAgua.RED_PUBLICA,
+                "sistema_sanitario": SistemaSanitario.ALCANTARILLADO,
+                "tiene_electricidad": True,
+                "observaciones": "",
+            },
+        )
+        vivienda = Vivienda.objects.get()
+        encuesta = Encuesta.objects.get()
+        self.assertRedirects(
+            respuesta, reverse("fichas:registrar_hogar", kwargs={"pk": encuesta.pk})
+        )
+
+        # 3. Registra el hogar.
+        self.client.post(
+            reverse("fichas:registrar_hogar", kwargs={"pk": encuesta.pk}),
+            {
+                "jefe_hogar_nombre": "Rosa Elena Millán",
+                "jefe_hogar_rut": "12345678-5",
+                "telefono_contacto": "",
+                "integrantes_declarados": 5,
+                "ingreso_mensual": 750000,
+                "observaciones": "",
+            },
+        )
+        encuesta.refresh_from_db()
+        self.assertEqual(encuesta.grupo_familiar.integrantes_declarados, 5)
+        self.assertEqual(encuesta.estado, EstadoEncuesta.BORRADOR)
+
+        # 4. Resulta que en la misma casa vive una segunda familia.
+        self.client.post(
+            reverse("fichas:hogar_agregar", kwargs={"pk": vivienda.pk})
+        )
+        segunda = vivienda.encuestas.exclude(pk=encuesta.pk).get()
+
+        self.assertEqual(Vivienda.objects.count(), 1)
+        self.assertEqual(vivienda.encuestas.count(), 2)
+
+        # 5. Las dos aparecen en su listado, y la casa se describió una sola vez.
+        respuesta = self.client.get(self.url_lista)
+        self.assertEqual(respuesta.context["resumen"]["total"], 2)
+        self.assertEqual(segunda.vivienda, encuesta.vivienda)
+
+        # 6. La ficha de una avisa de la otra.
+        respuesta = self.client.get(self.url_detalle(encuesta))
+        self.assertContains(respuesta, "Otros hogares en esta misma vivienda")
+
+        # 7. Y Juan, que no tiene el sector, no puede tocar nada de esto.
+        self.client.force_login(self.juan)
+        self.assertEqual(
+            self.client.get(
+                reverse("fichas:vivienda_detalle", kwargs={"pk": vivienda.pk})
+            ).status_code,
+            404,
+        )
+
+

@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   REGISTRAR EL GRUPO FAMILIAR — /encuestas/<pk>/hogar/
+
+   Segundo paso de la HU-08 y la pantalla que de verdad «almacena la información
+   del censo».
+
+   Se dice arriba de qué vivienda se trata, y no solo en la migaja, porque un
+   encuestador puede tener dos hogares abiertos en la misma casa: sin la dirección
+   a la vista, escribir los datos de una familia en la ficha de la otra es un error
+   que no da ninguna señal.
+
+   El aviso sobre datos personales no es decorativo. La Ley N° 19.628 y la
+   Ley N° 21.719 exigen que la persona sepa para qué se recoge su información, y
+   quien está en la puerta no lee una política de privacidad: lee lo que el
+   encuestador le dice. Ponerlo en pantalla es la forma de que se lo digan.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Hogar de {{ vivienda.direccion }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'fichas:mis_encuestas' %}">Mis encuestas</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}">{{ vivienda.direccion }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Grupo familiar</li>
+  </ol>
+</nav>
+
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+    {% if ya_existia %}Editar el grupo familiar{% else %}Registrar el grupo familiar{% endif %}
+  </h1>
+  <p class="text-secondary mb-0">
+    {{ vivienda.direccion }} · {{ vivienda.zona.nombre }} ·
+    {{ vivienda.zona.sector.nombre }}
+  </p>
+</div>
+
+{% if not vivienda.datos_completos %}
+  <div class="alert alert-warning small d-flex justify-content-between align-items-center gap-2 flex-wrap" role="alert">
+    <span>Esta vivienda todavía no está descrita (tipo, materialidad, servicios).</span>
+    <a href="{% url 'fichas:vivienda_editar' vivienda.pk %}" class="btn btn-sm btn-outline-dark">
+      Completar los datos de la vivienda
+    </a>
+  </div>
+{% endif %}
+
+{% if form.non_field_errors %}
+  <div class="alert alert-danger small" role="alert">
+    {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+  </div>
+{% endif %}
+
+<form method="post" novalidate>
+  {% csrf_token %}
+
+  <div class="card-opso p-4 mb-3">
+    <h2 class="h6 fw-semibold mb-3">Jefatura de hogar</h2>
+    <div class="row g-3">
+      {% include "usuarios/gestion/_campo.html" with campo=form.jefe_hogar_nombre ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.jefe_hogar_rut ancho="col-12 col-md-3" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.telefono_contacto ancho="col-12 col-md-3" %}
+    </div>
+
+    {% comment %} El RUT y el teléfono son opcionales, y conviene que el
+       encuestador sepa POR QUÉ antes de insistirle a la familia. {% endcomment %}
+    <p class="text-secondary small mb-0 mt-2">
+      El RUT y el teléfono son opcionales: si la persona no los quiere entregar, la
+      encuesta se guarda igual. Explícale para qué sirven antes de pedirlos.
+    </p>
+  </div>
+
+  <div class="card-opso p-4 mb-3">
+    <h2 class="h6 fw-semibold mb-3">Composición e ingresos</h2>
+    <div class="row g-3">
+      {% include "usuarios/gestion/_campo.html" with campo=form.integrantes_declarados ancho="col-12 col-md-4" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.ingreso_mensual ancho="col-12 col-md-8" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.observaciones ancho="col-12" %}
+    </div>
+  </div>
+
+  <div class="alert alert-info small d-flex gap-2" role="alert">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" />
+    </svg>
+    <div>
+      Estos son <strong>datos personales de una familia</strong>. Cuéntale para qué
+      se usan y quién los va a ver. Solo tú, tu supervisor y la administración del
+      operativo tienen acceso a esta ficha.
+    </div>
+  </div>
+
+  <div class="d-flex gap-2 flex-wrap">
+    <button type="submit" class="btn btn-opso">
+      {% if ya_existia %}Guardar los cambios{% else %}Guardar el hogar{% endif %}
+    </button>
+    <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}" class="btn btn-outline-secondary">
+      Cancelar
+    </a>
+  </div>
+
+  <p class="text-secondary small mt-3 mb-0">
+    Al guardar, la encuesta queda como <strong>borrador</strong>: todavía le faltan
+    las personas del hogar una por una.
+  </p>
+</form>
+
+{% endblock %}

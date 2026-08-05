@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   REGISTRAR O CORREGIR UNA VIVIENDA — /encuestas/viviendas/nueva/ y .../editar/
+
+   Primer paso de la HU-08. Una sola plantilla para el alta y para la edición,
+   porque los campos son exactamente los mismos y mantener dos archivos garantiza
+   que un campo nuevo aparezca en uno y falte en el otro. Lo que cambia —el título,
+   el texto del botón, la migaja— llega en `es_alta`.
+
+   El formulario se agrupa en tres bloques y el orden no es casual: es el orden en
+   que se responde estando de pie en la puerta.
+
+     1. DÓNDE ESTÁ    zona, dirección, referencia   -> se sabe antes de tocar
+     2. CÓMO ES       tipo, materialidad             -> se ve desde la calle
+     3. QUÉ TIENE     tenencia, agua, sanitario, luz -> hay que preguntarlo
+
+   Los campos se dibujan con el fragmento _campo.html de la HU-03 en vez de
+   escribir a mano la etiqueta, el asterisco, la ayuda y los errores diez veces.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}{{ titulo_pagina }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'fichas:mis_encuestas' %}">Mis encuestas</a></li>
+    {% if not es_alta %}
+      <li class="breadcrumb-item">
+        <a href="{% url 'fichas:vivienda_detalle' vivienda.pk %}">{{ vivienda.direccion }}</a>
+      </li>
+    {% endif %}
+    <li class="breadcrumb-item active" aria-current="page">
+      {% if es_alta %}Registrar vivienda{% else %}Editar datos{% endif %}
+    </li>
+  </ol>
+</nav>
+
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+    {% if es_alta %}Registrar una vivienda{% else %}Editar {{ vivienda.direccion }}{% endif %}
+  </h1>
+  <p class="text-secondary mb-0">
+    {% if es_alta %}
+      Paso 1 de 2: la casa. Después vienen los datos del hogar que vive en ella.
+    {% else %}
+      Corrige o completa las características del inmueble.
+    {% endif %}
+  </p>
+</div>
+
+{% if not es_alta and not vivienda.datos_completos %}
+  {% comment %} Las viviendas que vienen del padrón de la HU-07 no tienen sus
+     características levantadas. Se dice por qué, para que nadie piense que el
+     sistema perdió los datos. {% endcomment %}
+  <div class="alert alert-warning small d-flex gap-2" role="alert">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+    </svg>
+    <div>
+      Esta vivienda todavía no está descrita: se cargó como parte del padrón, con
+      su dirección y nada más. Complétala cuando llegues a la puerta.
+    </div>
+  </div>
+{% endif %}
+
+{% if form.non_field_errors %}
+  <div class="alert alert-danger small" role="alert">
+    {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+  </div>
+{% endif %}
+
+<form method="post" novalidate>
+  {% csrf_token %}
+
+  {# ---------- 1. Dónde está ---------- #}
+  <div class="card-opso p-4 mb-3">
+    <h2 class="h6 fw-semibold mb-3">Dónde está</h2>
+    <div class="row g-3">
+      {% include "usuarios/gestion/_campo.html" with campo=form.zona ancho="col-12" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.direccion ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.referencia ancho="col-12 col-md-6" %}
+    </div>
+
+    {% comment %} La casilla de confirmación solo se dibuja cuando el formulario
+       encontró un conflicto, porque una casilla que pide confirmar algo que no ha
+       pasado no significa nada y enseña a marcar sin leer. {% endcomment %}
+    {% if form.confirmar_duplicado.errors or duplicadas %}
+      <div class="alert alert-warning small mt-3 mb-0" role="alert">
+        <strong>Ya hay una vivienda registrada en esa dirección.</strong>
+        {% if duplicadas %}
+          <ul class="mb-2 mt-1">
+            {% for otra in duplicadas %}
+              <li>
+                <a href="{% url 'fichas:vivienda_detalle' otra.pk %}">{{ otra.direccion }}</a>
+                {% if otra.referencia %}— {{ otra.referencia }}{% endif %}
+                · {{ otra.total_hogares }} hogar{{ otra.total_hogares|pluralize:"es" }}
+              </li>
+            {% endfor %}
+          </ul>
+          <p class="mb-2">
+            Si es la <strong>misma casa</strong> y solo vive otra familia, no la
+            registres de nuevo: entra en la vivienda de arriba y agrega un hogar.
+          </p>
+        {% endif %}
+        <div class="form-check">
+          {{ form.confirmar_duplicado }}
+          <label class="form-check-label" for="{{ form.confirmar_duplicado.id_for_label }}">
+            {{ form.confirmar_duplicado.label }}
+          </label>
+        </div>
+        {% for error in form.confirmar_duplicado.errors %}
+          <div class="text-danger mt-1">{{ error }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  </div>
+
+  {# ---------- 2. Cómo es ---------- #}
+  <div class="card-opso p-4 mb-3">
+    <h2 class="h6 fw-semibold mb-3">Cómo es</h2>
+    <div class="row g-3">
+      {% include "usuarios/gestion/_campo.html" with campo=form.tipo ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.materialidad_muros ancho="col-12 col-md-6" %}
+    </div>
+  </div>
+
+  {# ---------- 3. Qué tiene ---------- #}
+  <div class="card-opso p-4 mb-3">
+    <h2 class="h6 fw-semibold mb-3">Tenencia y servicios básicos</h2>
+    <div class="row g-3">
+      {% include "usuarios/gestion/_campo.html" with campo=form.tenencia ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.tiene_electricidad ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.origen_agua ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.sistema_sanitario ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.observaciones ancho="col-12" %}
+    </div>
+  </div>
+
+  <div class="d-flex gap-2 flex-wrap">
+    <button type="submit" class="btn btn-opso">
+      {% if es_alta %}Guardar y continuar con el hogar{% else %}Guardar los cambios{% endif %}
+    </button>
+    <a href="{% if es_alta %}{% url 'fichas:mis_encuestas' %}{% else %}{% url 'fichas:vivienda_detalle' vivienda.pk %}{% endif %}"
+       class="btn btn-outline-secondary">Cancelar</a>
+  </div>
+</form>
+
+{% endblock %}
