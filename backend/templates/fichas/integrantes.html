@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   LAS PERSONAS DEL HOGAR — /encuestas/<pk>/integrantes/
+
+   La pantalla de la HU-09, y donde por fin se ve para qué servía
+   `integrantes_declarados`: la HU-08 lo guardó argumentando que «son dos datos
+   distintos y su diferencia es información», y esa diferencia es la barra de
+   avance de aquí arriba.
+
+   Tres estados posibles del hogar, y cada uno dice algo distinto:
+
+     faltan personas  -> barra azul y el aviso de cuántas
+     completo         -> barra verde
+     hay más de las declaradas -> aviso ámbar, porque el número declarado es el
+                                  que se usó para calcular el ingreso por persona
+
+   La tabla se lee en un teléfono: nombre y parentesco a la izquierda, lo demás en
+   una segunda línea pequeña, y las acciones al final de cada fila.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Integrantes de {{ encuesta.direccion }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'fichas:mis_encuestas' %}">Mis encuestas</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}">{{ encuesta.direccion }}</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Integrantes</li>
+  </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+      Integrantes del hogar
+    </h1>
+    <p class="text-secondary mb-0">
+      Hogar de {{ hogar.jefe_hogar_nombre }} · {{ encuesta.direccion }}
+    </p>
+  </div>
+  {% if puede_registrar %}
+    <a href="{% url 'fichas:integrante_nuevo' encuesta.pk %}" class="btn btn-opso btn-sm">
+      Agregar una persona
+    </a>
+  {% endif %}
+</div>
+
+{% if not puede_registrar and motivo_bloqueo %}
+  <div class="alert alert-secondary small" role="alert">{{ motivo_bloqueo }}</div>
+{% endif %}
+
+{# ---------- El avance del hogar ---------- #}
+<div class="card-opso p-3 mb-3">
+  <div class="d-flex justify-content-between align-items-center mb-2">
+    <span class="small fw-semibold">Personas registradas</span>
+    <span class="small text-secondary">
+      {{ hogar.total_integrantes }} de {{ hogar.integrantes_declarados }} declarada{{ hogar.integrantes_declarados|pluralize }}
+    </span>
+  </div>
+
+  {% comment %} `widthratio` calcula el porcentaje en la plantilla, que es
+     presentación pura: el modelo ya expone los dos números y no tiene por qué
+     conocer el ancho de una barra. {% endcomment %}
+  <div class="progress" style="height: 10px;" role="progressbar"
+       aria-label="Personas registradas"
+       aria-valuenow="{{ hogar.total_integrantes }}"
+       aria-valuemin="0" aria-valuemax="{{ hogar.integrantes_declarados }}">
+    <div class="progress-bar {% if hogar.esta_completo %}bg-success{% endif %}"
+         style="width: {% widthratio hogar.total_integrantes hogar.integrantes_declarados 100 %}%;"></div>
+  </div>
+
+  {% if hogar.hay_discrepancia %}
+    {% comment %} Registrar más personas de las declaradas NO es un error —en
+       terreno aparece la abuela de la pieza del fondo— pero no puede pasar
+       inadvertido: el número declarado es el que divide el ingreso del hogar.
+       {% endcomment %}
+    <div class="alert alert-warning small mt-3 mb-0" role="alert">
+      Hay <strong>{{ hogar.total_integrantes }}</strong> personas registradas y la
+      familia declaró <strong>{{ hogar.integrantes_declarados }}</strong>. No es un
+      error, pero el número declarado es el que se usa para calcular el ingreso por
+      persona:
+      <a href="{% url 'fichas:registrar_hogar' encuesta.pk %}" class="fw-semibold">
+        corrígelo si corresponde</a>.
+    </div>
+  {% elif hogar.esta_completo %}
+    <p class="text-success small mb-0 mt-2">
+      El hogar está completo: se registraron todas las personas declaradas.
+    </p>
+  {% else %}
+    <p class="text-secondary small mb-0 mt-2">
+      Faltan <strong>{{ hogar.integrantes_pendientes }}</strong>
+      persona{{ hogar.integrantes_pendientes|pluralize }} por registrar.
+    </p>
+  {% endif %}
+</div>
+
+{% if not hogar.nombre_del_jefe_coincide %}
+  {% comment %} Los dos sitios donde vive el nombre del jefe de hogar dejaron de
+     coincidir. No se bloquea nada: puede ser que al enumerar se anotara el nombre
+     completo y en el primer contacto solo el de pila. Pero avisar es barato y el
+     hogar se identifica por ese nombre en todos los listados. {% endcomment %}
+  <div class="alert alert-info small" role="alert">
+    El hogar está registrado a nombre de <strong>{{ hogar.jefe_hogar_nombre }}</strong>
+    y la persona marcada como jefa de hogar es
+    <strong>{{ hogar.jefe_hogar_registrado.nombre_completo }}</strong>. Si es la
+    misma persona, no hay nada que hacer.
+  </div>
+{% endif %}
+
+{# ---------- La lista ---------- #}
+{% if integrantes %}
+  <div class="card-opso p-0 overflow-hidden">
+    <div class="table-responsive">
+      <table class="table table-hover align-middle mb-0">
+        <thead class="table-light">
+          <tr>
+            <th scope="col">Persona</th>
+            <th scope="col">Parentesco</th>
+            <th scope="col" class="text-center">Edad</th>
+            <th scope="col">Ocupación</th>
+            <th scope="col" class="text-end">Acciones</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for integrante in integrantes %}
+            <tr>
+              <td>
+                <span class="fw-semibold">{{ integrante.nombre_completo }}</span>
+                {% if integrante.tiene_discapacidad %}
+                  <span class="badge text-bg-info">discapacidad</span>
+                {% endif %}
+                <div class="text-secondary small">
+                  {{ integrante.get_sexo_display }}
+                  {% if integrante.rut %} · {{ integrante.rut }}{% endif %}
+                  {% if integrante.nivel_educacional %}
+                    · {{ integrante.get_nivel_educacional_display }}
+                  {% endif %}
+                </div>
+              </td>
+              <td>
+                {% if integrante.es_jefe_hogar %}
+                  <span class="badge text-bg-primary">{{ integrante.get_parentesco_display }}</span>
+                {% else %}
+                  <span class="small">{{ integrante.get_parentesco_display }}</span>
+                {% endif %}
+              </td>
+              <td class="text-center small">
+                {{ integrante.edad }}
+                {% if integrante.es_menor_de_edad %}
+                  <div class="text-secondary">menor</div>
+                {% endif %}
+              </td>
+              <td class="small text-secondary">
+                {{ integrante.get_situacion_ocupacional_display|default:"—" }}
+              </td>
+              <td class="text-end">
+                {% if puede_registrar %}
+                  <a href="{% url 'fichas:integrante_editar' encuesta.pk integrante.pk %}"
+                     class="btn btn-outline-secondary btn-sm">Editar</a>
+                  <a href="{% url 'fichas:integrante_quitar' encuesta.pk integrante.pk %}"
+                     class="btn btn-outline-danger btn-sm">Quitar</a>
+                {% endif %}
+              </td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+{% else %}
+  {# ---------- Todavía no hay nadie ---------- #}
+  <div class="card-opso p-4 p-lg-5 text-center">
+    <h2 class="h5 fw-semibold mb-2">Todavía no hay nadie registrado</h2>
+    <p class="text-secondary mb-3">
+      La familia declaró <strong>{{ hogar.integrantes_declarados }}</strong>
+      persona{{ hogar.integrantes_declarados|pluralize }}. Empieza por
+      {{ hogar.jefe_hogar_nombre }}, que es quien encabeza el hogar: el parentesco
+      del resto se declara respecto a esa persona.
+    </p>
+    {% if puede_registrar %}
+      <a href="{% url 'fichas:integrante_nuevo' encuesta.pk %}" class="btn btn-opso">
+        Registrar a la primera persona
+      </a>
+    {% endif %}
+  </div>
+{% endif %}
+
+<div class="mt-4">
+  <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}" class="btn btn-outline-secondary btn-sm">
+    Volver a la encuesta
+  </a>
+</div>
+
+{% endblock %}

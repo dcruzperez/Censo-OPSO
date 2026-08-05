@@ -1253,3 +1253,464 @@ class GrupoFamiliar(models.Model):
         return self.ingreso_mensual // self.integrantes_declarados
 
     # ------------------------------------------------------------------
+    # El recuento de personas (HU-09)
+    #
+    # Aquí es donde `integrantes_declarados` cobra sentido. La HU-08 lo guardó
+    # aunque la HU-09 fuera a permitir contar las personas una por una, con este
+    # argumento: «son dos datos distintos y su DIFERENCIA es información». Estas
+    # tres propiedades son esa diferencia, convertida en algo que la pantalla
+    # puede mostrar.
+    # ------------------------------------------------------------------
+
+    def total_integrantes(self):
+        """Personas efectivamente registradas."""
+        return self.integrantes.count()
+
+    def integrantes_ordenados(self):
+        """Las personas del hogar, con el jefe de hogar primero y luego por edad.
+
+        El orden importa para leer: una lista de seis nombres donde hay que buscar
+        cuál es el jefe de hogar obliga a recorrerla entera cada vez, y el
+        parentesco de todos los demás se entiende respecto a esa persona.
+
+        Se resuelve con un CASE de SQL —la misma técnica que ORDEN_POR_URGENCIA en
+        la HU-07— y no con `sorted()` en Python, para que siga valiendo si algún
+        día esta lista se pagina o se agrega a un reporte.
+        """
+        from django.db.models import Case, IntegerField, Value, When
+
+        return self.integrantes.annotate(
+            orden=Case(
+                When(parentesco=Parentesco.JEFE_HOGAR, then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField(),
+            )
+        ).order_by("orden", "fecha_nacimiento")
+
+    @property
+    def integrantes_pendientes(self):
+        """Cuántas personas faltan por registrar, según lo que declaró la familia.
+
+        Nunca es negativo: si se registraron MÁS de las declaradas, lo que sobra no
+        es un pendiente en negativo, es una discrepancia, y la responde
+        `hay_discrepancia`. Devolver -2 obligaría a cada plantilla a acordarse de
+        que el número puede ser negativo.
+        """
+        return max(0, self.integrantes_declarados - self.total_integrantes())
+
+    @property
+    def esta_completo(self):
+        """True si hay tantas personas registradas como declaró la familia."""
+        return self.total_integrantes() >= self.integrantes_declarados
+
+    @property
+    def hay_discrepancia(self):
+        """True si se registraron MÁS personas de las que la familia declaró.
+
+        No es un error: en terreno pasa que la familia dice «somos cuatro» y al
+        enumerar aparece la abuela que vive en la pieza del fondo. Lo que no puede
+        pasar es que el sistema lo esconda, porque el número declarado es el que
+        se usó para calcular el ingreso por persona.
+        """
+        return self.total_integrantes() > self.integrantes_declarados
+
+    @property
+    def jefe_hogar_registrado(self):
+        """El integrante marcado como jefe de hogar, o None si aún no se registró.
+
+        Existe porque el nombre del jefe de hogar está en DOS sitios y eso podría
+        parecer una duplicación descuidada. No lo es, y la diferencia es la razón
+        de esta propiedad:
+
+          `jefe_hogar_nombre` es la IDENTIFICACIÓN DEL HOGAR, tomada en el primer
+          contacto —«¿con quién hablo?»— antes de enumerar a nadie. Es lo que
+          etiqueta el hogar en los listados y lo que sobrevive si la enumeración
+          nunca llega a hacerse, que es exactamente el caso de un borrador.
+
+          El INTEGRANTE con parentesco JEFE_HOGAR es la persona censada, con su
+          RUT, su edad, su escolaridad y su ocupación.
+
+        Una es una etiqueta y el otro es un registro. El sistema las mantiene
+        coherentes prellenando el formulario con la etiqueta y avisando si al final
+        no coinciden (ver `nombre_del_jefe_coincide`).
+        """
+        return self.integrantes.filter(parentesco=Parentesco.JEFE_HOGAR).first()
+
+    @property
+    def nombre_del_jefe_coincide(self):
+        """¿La etiqueta del hogar y la persona censada dicen lo mismo?
+
+        Devuelve True mientras no haya con qué comparar: un hogar sin jefe
+        registrado todavía no puede contradecirse. Se compara en minúsculas y sin
+        espacios sobrantes, porque «Rosa Millán» y «rosa  millán» son la misma
+        persona y avisar de eso sería ruido.
+        """
+        jefe = self.jefe_hogar_registrado
+
+        if jefe is None:
+            return True
+
+        return " ".join(self.jefe_hogar_nombre.lower().split()) == " ".join(
+            jefe.nombre_completo.lower().split()
+        )
+
+
+# ==========================================================================
+# 4. LOS INTEGRANTES DEL HOGAR (HU-09)
+# ==========================================================================
+
+
+class Parentesco(models.TextChoices):
+    """Relación de cada persona con el jefe o jefa de hogar.
+
+    Se mide el parentesco RESPECTO AL JEFE DE HOGAR y no entre todos con todos,
+    que es como lo hace el censo y como se puede preguntar en una puerta. La
+    alternativa —un grafo de relaciones familiares— daría más información y
+    tardaría media hora por hogar.
+    """
+
+    JEFE_HOGAR = "JEFE_HOGAR", "Jefe o jefa de hogar"
+    CONYUGE = "CONYUGE", "Cónyuge o conviviente"
+    HIJO = "HIJO", "Hijo o hija"
+    PADRE_MADRE = "PADRE_MADRE", "Padre o madre"
+    HERMANO = "HERMANO", "Hermano o hermana"
+    NIETO = "NIETO", "Nieto o nieta"
+    OTRO_PARIENTE = "OTRO_PARIENTE", "Otro pariente"
+    NO_PARIENTE = "NO_PARIENTE", "Sin parentesco"
+
+
+class Sexo(models.TextChoices):
+    """Sexo de la persona, con la opción de no responder.
+
+    «Prefiere no responder» es una opción explícita y no la ausencia de dato. La
+    diferencia importa: un vacío no distingue a quien no quiso contestar de la
+    pregunta que el encuestador olvidó hacer, y solo la primera es una respuesta
+    que hay que respetar.
+    """
+
+    FEMENINO = "FEMENINO", "Femenino"
+    MASCULINO = "MASCULINO", "Masculino"
+    OTRO = "OTRO", "Otro"
+    NO_RESPONDE = "NO_RESPONDE", "Prefiere no responder"
+
+
+class NivelEducacional(models.TextChoices):
+    """Último nivel de estudios alcanzado."""
+
+    SIN_ESTUDIOS = "SIN_ESTUDIOS", "Sin estudios formales"
+    BASICA_INCOMPLETA = "BASICA_INCOMPLETA", "Básica incompleta"
+    BASICA_COMPLETA = "BASICA_COMPLETA", "Básica completa"
+    MEDIA_INCOMPLETA = "MEDIA_INCOMPLETA", "Media incompleta"
+    MEDIA_COMPLETA = "MEDIA_COMPLETA", "Media completa"
+    TECNICA = "TECNICA", "Técnica de nivel superior"
+    UNIVERSITARIA = "UNIVERSITARIA", "Universitaria"
+    POSTGRADO = "POSTGRADO", "Postgrado"
+
+
+class SituacionOcupacional(models.TextChoices):
+    """A qué se dedica la persona.
+
+    «Labores del hogar» está separada de «no trabaja» a propósito: son situaciones
+    distintas y confundirlas invisibiliza trabajo no remunerado, que en un
+    operativo social es justamente parte de lo que se quiere ver.
+    """
+
+    TRABAJA = "TRABAJA", "Trabaja"
+    BUSCA_TRABAJO = "BUSCA_TRABAJO", "Busca trabajo"
+    ESTUDIA = "ESTUDIA", "Estudia"
+    LABORES_HOGAR = "LABORES_HOGAR", "Labores del hogar"
+    JUBILADO = "JUBILADO", "Jubilado o pensionado"
+    NO_TRABAJA = "NO_TRABAJA", "No trabaja ni busca trabajo"
+
+
+class PuebloOriginario(models.TextChoices):
+    """Pueblo originario al que la persona declara pertenecer.
+
+    Los nueve pueblos son los reconocidos por la Ley Indígena N° 19.253 más el
+    pueblo chango, incorporado en 2020 por la Ley N° 21.273. Es un dato
+    AUTODECLARADO: lo que vale es lo que la persona dice, no lo que el encuestador
+    deduzca de su apellido.
+    """
+
+    NINGUNO = "NINGUNO", "No pertenece a ninguno"
+    MAPUCHE = "MAPUCHE", "Mapuche"
+    AYMARA = "AYMARA", "Aymara"
+    RAPANUI = "RAPANUI", "Rapa Nui"
+    LICKANANTAY = "LICKANANTAY", "Lickanantay (atacameño)"
+    QUECHUA = "QUECHUA", "Quechua"
+    COLLA = "COLLA", "Colla"
+    DIAGUITA = "DIAGUITA", "Diaguita"
+    KAWESQAR = "KAWESQAR", "Kawésqar"
+    YAGAN = "YAGAN", "Yagán"
+    CHANGO = "CHANGO", "Chango"
+    NO_RESPONDE = "NO_RESPONDE", "Prefiere no responder"
+
+
+class Integrante(models.Model):
+    """Una persona que vive en el hogar.
+
+    Es el nivel más fino de todo OPSO y el final del recorrido que empezó en la
+    HU-05 con las regiones:
+
+        Región → Comuna → Operativo → Sector → Zona → Vivienda → Hogar → PERSONA
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 1 — cuelga del HOGAR, no de la vivienda ni de la encuesta
+    ----------------------------------------------------------------------
+    Podría colgar de cualquiera de las tres y solo una es correcta.
+
+    De la VIVIENDA no, porque en una casa con dos familias las personas de cada
+    una son de SU hogar; mezclarlas produciría un «hogar» de nueve personas que no
+    existe y que arruinaría el ingreso por persona de las dos familias.
+
+    De la ENCUESTA tampoco, aunque parezca lo mismo que del hogar: la encuesta es
+    el TRABAJO (quién la levanta, en qué estado va) y el hogar es el DATO. Colgar
+    las personas del trabajo diría que son un atributo del acto de encuestar y no
+    de la familia, y volvería a mezclar las dos cosas que la HU-08 separó.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 2 — un solo jefe de hogar, garantizado por la base de datos
+    ----------------------------------------------------------------------
+    Es la restricción más importante de esta historia, porque TODO el resto del
+    formulario depende de ella: el parentesco de cada persona se mide respecto al
+    jefe de hogar, así que dos jefes dejarían sin sentido la columna «parentesco»
+    de todas las demás filas.
+
+    Se resuelve con un índice único PARCIAL —único entre los que son jefe de
+    hogar—, que es exactamente la misma técnica que `asignacion_activa_unica` en
+    la HU-06. Allí el filtro era `WHERE activa` y aquí es
+    `WHERE parentesco = 'JEFE_HOGAR'`; el problema es el mismo: hacer único un
+    valor concreto de una columna sin hacer única la columna entera.
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 3 — se guarda la FECHA DE NACIMIENTO, no la edad
+    ----------------------------------------------------------------------
+    Guardar «34» sería más simple y estaría mal a los pocos meses. Una edad es un
+    dato que caduca; una fecha de nacimiento no. Con la fecha, la edad se calcula
+    siempre respecto a la fecha que interese —hoy, o el día del operativo— y el
+    histórico del censo sigue siendo cierto años después.
+
+    Es la misma razón por la que Operativo guarda fechas y no «duración en días».
+
+    ----------------------------------------------------------------------
+    DECISIÓN DE DISEÑO 4 — escolaridad y ocupación dependen de la EDAD
+    ----------------------------------------------------------------------
+    No se le pregunta el nivel educacional a una guagua ni la situación
+    ocupacional a un niño de siete años. Los dos campos admiten vacío en la
+    columna y el formulario los exige solo a partir de cierta edad (ver
+    IntegranteForm), lo que evita dos errores opuestos: pedir un dato que no
+    existe, y dejar sin dato a media población adulta porque el campo era
+    opcional para todos.
+    """
+
+    #: Desde qué edad tiene sentido preguntar por estudios (educación parvularia).
+    EDAD_ESCOLARIDAD = 5
+
+    #: Desde qué edad tiene sentido preguntar por ocupación (edad mínima legal
+    #: para trabajar en Chile con autorización, Código del Trabajo art. 13).
+    EDAD_OCUPACION = 15
+
+    grupo_familiar = models.ForeignKey(
+        GrupoFamiliar,
+        on_delete=models.CASCADE,
+        related_name="integrantes",
+        verbose_name="grupo familiar",
+        help_text="Hogar al que pertenece esta persona.",
+    )
+    parentesco = models.CharField(
+        "parentesco",
+        max_length=20,
+        choices=Parentesco.choices,
+        help_text="Relación con el jefe o jefa de hogar.",
+    )
+    nombres = models.CharField(
+        "nombres",
+        max_length=100,
+        help_text="Nombre o nombres de pila.",
+    )
+    apellidos = models.CharField(
+        "apellidos",
+        max_length=100,
+        help_text="Apellidos de la persona.",
+    )
+    rut = models.CharField(
+        "RUT",
+        max_length=12,
+        blank=True,
+        validators=[validar_rut],
+        help_text="Formato 12345678-9. Opcional, igual que el del jefe de hogar.",
+    )
+    sexo = models.CharField(
+        "sexo",
+        max_length=20,
+        choices=Sexo.choices,
+        help_text="Tal como la persona lo declara.",
+    )
+    fecha_nacimiento = models.DateField(
+        "fecha de nacimiento",
+        help_text="Se guarda la fecha y no la edad: la edad caduca y la fecha no.",
+    )
+    nivel_educacional = models.CharField(
+        "nivel educacional",
+        max_length=20,
+        choices=NivelEducacional.choices,
+        blank=True,
+        help_text=f"Se pregunta desde los {EDAD_ESCOLARIDAD} años.",
+    )
+    situacion_ocupacional = models.CharField(
+        "situación ocupacional",
+        max_length=20,
+        choices=SituacionOcupacional.choices,
+        blank=True,
+        help_text=f"Se pregunta desde los {EDAD_OCUPACION} años.",
+    )
+    pueblo_originario = models.CharField(
+        "pueblo originario",
+        max_length=20,
+        choices=PuebloOriginario.choices,
+        default=PuebloOriginario.NINGUNO,
+        help_text="Dato autodeclarado por la persona.",
+    )
+    tiene_discapacidad = models.BooleanField(
+        "presenta discapacidad",
+        default=False,
+        help_text="Alguna condición de discapacidad permanente declarada.",
+    )
+    observaciones = models.TextField(
+        "observaciones",
+        blank=True,
+        help_text="Situaciones de esta persona que conviene dejar por escrito.",
+    )
+    registrado_en = models.DateTimeField("registrado en", auto_now_add=True)
+    actualizado_en = models.DateTimeField("actualizado en", auto_now=True)
+
+    class Meta:
+        db_table = "fichas_integrante"
+        verbose_name = "integrante"
+        verbose_name_plural = "integrantes"
+        # De mayor a menor edad, que es como una familia se enumera a sí misma.
+        #
+        # El jefe de hogar NO puede ir primero desde aquí: ordenar por la columna
+        # `parentesco` daría el orden alfabético de sus códigos, que no significa
+        # nada («CONYUGE» antes que «JEFE_HOGAR» y «HIJO» después). Poner al jefe
+        # delante exige un CASE de SQL, y eso vive en
+        # GrupoFamiliar.integrantes_ordenados(), que es quien conoce el criterio.
+        ordering = ["fecha_nacimiento"]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(parentesco__in=Parentesco.values),
+                name="integrante_parentesco_valido",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(sexo__in=Sexo.values),
+                name="integrante_sexo_valido",
+            ),
+            # Índice único PARCIAL: un solo jefe de hogar por hogar (decisión 2).
+            models.UniqueConstraint(
+                fields=["grupo_familiar"],
+                condition=models.Q(parentesco="JEFE_HOGAR"),
+                name="un_solo_jefe_por_hogar",
+            ),
+            # La misma persona no puede estar dos veces en el mismo hogar. Es
+            # parcial porque el RUT es opcional: sin la condición, dos personas sin
+            # RUT chocarían entre sí por tener las dos la cadena vacía, y el
+            # sistema impediría registrar a una familia que no lleva los carnets
+            # encima.
+            models.UniqueConstraint(
+                fields=["grupo_familiar", "rut"],
+                condition=~models.Q(rut=""),
+                name="rut_unico_en_el_hogar",
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=["grupo_familiar", "parentesco"], name="idx_integrante_hogar"
+            ),
+        ]
+
+    def __str__(self):
+        return self.nombre_completo
+
+    @property
+    def nombre_completo(self):
+        return f"{self.nombres} {self.apellidos}".strip()
+
+    @property
+    def es_jefe_hogar(self):
+        return self.parentesco == Parentesco.JEFE_HOGAR
+
+    def edad(self, a_fecha=None):
+        """Años cumplidos a la fecha indicada (hoy por defecto).
+
+        La resta de años se corrige comparando (mes, día): sin eso, alguien nacido
+        el 30 de diciembre aparecería con un año de más durante casi todo el año
+        anterior a su cumpleaños. Es el típico cálculo que parece trivial y se
+        escribe mal una vez por proyecto, y por eso está aquí y no repartido.
+        """
+        if self.fecha_nacimiento is None:
+            return None
+
+        referencia = a_fecha or timezone.localdate()
+
+        return (
+            referencia.year
+            - self.fecha_nacimiento.year
+            - (
+                (referencia.month, referencia.day)
+                < (self.fecha_nacimiento.month, self.fecha_nacimiento.day)
+            )
+        )
+
+    @property
+    def es_menor_de_edad(self):
+        edad = self.edad()
+        return edad is not None and edad < 18
+
+    @property
+    def se_le_pregunta_escolaridad(self):
+        edad = self.edad()
+        return edad is not None and edad >= self.EDAD_ESCOLARIDAD
+
+    @property
+    def se_le_pregunta_ocupacion(self):
+        edad = self.edad()
+        return edad is not None and edad >= self.EDAD_OCUPACION
+
+    def save(self, *args, **kwargs):
+        """Normaliza el RUT antes de escribir, igual que GrupoFamiliar y Usuario."""
+        self.rut = limpiar_rut(self.rut) or ""
+        super().save(*args, **kwargs)
+
+    def clean(self):
+        """Coherencia de la persona: fechas imposibles y datos fuera de edad.
+
+        Igual que en Encuesta.clean(), esto duplica en Python lo que en parte ya
+        garantizan las restricciones: la restricción protege el DATO y la
+        validación protege a la PERSONA que está rellenando el formulario.
+
+        Lo que aquí se comprueba NO puede estar en un CheckConstraint, y por eso es
+        el único sitio donde vive: una restricción de la base de datos no puede
+        depender de la fecha de hoy sin volverse falsa mañana.
+        """
+        super().clean()
+
+        if self.fecha_nacimiento:
+            hoy = timezone.localdate()
+
+            if self.fecha_nacimiento > hoy:
+                raise ValidationError(
+                    {"fecha_nacimiento": "La fecha de nacimiento no puede ser futura."}
+                )
+
+            if self.edad() > 120:
+                raise ValidationError(
+                    {
+                        "fecha_nacimiento": (
+                            "Esa fecha implica más de 120 años. Revisa el año: casi "
+                            "siempre es un dígito equivocado."
+                        )
+                    }
+                )
+
+
+# ==========================================================================

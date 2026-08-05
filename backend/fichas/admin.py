@@ -136,6 +136,29 @@ class EncuestaAdmin(admin.ModelAdmin):
         return obj.vivienda.zona.sector.nombre
 
 
+class IntegranteInline(admin.TabularInline):
+    """Las personas del hogar, dentro de su hogar (HU-09).
+
+    Un inline es lo correcto por lo mismo que ZonaInline en la HU-05: una persona
+    de este modelo no tiene existencia independiente, es un integrante DE un hogar
+    concreto. Verlas en su propia pantalla obligaría a elegir el hogar en un
+    desplegable cada vez, que es justo donde se equivoca uno.
+    """
+
+    model = Integrante
+    extra = 0
+    fields = (
+        "parentesco",
+        "nombres",
+        "apellidos",
+        "rut",
+        "sexo",
+        "fecha_nacimiento",
+        "nivel_educacional",
+        "situacion_ocupacional",
+    )
+
+
 @admin.register(GrupoFamiliar)
 class GrupoFamiliarAdmin(admin.ModelAdmin):
     """Los hogares levantados, con su propia pantalla además del inline.
@@ -173,3 +196,51 @@ class GrupoFamiliarAdmin(admin.ModelAdmin):
         return obj.integrantes.count()
 
 
+@admin.register(Integrante)
+class IntegranteAdmin(admin.ModelAdmin):
+    """Las personas, con su propia pantalla además del inline.
+
+    Sirve para lo que el inline no permite: buscar a una persona por RUT entre
+    todos los operativos, o revisar cuántos menores hay en una zona. Es consulta
+    técnica sobre datos personales de terceros, así que la protege el mismo
+    `is_staff` que el resto del admin.
+    """
+
+    list_display = (
+        "nombre_completo",
+        "parentesco",
+        "edad",
+        "sexo",
+        "hogar",
+        "direccion",
+    )
+    list_filter = (
+        "parentesco",
+        "sexo",
+        "nivel_educacional",
+        "situacion_ocupacional",
+        "tiene_discapacidad",
+        "grupo_familiar__encuesta__vivienda__zona__sector__operativo",
+    )
+    search_fields = (
+        "nombres",
+        "apellidos",
+        "rut",
+        "grupo_familiar__jefe_hogar_nombre",
+        "grupo_familiar__encuesta__vivienda__direccion",
+    )
+    readonly_fields = ("registrado_en", "actualizado_en")
+    autocomplete_fields = ("grupo_familiar",)
+    list_select_related = (
+        "grupo_familiar",
+        "grupo_familiar__encuesta",
+        "grupo_familiar__encuesta__vivienda",
+    )
+
+    @admin.display(description="hogar")
+    def hogar(self, obj):
+        return obj.grupo_familiar.jefe_hogar_nombre
+
+    @admin.display(description="dirección")
+    def direccion(self, obj):
+        return obj.grupo_familiar.encuesta.vivienda.direccion

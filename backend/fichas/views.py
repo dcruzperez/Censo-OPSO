@@ -830,3 +830,354 @@ class ViviendaDetalleView(PermisoRequeridoMixin, DetailView):
         return contexto
 
 
+# ==========================================================================
+# HU-09 — LAS PERSONAS DEL HOGAR
+# ==========================================================================
+
+
+class HogarDeLaEncuestaMixin(RegistroEnTerrenoMixin):
+    """Base de las cuatro pantallas de integrantes.
+
+    Todas trabajan sobre el hogar de UNA encuesta propia y abierta, así que las
+    tres comprobaciones —es mía, tiene hogar registrado, admite cambios— se
+    escriben aquí una vez. Repetirlas en cuatro vistas sería garantizar que alguna
+    se quedara sin una de las tres, y la que faltara no daría ningún error: solo
+    dejaría escribir donde no se debe.
+    """
+
+    @cached_property
+    def encuesta(self):
+        """Solo encuestas PROPIAS, igual que al registrar el hogar.
+
+        Ni siquiera `fichas.ver_todas` abre esta puerta: escribir una persona en la
+        ficha de otro encuestador dejaría el dato atribuido a quien no estuvo en la
+        vivienda.
+        """
+        return get_object_or_404(
+            Encuesta.objects.select_related(
+                "vivienda", "vivienda__zona", "vivienda__zona__sector", "grupo_familiar"
+            ),
+            pk=self.kwargs["encuesta_pk"],
+            censista=self.request.user,
+        )
+
+    @cached_property
+    def grupo_familiar(self):
+        return getattr(self.encuesta, "grupo_familiar", None)
+
+    def comprobar_hogar_registrado(self):
+        """No se pueden registrar personas de un hogar que todavía no existe.
+
+        Es un orden real, no un capricho del sistema: el parentesco de cada persona
+        se declara respecto al jefe de hogar, y el jefe de hogar se identifica al
+        registrar el hogar. Sin ese paso, la primera pregunta del formulario no
+        tendría respuesta posible.
+        """
+        if self.grupo_familiar is not None:
+            return None
+
+        messages.info(
+            self.request,
+            "Primero registra los datos del hogar y después a sus integrantes.",
+        )
+        return redirect("fichas:registrar_hogar", pk=self.encuesta.pk)
+
+    def comprobar_abierta(self):
+        permitido, motivo = self.encuesta.puede_registrarse()
+
+        if permitido:
+            return None
+
+        messages.error(self.request, motivo)
+        return redirect("fichas:encuesta_detalle", pk=self.encuesta.pk)
+
+    def comprobar_todo(self):
+        """Las dos comprobaciones, en el orden en que hay que hacerlas."""
+        return self.comprobar_hogar_registrado() or self.comprobar_abierta()
+
+
+class IntegrantesView(HogarDeLaEncuestaMixin, View):
+    """Las personas del hogar: cuántas van, cuántas faltan y quiénes son.
+
+    URL: /encuestas/<encuesta_pk>/integrantes/
+
+    Es la pantalla donde se ve para qué servía `integrantes_declarados`. La HU-08
+    lo guardó argumentando que «son dos datos distintos y su diferencia es
+    información»; aquí esa diferencia es la barra de avance y el aviso de que
+    faltan tres personas por registrar.
+
+    Se comprueba en el GET, y no solo se ocultan botones, porque la lista también
+    la puede abrir alguien con la encuesta ya cerrada.
+    """
+
+    template_name = "fichas/integrantes.html"
+
+    def get(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_hogar_registrado()) is not None:
+            return respuesta
+
+        permitido, motivo = self.encuesta.puede_registrarse()
+
+        return render(
+            request,
+            self.template_name,
+            {
+                "titulo_pagina": f"Integrantes de {self.encuesta.direccion}",
+                "encuesta": self.encuesta,
+                "hogar": self.grupo_familiar,
+                "integrantes": self.grupo_familiar.integrantes_ordenados(),
+                "puede_registrar": permitido,
+                "motivo_bloqueo": motivo,
+            },
+        )
+
+
+class RegistrarIntegranteView(HogarDeLaEncuestaMixin, View):
+    """Agrega una persona al hogar. GET muestra, POST guarda.
+
+    URL: /encuestas/<encuesta_pk>/integrantes/nuevo/
+
+    ----------------------------------------------------------------------
+    LA PRIMERA PERSONA VIENE PRERRELLENADA
+    ----------------------------------------------------------------------
+    Si el hogar todavía no tiene jefe registrado, el formulario llega con el
+    parentesco en «jefe de hogar» y con el nombre y el RUT que se tomaron al
+    registrar el hogar (HU-08).
+
+    No es un adorno: es lo que mantiene coherentes los dos sitios donde vive el
+    nombre del jefe de hogar. Sin el prellenado, el encuestador escribiría el
+    nombre otra vez y en la mitad de los casos quedaría distinto —«Rosa Millán» y
+    «Rosa Elena Millán Soto»— y el hogar diría dos cosas sobre la misma persona.
+
+    Se prerrellena y no se crea automáticamente porque el formulario pide datos que
+    el registro del hogar no tomó: sexo, fecha de nacimiento, escolaridad. Crear la
+    fila sola exigiría inventarlos.
+
+    ----------------------------------------------------------------------
+    «GUARDAR Y AGREGAR OTRA»
+    ----------------------------------------------------------------------
+    Registrar seis personas seguidas es la operación real de esta pantalla. Con un
+    solo botón, cada una costaría tres toques: guardar, volver a la lista, pulsar
+    «agregar». El segundo botón devuelve un formulario vacío en el mismo sitio, que
+    es lo que convierte seis personas en seis formularios y no en dieciocho toques.
+    """
+
+    template_name = "fichas/integrante_form.html"
+
+    def formulario(self, datos=None, instancia=None):
+        return IntegranteForm(
+            datos,
+            grupo_familiar=self.grupo_familiar,
+            instance=instancia,
+            initial=None if datos else self.valores_iniciales(),
+        )
+
+    def valores_iniciales(self):
+        """Prerrellena a la primera persona con lo que ya se sabe del jefe de hogar."""
+        if self.grupo_familiar.jefe_hogar_registrado is not None:
+            return {}
+
+        nombre = self.grupo_familiar.jefe_hogar_nombre.split()
+
+        return {
+            "parentesco": Parentesco.JEFE_HOGAR,
+            # Partir el nombre por la mitad es una heurística y se sabe: en Chile
+            # lo habitual son dos nombres y dos apellidos. Se ofrece como borrador
+            # editable, no como dato definitivo, y por eso va en `initial`.
+            "nombres": " ".join(nombre[: max(1, len(nombre) // 2)]),
+            "apellidos": " ".join(nombre[max(1, len(nombre) // 2) :]),
+            "rut": self.grupo_familiar.jefe_hogar_rut,
+        }
+
+    def get(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_todo()) is not None:
+            return respuesta
+
+        return render(request, self.template_name, self.contexto(self.formulario()))
+
+    def post(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_todo()) is not None:
+            return respuesta
+
+        formulario = self.formulario(request.POST)
+
+        if not formulario.is_valid():
+            return render(request, self.template_name, self.contexto(formulario))
+
+        integrante = formulario.save()
+
+        messages.success(
+            request,
+            f"{integrante.nombre_completo} agregado al hogar. "
+            f"{self.resumen_avance()}",
+        )
+
+        # El botón «guardar y agregar otra» vuelve a este mismo formulario, vacío.
+        if "guardar_y_seguir" in request.POST:
+            return redirect(
+                "fichas:integrante_nuevo", encuesta_pk=self.encuesta.pk
+            )
+
+        return redirect("fichas:integrantes", encuesta_pk=self.encuesta.pk)
+
+    def resumen_avance(self):
+        """Frase que dice cómo va el hogar, no solo que se guardó.
+
+        Mismo criterio que `resumen_equipo()` en la HU-06: un mensaje que dice
+        «guardado» obliga a mirar la lista para saber qué falta.
+        """
+        hogar = self.grupo_familiar
+        hogar.refresh_from_db()
+
+        if hogar.hay_discrepancia:
+            return (
+                f"Van {hogar.total_integrantes()} y la familia declaró "
+                f"{hogar.integrantes_declarados}: revisa el número declarado."
+            )
+
+        pendientes = hogar.integrantes_pendientes
+
+        if pendientes:
+            return f"Faltan {pendientes} persona{'s' if pendientes != 1 else ''}."
+
+        return "El hogar quedó completo."
+
+    def contexto(self, formulario):
+        return {
+            "titulo_pagina": "Agregar una persona",
+            "form": formulario,
+            "encuesta": self.encuesta,
+            "hogar": self.grupo_familiar,
+            "es_alta": True,
+        }
+
+
+class EditarIntegranteView(HogarDeLaEncuestaMixin, View):
+    """Corrige los datos de una persona ya registrada.
+
+    URL: /encuestas/<encuesta_pk>/integrantes/<pk>/editar/
+
+    La persona se busca DENTRO del hogar de la encuesta y no por su identificador
+    suelto. Es lo que hace imposible editar a alguien de otro hogar cambiando un
+    número en la dirección: el filtro por `grupo_familiar` va siempre, y la
+    encuesta ya está filtrada por `censista=request.user`.
+    """
+
+    template_name = "fichas/integrante_form.html"
+
+    @cached_property
+    def integrante(self):
+        return get_object_or_404(
+            Integrante, pk=self.kwargs["pk"], grupo_familiar=self.grupo_familiar
+        )
+
+    def formulario(self, datos=None):
+        return IntegranteForm(
+            datos, grupo_familiar=self.grupo_familiar, instance=self.integrante
+        )
+
+    def get(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_todo()) is not None:
+            return respuesta
+
+        return render(request, self.template_name, self.contexto(self.formulario()))
+
+    def post(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_todo()) is not None:
+            return respuesta
+
+        formulario = self.formulario(request.POST)
+
+        if not formulario.is_valid():
+            return render(request, self.template_name, self.contexto(formulario))
+
+        integrante = formulario.save()
+
+        messages.success(request, f"Datos de {integrante.nombre_completo} actualizados.")
+        return redirect("fichas:integrantes", encuesta_pk=self.encuesta.pk)
+
+    def contexto(self, formulario):
+        return {
+            "titulo_pagina": f"Editar a {self.integrante.nombre_completo}",
+            "form": formulario,
+            "encuesta": self.encuesta,
+            "hogar": self.grupo_familiar,
+            "integrante": self.integrante,
+            "es_alta": False,
+        }
+
+
+class QuitarIntegranteView(HogarDeLaEncuestaMixin, View):
+    """Quita a una persona del hogar. GET confirma, POST ejecuta.
+
+    URL: /encuestas/<encuesta_pk>/integrantes/<pk>/quitar/
+
+    ----------------------------------------------------------------------
+    AQUÍ SÍ SE BORRA, Y ES LA EXCEPCIÓN DEL PROYECTO
+    ----------------------------------------------------------------------
+    OPSO desactiva en vez de borrar en todas partes: cuentas (HU-03), comunas y
+    sectores (HU-05), asignaciones (HU-06). Esta vista borra la fila de verdad, y
+    conviene poder explicar por qué no es una incoherencia.
+
+    Lo que se desactiva en vez de borrarse es aquello cuyo PASADO significa algo:
+    una asignación retirada explica por qué esa persona levantó esas fichas; una
+    comuna desactivada explica de dónde salieron los datos de 2026.
+
+    Una persona agregada por error a un hogar no tiene pasado que explicar. Es un
+    dato que se está capturando, todavía en borrador, que ningún supervisor ha
+    validado y que no sostiene ninguna otra fila. Conservarla desactivada
+    obligaría a filtrar «los integrantes que sí cuentan» en cada recuento del
+    censo, y la primera consulta que se olvidara del filtro daría un hogar con una
+    persona de más.
+
+    Y hay un motivo más fuerte: son DATOS PERSONALES DE TERCEROS. Guardar
+    indefinidamente a una persona que no debía estar en la base, marcada como
+    «inactiva», es exactamente lo que la minimización de datos pide no hacer
+    (Ley N° 21.719).
+
+    Dos pasos —confirmar y ejecutar— por lo mismo que retirar una asignación en la
+    HU-06: si un GET pudiera borrar, un <img src="..."> incrustado en cualquier
+    página lo ejecutaría con la sesión de quien la mirara.
+    """
+
+    template_name = "fichas/integrante_quitar.html"
+
+    @cached_property
+    def integrante(self):
+        return get_object_or_404(
+            Integrante, pk=self.kwargs["pk"], grupo_familiar=self.grupo_familiar
+        )
+
+    def get(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_todo()) is not None:
+            return respuesta
+
+        return render(
+            request,
+            self.template_name,
+            {
+                "titulo_pagina": f"Quitar a {self.integrante.nombre_completo}",
+                "encuesta": self.encuesta,
+                "hogar": self.grupo_familiar,
+                "integrante": self.integrante,
+            },
+        )
+
+    def post(self, request, *args, **kwargs):
+        if (respuesta := self.comprobar_todo()) is not None:
+            return respuesta
+
+        nombre = self.integrante.nombre_completo
+        era_jefe = self.integrante.es_jefe_hogar
+
+        self.integrante.delete()
+
+        aviso = (
+            " El hogar quedó sin jefe de hogar registrado: marca a alguien como tal."
+            if era_jefe
+            else ""
+        )
+        messages.success(request, f"{nombre} ya no figura en este hogar.{aviso}")
+        return redirect("fichas:integrantes", encuesta_pk=self.encuesta.pk)
+
+

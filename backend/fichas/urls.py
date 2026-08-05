@@ -85,3 +85,38 @@ urlpatterns = [
         views.RegistrarHogarView.as_view(),
         name="registrar_hogar",
     ),
+    # ------------------------------------------------------------------
+    # LAS PERSONAS DEL HOGAR (HU-09)
+    #
+    # Van anidadas bajo su encuesta, incluso las que actúan sobre UNA persona
+    # concreta. Es lo contrario de lo que hizo la HU-05 —donde «editar» no se
+    # anidaba porque el sector ya sabía a qué operativo pertenecía— y el motivo
+    # es que aquí la encuesta no es un dato redundante: es la que decide si la
+    # persona que pide la página tiene derecho a tocar esa fila.
+    #
+    # Con /integrantes/<id>/editar/ suelto, la vista tendría que remontar la
+    # cadena entera (integrante -> hogar -> encuesta -> censista) para comprobar
+    # el permiso, y esa comprobación se puede olvidar. Con la encuesta en la URL,
+    # el filtro por dueño se aplica ANTES de buscar a la persona y no hay forma de
+    # llegar a una fila ajena.
+    # ------------------------------------------------------------------
+    path(
+        "<int:encuesta_pk>/integrantes/",
+        views.IntegrantesView.as_view(),
+        name="integrantes",
+    ),
+    path(
+        "<int:encuesta_pk>/integrantes/nuevo/",
+        views.RegistrarIntegranteView.as_view(),
+        name="integrante_nuevo",
+    ),
+    path(
+        "<int:encuesta_pk>/integrantes/<int:pk>/editar/",
+        views.EditarIntegranteView.as_view(),
+        name="integrante_editar",
+    ),
+    path(
+        "<int:encuesta_pk>/integrantes/<int:pk>/quitar/",
+        views.QuitarIntegranteView.as_view(),
+        name="integrante_quitar",
+    ),

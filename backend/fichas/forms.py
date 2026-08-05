@@ -556,3 +556,238 @@ class GrupoFamiliarForm(forms.ModelForm):
         return ingreso
 
 
+# ==========================================================================
+# HU-09 — REGISTRAR A LAS PERSONAS DEL HOGAR
+# ==========================================================================
+
+
+class IntegranteForm(forms.ModelForm):
+    """Una persona del hogar.
+
+    ----------------------------------------------------------------------
+    LA VALIDACIÓN QUE DEFINE ESTE FORMULARIO: LOS CAMPOS QUE DEPENDEN DE LA EDAD
+    ----------------------------------------------------------------------
+    `nivel_educacional` y `situacion_ocupacional` admiten vacío en la columna y
+    aquí se exigen —o no— SEGÚN LA FECHA DE NACIMIENTO que se acaba de escribir.
+    No se le pregunta el nivel educacional a una guagua ni la ocupación a un niño
+    de siete años.
+
+    Se resuelve en `clean()` y no en `__init__` porque la edad no se conoce hasta
+    que llegan los datos: en `__init__` todavía no hay fecha de nacimiento con la
+    que decidir. Es una regla que depende de OTRO campo del mismo formulario, y
+    ese es exactamente el trabajo de `clean()`.
+
+    La alternativa —exigirlos siempre— produciría dos errores opuestos y los dos
+    malos: pedir un dato que no existe para los niños, y aceptar el vacío en
+    adultos si se dejara opcional para todos.
+
+    ----------------------------------------------------------------------
+    EL PARENTESCO Y EL JEFE DE HOGAR
+    ----------------------------------------------------------------------
+    El formulario sabe si el hogar YA tiene jefe registrado, y en ese caso retira
+    la opción del desplegable. Es la misma técnica del queryset de zonas en la
+    HU-08: lo que no está en el formulario no se puede enviar. La base de datos lo
+    impide igualmente con `un_solo_jefe_por_hogar`, pero toparse con un
+    IntegrityError es peor experiencia que no ver una opción imposible.
+
+    La excepción es EDITAR al propio jefe de hogar: ahí la opción tiene que seguir
+    estando, o al guardar cualquier otro cambio de esa persona el desplegable
+    llegaría vacío y la dejaría sin parentesco.
+    """
+
+    #: Edad a partir de la cual el nivel educacional es obligatorio.
+    EDAD_ESCOLARIDAD = Integrante.EDAD_ESCOLARIDAD
+
+    #: Edad a partir de la cual la situación ocupacional es obligatoria.
+    EDAD_OCUPACION = Integrante.EDAD_OCUPACION
+
+    class Meta:
+        model = Integrante
+        fields = (
+            "parentesco",
+            "nombres",
+            "apellidos",
+            "rut",
+            "sexo",
+            "fecha_nacimiento",
+            "nivel_educacional",
+            "situacion_ocupacional",
+            "pueblo_originario",
+            "tiene_discapacidad",
+            "observaciones",
+        )
+        widgets = {
+            "parentesco": forms.Select(attrs={"class": CLASE_SELECT}),
+            "nombres": forms.TextInput(
+                attrs={"class": CLASE_TEXTO, "autocomplete": "off"}
+            ),
+            "apellidos": forms.TextInput(
+                attrs={"class": CLASE_TEXTO, "autocomplete": "off"}
+            ),
+            "rut": forms.TextInput(
+                attrs={
+                    "class": CLASE_TEXTO,
+                    "placeholder": "12345678-9",
+                    "autocomplete": "off",
+                }
+            ),
+            "sexo": forms.Select(attrs={"class": CLASE_SELECT}),
+            # type="date" deja que el teléfono abra su propio selector de fechas,
+            # que en terreno es mucho más rápido y menos propenso a errores que
+            # escribir 8 dígitos con una mano.
+            "fecha_nacimiento": forms.DateInput(
+                attrs={"class": CLASE_TEXTO, "type": "date"}, format="%Y-%m-%d"
+            ),
+            "nivel_educacional": forms.Select(attrs={"class": CLASE_SELECT}),
+            "situacion_ocupacional": forms.Select(attrs={"class": CLASE_SELECT}),
+            "pueblo_originario": forms.Select(attrs={"class": CLASE_SELECT}),
+            "tiene_discapacidad": forms.CheckboxInput(
+                attrs={"class": "form-check-input"}
+            ),
+            "observaciones": forms.Textarea(
+                attrs={
+                    "class": CLASE_TEXTO,
+                    "rows": 2,
+                    "placeholder": "Ej.: usa silla de ruedas, requiere apoyo permanente.",
+                }
+            ),
+        }
+
+    def __init__(self, *args, grupo_familiar, **kwargs):
+        """`grupo_familiar` es obligatorio y va por nombre.
+
+        Sin él no se puede saber si ya hay jefe de hogar ni comprobar los RUT
+        repetidos, que son las dos reglas propias de este formulario. Se exige
+        después de `*` por lo mismo que en ViviendaForm: para que nadie lo pase por
+        posición y lo confunda con `data`.
+        """
+        self.grupo_familiar = grupo_familiar
+        super().__init__(*args, **kwargs)
+
+        self.fields["fecha_nacimiento"].input_formats = ["%Y-%m-%d", "%d-%m-%Y"]
+
+        if self.debe_ocultar_jefe_de_hogar():
+            self.fields["parentesco"].choices = [
+                (valor, etiqueta)
+                for valor, etiqueta in self.fields["parentesco"].choices
+                if valor != Parentesco.JEFE_HOGAR
+            ]
+
+    def debe_ocultar_jefe_de_hogar(self):
+        """True si el hogar ya tiene jefe y NO es la persona que se está editando."""
+        jefe = self.grupo_familiar.jefe_hogar_registrado
+
+        if jefe is None:
+            return False
+
+        return jefe.pk != self.instance.pk
+
+    # -- validaciones -------------------------------------------------------
+
+    def clean_nombres(self):
+        return self.limpiar_nombre("nombres")
+
+    def clean_apellidos(self):
+        return self.limpiar_nombre("apellidos")
+
+    def limpiar_nombre(self, campo):
+        valor = (self.cleaned_data.get(campo) or "").strip()
+
+        if len(valor) < 2:
+            raise forms.ValidationError(
+                "Escríbelo completo: una inicial no identifica a nadie."
+            )
+
+        return valor
+
+    def clean_fecha_nacimiento(self):
+        """Ni futura ni de hace más de 120 años.
+
+        Se comprueba aquí además de en Integrante.clean() porque es lo que produce
+        el mensaje junto al campo. Y no puede estar en una restricción de la base
+        de datos: dependería de la fecha de hoy y sería falsa mañana.
+        """
+        fecha = self.cleaned_data.get("fecha_nacimiento")
+
+        if fecha is None:
+            return fecha
+
+        hoy = timezone.localdate()
+
+        if fecha > hoy:
+            raise forms.ValidationError("La fecha de nacimiento no puede ser futura.")
+
+        if hoy.year - fecha.year > 120:
+            raise forms.ValidationError(
+                "Esa fecha implica más de 120 años. Revisa el año: casi siempre es "
+                "un dígito equivocado."
+            )
+
+        return fecha
+
+    def clean_rut(self):
+        """El RUT no puede repetirse dentro del mismo hogar.
+
+        La base de datos también lo impide (`rut_unico_en_el_hogar`), pero ahí el
+        rechazo llega como un IntegrityError sin campo asociado. Aquí llega como un
+        mensaje junto al RUT, que es donde la persona puede corregirlo.
+
+        Se compara sobre el RUT NORMALIZADO, porque «12.345.678-5» y «12345678-5»
+        son el mismo y sin normalizar pasarían como distintos hasta que el modelo
+        los guardara iguales y la base de datos reventara.
+        """
+        rut = limpiar_rut(self.cleaned_data.get("rut")) or ""
+
+        if not rut:
+            return ""
+
+        repetido = self.grupo_familiar.integrantes.filter(rut=rut)
+
+        if self.instance.pk:
+            repetido = repetido.exclude(pk=self.instance.pk)
+
+        if repetido.exists():
+            raise forms.ValidationError(
+                "Ese RUT ya está registrado en este hogar. Si son personas "
+                "distintas, revisa el número."
+            )
+
+        return rut
+
+    def clean(self):
+        """Escolaridad y ocupación, exigidas según la edad."""
+        datos = super().clean()
+        fecha = datos.get("fecha_nacimiento")
+
+        if fecha is None:
+            # Sin fecha no se puede decidir; el error de la fecha ya se informó.
+            return datos
+
+        edad = Integrante(fecha_nacimiento=fecha).edad()
+
+        if edad >= self.EDAD_ESCOLARIDAD and not datos.get("nivel_educacional"):
+            self.add_error(
+                "nivel_educacional",
+                f"Desde los {self.EDAD_ESCOLARIDAD} años hay que registrar el nivel "
+                "educacional.",
+            )
+
+        if edad >= self.EDAD_OCUPACION and not datos.get("situacion_ocupacional"):
+            self.add_error(
+                "situacion_ocupacional",
+                f"Desde los {self.EDAD_OCUPACION} años hay que registrar la "
+                "situación ocupacional.",
+            )
+
+        return datos
+
+    def save(self, commit=True):
+        integrante = super().save(commit=False)
+        integrante.grupo_familiar = self.grupo_familiar
+
+        if commit:
+            integrante.save()
+
+        return integrante
+
+

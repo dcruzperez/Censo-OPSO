@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   QUITAR A UNA PERSONA DEL HOGAR — /encuestas/<pk>/integrantes/<id>/quitar/
+
+   Dos pasos: esta pantalla confirma y el POST ejecuta. Si un GET pudiera borrar,
+   un <img src="..."> incrustado en cualquier página lo ejecutaría con la sesión de
+   quien la mirara. Es la misma decisión que la HU-06 tomó al retirar una
+   asignación y la HU-03 al deshabilitar una cuenta.
+
+   Aquí SÍ se borra de verdad, al contrario que en el resto del proyecto, y la
+   pantalla lo dice sin rodeos. La explicación de por qué está en la vista: una
+   persona agregada por error no tiene pasado que explicar, y conservar
+   indefinidamente datos personales de alguien que no debía estar en la base es
+   justo lo que la minimización de datos pide no hacer.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Quitar a {{ integrante.nombre_completo }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'fichas:mis_encuestas' %}">Mis encuestas</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:integrantes' encuesta.pk %}">Integrantes</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">Quitar</li>
+  </ol>
+</nav>
+
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+    ¿Quitar a esta persona del hogar?
+  </h1>
+</div>
+
+<div class="card-opso p-4 mb-3">
+  <dl class="row mb-0 small">
+    <dt class="col-5 col-sm-3 text-secondary fw-normal">Persona</dt>
+    <dd class="col-7 col-sm-9 fw-semibold">{{ integrante.nombre_completo }}</dd>
+
+    <dt class="col-5 col-sm-3 text-secondary fw-normal">Parentesco</dt>
+    <dd class="col-7 col-sm-9">{{ integrante.get_parentesco_display }}</dd>
+
+    <dt class="col-5 col-sm-3 text-secondary fw-normal">Edad</dt>
+    <dd class="col-7 col-sm-9">{{ integrante.edad }} años</dd>
+
+    <dt class="col-5 col-sm-3 text-secondary fw-normal">Hogar</dt>
+    <dd class="col-7 col-sm-9 mb-0">
+      {{ hogar.jefe_hogar_nombre }} · {{ encuesta.direccion }}
+    </dd>
+  </dl>
+</div>
+
+<div class="alert alert-danger small d-flex gap-2" role="alert">
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+  </svg>
+  <div>
+    <strong>Sus datos se borran, no se archivan.</strong> Es deliberado: son datos
+    personales de una persona que, si la estás quitando, no debía estar en el
+    registro. No hay forma de recuperarlos.
+  </div>
+</div>
+
+{% if integrante.es_jefe_hogar %}
+  <div class="alert alert-warning small" role="alert">
+    Es la persona marcada como <strong>jefa de hogar</strong>. El hogar quedará sin
+    jefe y el parentesco del resto dejará de tener referencia: tendrás que marcar a
+    otra persona.
+  </div>
+{% endif %}
+
+<form method="post" class="d-flex gap-2 flex-wrap">
+  {% csrf_token %}
+  <button type="submit" class="btn btn-danger">
+    Sí, quitar a {{ integrante.nombres }}
+  </button>
+  <a href="{% url 'fichas:integrantes' encuesta.pk %}" class="btn btn-outline-secondary">
+    Cancelar
+  </a>
+</form>
+
+{% endblock %}

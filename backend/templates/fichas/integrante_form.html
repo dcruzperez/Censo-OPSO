@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% comment %} ==========================================================================
+   AGREGAR O EDITAR UNA PERSONA — /encuestas/<pk>/integrantes/nuevo/ y .../editar/
+
+   Una sola plantilla para el alta y la edición, por lo mismo que en la vivienda:
+   los campos son idénticos y dos archivos garantizan que un campo nuevo aparezca
+   en uno y falte en el otro.
+
+   El formulario se agrupa en tres bloques, y el orden es el de la conversación
+   real en la puerta:
+
+     1. QUIÉN ES     parentesco, nombres, apellidos, RUT
+     2. DATOS BÁSICOS sexo, fecha de nacimiento
+     3. SITUACIÓN    escolaridad, ocupación, pueblo originario, discapacidad
+
+   El bloque 3 es el que puede no aplicar: si la persona es menor de 5 o de 15
+   años, el formulario no exige escolaridad ni ocupación. Eso lo decide
+   IntegranteForm.clean() con la fecha que se acaba de escribir, no la plantilla.
+
+   «Guardar y agregar otra» existe porque la operación real es registrar seis
+   personas seguidas: sin ese botón, cada una costaría tres toques en vez de uno.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}{{ titulo_pagina }}{% endblock %}
+
+{% block contenido %}
+
+<nav aria-label="Ubicación" class="mb-3">
+  <ol class="breadcrumb small mb-0">
+    <li class="breadcrumb-item"><a href="{% url 'fichas:mis_encuestas' %}">Mis encuestas</a></li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:encuesta_detalle' encuesta.pk %}">{{ encuesta.direccion }}</a>
+    </li>
+    <li class="breadcrumb-item">
+      <a href="{% url 'fichas:integrantes' encuesta.pk %}">Integrantes</a>
+    </li>
+    <li class="breadcrumb-item active" aria-current="page">
+      {% if es_alta %}Agregar{% else %}Editar{% endif %}
+    </li>
+  </ol>
+</nav>
+
+<div class="mb-4">
+  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+    {% if es_alta %}Agregar una persona{% else %}Editar a {{ integrante.nombre_completo }}{% endif %}
+  </h1>
+  <p class="text-secondary mb-0">
+    Hogar de {{ hogar.jefe_hogar_nombre }} · {{ encuesta.direccion }}
+    {% if es_alta and not hogar.esta_completo %}
+      · faltan {{ hogar.integrantes_pendientes }}
+      persona{{ hogar.integrantes_pendientes|pluralize }}
+    {% endif %}
+  </p>
+</div>
+
+{% if es_alta and not hogar.jefe_hogar_registrado %}
+  {% comment %} La primera persona llega prerrellenada con lo que se tomó al
+     registrar el hogar. Se dice, para que quede claro que esos campos son un
+     borrador editable y no un dato que el sistema impone. {% endcomment %}
+  <div class="alert alert-info small d-flex gap-2" role="alert">
+    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" width="20" height="20" class="flex-shrink-0" aria-hidden="true">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+    </svg>
+    <div>
+      Este hogar todavía no tiene jefe o jefa registrado, así que el formulario
+      viene prellenado con <strong>{{ hogar.jefe_hogar_nombre }}</strong>, que es
+      quien identificó el hogar. <strong>Corrige lo que haga falta</strong>: el
+      nombre y los apellidos están repartidos a ojo.
+    </div>
+  </div>
+{% endif %}
+
+{% if form.non_field_errors %}
+  <div class="alert alert-danger small" role="alert">
+    {% for error in form.non_field_errors %}<div>{{ error }}</div>{% endfor %}
+  </div>
+{% endif %}
+
+<form method="post" novalidate>
+  {% csrf_token %}
+
+  {# ---------- 1. Quién es ---------- #}
+  <div class="card-opso p-4 mb-3">
+    <h2 class="h6 fw-semibold mb-3">Quién es</h2>
+    <div class="row g-3">
+      {% include "usuarios/gestion/_campo.html" with campo=form.parentesco ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.rut ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.nombres ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.apellidos ancho="col-12 col-md-6" %}
+    </div>
+    <p class="text-secondary small mb-0 mt-2">
+      El RUT es opcional: si la persona no lo tiene a mano, la ficha se guarda igual.
+    </p>
+  </div>
+
+  {# ---------- 2. Datos básicos ---------- #}
+  <div class="card-opso p-4 mb-3">
+    <h2 class="h6 fw-semibold mb-3">Datos básicos</h2>
+    <div class="row g-3">
+      {% include "usuarios/gestion/_campo.html" with campo=form.sexo ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.fecha_nacimiento ancho="col-12 col-md-6" %}
+    </div>
+  </div>
+
+  {# ---------- 3. Situación ---------- #}
+  <div class="card-opso p-4 mb-3">
+    <h2 class="h6 fw-semibold mb-3">Situación</h2>
+    <div class="row g-3">
+      {% include "usuarios/gestion/_campo.html" with campo=form.nivel_educacional ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.situacion_ocupacional ancho="col-12 col-md-6" %}
+      {% include "usuarios/gestion/_campo.html" with campo=form.pueblo_originario ancho="col-12 col-md-6" %}
+      <div class="col-12 col-md-6 d-flex align-items-end">
+        <div class="form-check">
+          {{ form.tiene_discapacidad }}
+          <label class="form-check-label" for="{{ form.tiene_discapacidad.id_for_label }}">
+            {{ form.tiene_discapacidad.label }}
+          </label>
+        </div>
+      </div>
+      {% include "usuarios/gestion/_campo.html" with campo=form.observaciones ancho="col-12" %}
+    </div>
+    <p class="text-secondary small mb-0 mt-2">
+      La escolaridad se pregunta desde los 5 años y la ocupación desde los 15. En
+      personas menores, déjalas en blanco.
+    </p>
+  </div>
+
+  <div class="d-flex gap-2 flex-wrap">
+    <button type="submit" class="btn btn-opso">
+      {% if es_alta %}Guardar{% else %}Guardar los cambios{% endif %}
+    </button>
+    {% if es_alta %}
+      <button type="submit" name="guardar_y_seguir" value="1" class="btn btn-outline-primary">
+        Guardar y agregar otra
+      </button>
+    {% endif %}
+    <a href="{% url 'fichas:integrantes' encuesta.pk %}" class="btn btn-outline-secondary">
+      Cancelar
+    </a>
+  </div>
+</form>
+
+{% endblock %}

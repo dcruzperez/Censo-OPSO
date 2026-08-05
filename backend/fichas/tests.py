@@ -2680,3 +2680,1060 @@ class IntegracionHU08Test(BaseEncuestaTest):
         )
 
 
+# ==========================================================================
+# HU-09 — 29. EL MODELO Integrante
+# ==========================================================================
+
+
+class BaseIntegranteTest(BaseEncuestaTest):
+    """Escenario común: Marta con su sector asignado y una encuesta con hogar."""
+
+    def setUp(self):
+        super().setUp()
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
+        self.encuesta = self.crear(estado=EstadoEncuesta.BORRADOR)
+        self.hogar = GrupoFamiliar.objects.create(
+            encuesta=self.encuesta,
+            jefe_hogar_nombre="Rosa Elena Millán",
+            integrantes_declarados=4,
+        )
+        self.url_lista = reverse(
+            "fichas:integrantes", kwargs={"encuesta_pk": self.encuesta.pk}
+        )
+        self.url_nuevo = reverse(
+            "fichas:integrante_nuevo", kwargs={"encuesta_pk": self.encuesta.pk}
+        )
+
+    def nacido_hace(self, anios):
+        """Una fecha de nacimiento que da esa edad hoy, sin caer en el cumpleaños."""
+        return timezone.localdate() - timedelta(days=anios * 365 + 100)
+
+    def persona(self, **extra):
+        datos = {
+            "grupo_familiar": self.hogar,
+            "parentesco": Parentesco.HIJO,
+            "nombres": "Camila Andrea",
+            "apellidos": "Riquelme Soto",
+            "sexo": Sexo.FEMENINO,
+            "fecha_nacimiento": self.nacido_hace(20),
+            "nivel_educacional": NivelEducacional.MEDIA_COMPLETA,
+            "situacion_ocupacional": SituacionOcupacional.ESTUDIA,
+        }
+        datos.update(extra)
+        return Integrante.objects.create(**datos)
+
+    def jefe(self, **extra):
+        datos = {"parentesco": Parentesco.JEFE_HOGAR, "nombres": "Rosa Elena"}
+        datos.update(extra)
+        return self.persona(**datos)
+
+    def url_editar(self, integrante):
+        return reverse(
+            "fichas:integrante_editar",
+            kwargs={"encuesta_pk": self.encuesta.pk, "pk": integrante.pk},
+        )
+
+    def url_quitar(self, integrante):
+        return reverse(
+            "fichas:integrante_quitar",
+            kwargs={"encuesta_pk": self.encuesta.pk, "pk": integrante.pk},
+        )
+
+
+class IntegranteModeloTest(BaseIntegranteTest):
+    def test_se_crea_asociado_a_su_hogar(self):
+        persona = self.persona()
+
+        self.assertIn(persona, self.hogar.integrantes.all())
+
+    def test_el_nombre_completo_junta_nombres_y_apellidos(self):
+        persona = self.persona(nombres="Ana", apellidos="Rojas")
+
+        self.assertEqual(persona.nombre_completo, "Ana Rojas")
+        self.assertEqual(str(persona), "Ana Rojas")
+
+    def test_calcula_la_edad_desde_la_fecha_de_nacimiento(self):
+        self.assertEqual(self.persona(fecha_nacimiento=self.nacido_hace(30)).edad(), 30)
+
+    def test_la_edad_no_se_adelanta_antes_del_cumpleanos(self):
+        """El caso borde que se escribe mal una vez por proyecto."""
+        hoy = timezone.localdate()
+        # Nació el mismo día del año pero un día después: todavía no los cumple.
+        fecha = date(hoy.year - 30, hoy.month, hoy.day) + timedelta(days=1)
+
+        persona = self.persona(fecha_nacimiento=fecha)
+
+        self.assertEqual(persona.edad(), 29)
+
+    def test_la_edad_se_puede_calcular_a_una_fecha_dada(self):
+        """Guardar la fecha y no la edad permite mirar hacia atrás."""
+        persona = self.persona(fecha_nacimiento=date(2000, 6, 15))
+
+        self.assertEqual(persona.edad(a_fecha=date(2020, 6, 14)), 19)
+        self.assertEqual(persona.edad(a_fecha=date(2020, 6, 15)), 20)
+
+    def test_sabe_si_es_menor_de_edad(self):
+        self.assertTrue(self.persona(fecha_nacimiento=self.nacido_hace(10)).es_menor_de_edad)
+        self.assertFalse(
+            self.persona(
+                apellidos="Otro", fecha_nacimiento=self.nacido_hace(40)
+            ).es_menor_de_edad
+        )
+
+    def test_sabe_a_quien_se_le_pregunta_escolaridad_y_ocupacion(self):
+        bebe = Integrante(fecha_nacimiento=self.nacido_hace(2))
+        escolar = Integrante(fecha_nacimiento=self.nacido_hace(9))
+        adulto = Integrante(fecha_nacimiento=self.nacido_hace(30))
+
+        self.assertFalse(bebe.se_le_pregunta_escolaridad)
+        self.assertTrue(escolar.se_le_pregunta_escolaridad)
+        self.assertFalse(escolar.se_le_pregunta_ocupacion)
+        self.assertTrue(adulto.se_le_pregunta_ocupacion)
+
+    def test_sabe_quien_es_el_jefe_de_hogar(self):
+        jefe = self.jefe()
+
+        self.assertTrue(jefe.es_jefe_hogar)
+        self.assertFalse(self.persona(apellidos="Otro").es_jefe_hogar)
+
+    def test_el_rut_se_normaliza_al_guardar(self):
+        persona = self.persona(rut="12.345.678-5")
+
+        persona.refresh_from_db()
+        self.assertEqual(persona.rut, "12345678-5")
+
+    def test_borrar_el_hogar_se_lleva_a_sus_integrantes(self):
+        self.persona()
+
+        self.hogar.delete()
+
+        self.assertEqual(Integrante.objects.count(), 0)
+
+    def test_borrar_la_encuesta_tambien_los_borra(self):
+        """La cadena completa: encuesta -> hogar -> personas."""
+        self.persona()
+
+        self.encuesta.delete()
+
+        self.assertEqual(Integrante.objects.count(), 0)
+
+
+class IntegranteRestriccionesTest(BaseIntegranteTest):
+    def test_no_puede_haber_dos_jefes_de_hogar(self):
+        """Con dos, el parentesco de todos los demás dejaría de significar algo."""
+        self.jefe()
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self.persona(parentesco=Parentesco.JEFE_HOGAR, apellidos="Otra")
+
+    def test_si_puede_haber_dos_hijos(self):
+        """La unicidad es PARCIAL: solo afecta al jefe de hogar."""
+        self.persona(nombres="Camila")
+        self.persona(nombres="Matías", apellidos="Riquelme Soto")
+
+        self.assertEqual(self.hogar.integrantes.count(), 2)
+
+    def test_otro_hogar_puede_tener_su_propio_jefe(self):
+        self.jefe()
+        otra = self.crear(direccion="Calle 2", estado=EstadoEncuesta.BORRADOR)
+        otro_hogar = GrupoFamiliar.objects.create(
+            encuesta=otra, jefe_hogar_nombre="Otro", integrantes_declarados=1
+        )
+
+        Integrante.objects.create(
+            grupo_familiar=otro_hogar,
+            parentesco=Parentesco.JEFE_HOGAR,
+            nombres="Otro",
+            apellidos="Jefe",
+            sexo=Sexo.MASCULINO,
+            fecha_nacimiento=self.nacido_hace(40),
+            nivel_educacional=NivelEducacional.MEDIA_COMPLETA,
+            situacion_ocupacional=SituacionOcupacional.TRABAJA,
+        )
+
+        self.assertEqual(Integrante.objects.filter(parentesco="JEFE_HOGAR").count(), 2)
+
+    def test_el_rut_no_se_puede_repetir_en_el_mismo_hogar(self):
+        self.persona(rut="12345678-5")
+
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self.persona(rut="12345678-5", apellidos="Otra")
+
+    def test_dos_personas_sin_rut_no_chocan(self):
+        """Sin la condición parcial, la cadena vacía las haría chocar entre sí."""
+        self.persona(rut="", nombres="Una")
+        self.persona(rut="", nombres="Otra")
+
+        self.assertEqual(self.hogar.integrantes.count(), 2)
+
+    def test_un_parentesco_inventado_lo_rechaza_la_base_de_datos(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self.persona(parentesco="PRIMO_SEGUNDO")
+
+    def test_un_sexo_inventado_lo_rechaza_la_base_de_datos(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                self.persona(sexo="INVENTADO")
+
+    def test_una_fecha_futura_la_rechaza_la_validacion(self):
+        """No puede estar en un CheckConstraint: dependería de la fecha de hoy."""
+        persona = Integrante(
+            grupo_familiar=self.hogar,
+            parentesco=Parentesco.HIJO,
+            nombres="Futura",
+            apellidos="Persona",
+            sexo=Sexo.FEMENINO,
+            fecha_nacimiento=timezone.localdate() + timedelta(days=1),
+        )
+
+        with self.assertRaises(ValidationError) as error:
+            persona.full_clean()
+
+        self.assertIn("fecha_nacimiento", error.exception.message_dict)
+
+    def test_mas_de_120_anios_se_rechaza(self):
+        persona = Integrante(
+            grupo_familiar=self.hogar,
+            parentesco=Parentesco.HIJO,
+            nombres="Muy",
+            apellidos="Mayor",
+            sexo=Sexo.FEMENINO,
+            fecha_nacimiento=self.nacido_hace(130),
+        )
+
+        with self.assertRaises(ValidationError):
+            persona.full_clean()
+
+
+# ==========================================================================
+# HU-09 — 30. EL RECUENTO DEL HOGAR
+# ==========================================================================
+
+
+class RecuentoDelHogarTest(BaseIntegranteTest):
+    """Aquí es donde `integrantes_declarados` de la HU-08 cobra sentido."""
+
+    def test_sin_nadie_registrado_faltan_todas(self):
+        self.assertEqual(self.hogar.total_integrantes(), 0)
+        self.assertEqual(self.hogar.integrantes_pendientes, 4)
+        self.assertFalse(self.hogar.esta_completo)
+
+    def test_cuenta_las_registradas(self):
+        self.persona()
+        self.persona(apellidos="Otra")
+
+        self.assertEqual(self.hogar.total_integrantes(), 2)
+        self.assertEqual(self.hogar.integrantes_pendientes, 2)
+
+    def test_con_todas_registradas_el_hogar_esta_completo(self):
+        for numero in range(4):
+            self.persona(apellidos=f"Apellido {numero}")
+
+        self.assertTrue(self.hogar.esta_completo)
+        self.assertEqual(self.hogar.integrantes_pendientes, 0)
+
+    def test_los_pendientes_nunca_son_negativos(self):
+        """Devolver -2 obligaría a cada plantilla a acordarse del caso."""
+        for numero in range(6):
+            self.persona(apellidos=f"Apellido {numero}")
+
+        self.assertEqual(self.hogar.integrantes_pendientes, 0)
+
+    def test_registrar_mas_de_las_declaradas_es_una_discrepancia(self):
+        """No es un error: aparece la abuela de la pieza del fondo."""
+        for numero in range(6):
+            self.persona(apellidos=f"Apellido {numero}")
+
+        self.assertTrue(self.hogar.hay_discrepancia)
+        self.assertTrue(self.hogar.esta_completo)
+
+    def test_sin_discrepancia_cuando_coinciden(self):
+        for numero in range(4):
+            self.persona(apellidos=f"Apellido {numero}")
+
+        self.assertFalse(self.hogar.hay_discrepancia)
+
+    def test_el_jefe_de_hogar_registrado_se_encuentra(self):
+        jefe = self.jefe()
+        self.persona(apellidos="Otra")
+
+        self.assertEqual(self.hogar.jefe_hogar_registrado, jefe)
+
+    def test_sin_jefe_registrado_devuelve_none(self):
+        self.persona()
+
+        self.assertIsNone(self.hogar.jefe_hogar_registrado)
+
+    def test_el_jefe_va_primero_en_la_lista(self):
+        """El parentesco de los demás se entiende respecto a esa persona."""
+        self.persona(nombres="Mayor", fecha_nacimiento=self.nacido_hace(80))
+        jefe = self.jefe(fecha_nacimiento=self.nacido_hace(35))
+
+        self.assertEqual(self.hogar.integrantes_ordenados().first(), jefe)
+
+    def test_despues_del_jefe_van_de_mayor_a_menor(self):
+        self.jefe(fecha_nacimiento=self.nacido_hace(35))
+        self.persona(nombres="Joven", fecha_nacimiento=self.nacido_hace(10))
+        self.persona(nombres="Mayor", apellidos="Otra", fecha_nacimiento=self.nacido_hace(70))
+
+        nombres = [p.nombres for p in self.hogar.integrantes_ordenados()]
+
+        self.assertEqual(nombres, ["Rosa Elena", "Mayor", "Joven"])
+
+
+class NombreDelJefeTest(BaseIntegranteTest):
+    """Los dos sitios donde vive el nombre del jefe de hogar, y su coherencia."""
+
+    def test_sin_jefe_registrado_no_hay_nada_que_contradecir(self):
+        self.assertTrue(self.hogar.nombre_del_jefe_coincide)
+
+    def test_coincide_cuando_es_el_mismo_nombre(self):
+        self.jefe(nombres="Rosa Elena", apellidos="Millán")
+
+        self.assertTrue(self.hogar.nombre_del_jefe_coincide)
+
+    def test_no_distingue_mayusculas_ni_espacios_de_mas(self):
+        self.jefe(nombres="ROSA   elena", apellidos="millán")
+
+        self.assertTrue(self.hogar.nombre_del_jefe_coincide)
+
+    def test_avisa_cuando_no_coinciden(self):
+        self.jefe(nombres="Otra", apellidos="Persona")
+
+        self.assertFalse(self.hogar.nombre_del_jefe_coincide)
+
+
+# ==========================================================================
+# HU-09 — 31. EL FORMULARIO
+# ==========================================================================
+
+
+class IntegranteFormTest(BaseIntegranteTest):
+    def datos(self, **extra):
+        base = {
+            "parentesco": Parentesco.HIJO,
+            "nombres": "Camila Andrea",
+            "apellidos": "Riquelme Soto",
+            "rut": "",
+            "sexo": Sexo.FEMENINO,
+            "fecha_nacimiento": self.nacido_hace(20).isoformat(),
+            "nivel_educacional": NivelEducacional.MEDIA_COMPLETA,
+            "situacion_ocupacional": SituacionOcupacional.ESTUDIA,
+            "pueblo_originario": PuebloOriginario.NINGUNO,
+            "observaciones": "",
+        }
+        base.update(extra)
+        return base
+
+    def formulario(self, datos=None, **kwargs):
+        return IntegranteForm(datos, grupo_familiar=self.hogar, **kwargs)
+
+    def test_un_formulario_completo_es_valido(self):
+        formulario = self.formulario(self.datos())
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_el_nombre_y_el_apellido_son_obligatorios(self):
+        for campo in ("nombres", "apellidos"):
+            with self.subTest(campo=campo):
+                formulario = self.formulario(self.datos(**{campo: ""}))
+                self.assertFalse(formulario.is_valid())
+
+    def test_una_inicial_no_es_un_nombre(self):
+        formulario = self.formulario(self.datos(nombres="C"))
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("nombres", formulario.errors)
+
+    def test_la_fecha_de_nacimiento_es_obligatoria(self):
+        formulario = self.formulario(self.datos(fecha_nacimiento=""))
+
+        self.assertFalse(formulario.is_valid())
+
+    def test_una_fecha_futura_se_rechaza(self):
+        futura = (timezone.localdate() + timedelta(days=1)).isoformat()
+
+        formulario = self.formulario(self.datos(fecha_nacimiento=futura))
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("fecha_nacimiento", formulario.errors)
+
+    # -- las reglas que dependen de la edad --------------------------------
+
+    def test_a_un_bebe_no_se_le_pide_escolaridad_ni_ocupacion(self):
+        formulario = self.formulario(
+            self.datos(
+                fecha_nacimiento=self.nacido_hace(2).isoformat(),
+                nivel_educacional="",
+                situacion_ocupacional="",
+            )
+        )
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_desde_los_cinco_anios_la_escolaridad_es_obligatoria(self):
+        formulario = self.formulario(
+            self.datos(
+                fecha_nacimiento=self.nacido_hace(9).isoformat(),
+                nivel_educacional="",
+                situacion_ocupacional="",
+            )
+        )
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("nivel_educacional", formulario.errors)
+
+    def test_a_un_nino_de_nueve_no_se_le_pide_ocupacion(self):
+        formulario = self.formulario(
+            self.datos(
+                fecha_nacimiento=self.nacido_hace(9).isoformat(),
+                nivel_educacional=NivelEducacional.BASICA_INCOMPLETA,
+                situacion_ocupacional="",
+            )
+        )
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_desde_los_quince_la_ocupacion_es_obligatoria(self):
+        formulario = self.formulario(
+            self.datos(
+                fecha_nacimiento=self.nacido_hace(17).isoformat(),
+                situacion_ocupacional="",
+            )
+        )
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("situacion_ocupacional", formulario.errors)
+
+    def test_sin_fecha_no_se_exigen_los_campos_que_dependen_de_ella(self):
+        """El error de la fecha ya se informó: no hay que apilar tres más."""
+        formulario = self.formulario(
+            self.datos(
+                fecha_nacimiento="", nivel_educacional="", situacion_ocupacional=""
+            )
+        )
+
+        self.assertFalse(formulario.is_valid())
+        self.assertNotIn("nivel_educacional", formulario.errors)
+
+    # -- el jefe de hogar --------------------------------------------------
+
+    def test_el_primero_puede_ser_jefe_de_hogar(self):
+        valores = [v for v, _ in self.formulario().fields["parentesco"].choices]
+
+        self.assertIn(Parentesco.JEFE_HOGAR, valores)
+
+    def test_con_jefe_ya_registrado_la_opcion_desaparece(self):
+        self.jefe()
+
+        valores = [v for v, _ in self.formulario().fields["parentesco"].choices]
+
+        self.assertNotIn(Parentesco.JEFE_HOGAR, valores)
+
+    def test_enviar_jefe_de_hogar_a_mano_no_sirve(self):
+        self.jefe()
+
+        formulario = self.formulario(self.datos(parentesco=Parentesco.JEFE_HOGAR))
+
+        self.assertFalse(formulario.is_valid())
+
+    def test_al_editar_al_jefe_la_opcion_sigue_disponible(self):
+        """Si no, guardar cualquier otro cambio lo dejaría sin parentesco."""
+        jefe = self.jefe()
+
+        formulario = self.formulario(instance=jefe)
+        valores = [v for v, _ in formulario.fields["parentesco"].choices]
+
+        self.assertIn(Parentesco.JEFE_HOGAR, valores)
+
+    # -- el RUT ------------------------------------------------------------
+
+    def test_un_rut_invalido_se_rechaza(self):
+        formulario = self.formulario(self.datos(rut="12345678-9"))
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("rut", formulario.errors)
+
+    def test_un_rut_repetido_en_el_hogar_se_rechaza_con_mensaje(self):
+        self.persona(rut="12345678-5")
+
+        formulario = self.formulario(self.datos(rut="12345678-5"))
+
+        self.assertFalse(formulario.is_valid())
+        self.assertIn("rut", formulario.errors)
+
+    def test_el_rut_repetido_se_detecta_aunque_venga_con_puntos(self):
+        """Sin normalizar antes de comparar, pasaría el formulario y reventaría la base."""
+        self.persona(rut="12345678-5")
+
+        formulario = self.formulario(self.datos(rut="12.345.678-5"))
+
+        self.assertFalse(formulario.is_valid())
+
+    def test_editar_a_una_persona_no_choca_con_su_propio_rut(self):
+        persona = self.persona(rut="12345678-5")
+
+        formulario = self.formulario(self.datos(rut="12345678-5"), instance=persona)
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+    def test_el_mismo_rut_en_otro_hogar_no_estorba(self):
+        self.persona(rut="12345678-5")
+        otra = self.crear(direccion="Calle 2", estado=EstadoEncuesta.BORRADOR)
+        otro_hogar = GrupoFamiliar.objects.create(
+            encuesta=otra, jefe_hogar_nombre="Otro", integrantes_declarados=1
+        )
+
+        formulario = IntegranteForm(
+            self.datos(rut="12345678-5"), grupo_familiar=otro_hogar
+        )
+
+        self.assertTrue(formulario.is_valid(), formulario.errors)
+
+
+# ==========================================================================
+# HU-09 — 32. LA PANTALLA DE INTEGRANTES
+# ==========================================================================
+
+
+class IntegrantesPantallaTest(BaseIntegranteTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.marta)
+
+    def test_muestra_la_lista(self):
+        self.persona(nombres="Camila Andrea")
+
+        respuesta = self.client.get(self.url_lista)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "Camila Andrea")
+
+    def test_muestra_el_avance(self):
+        self.persona()
+
+        respuesta = self.client.get(self.url_lista)
+
+        self.assertContains(respuesta, "1 de 4")
+        self.assertContains(respuesta, "Faltan")
+
+    def test_avisa_cuando_el_hogar_esta_completo(self):
+        for numero in range(4):
+            self.persona(apellidos=f"Apellido {numero}")
+
+        respuesta = self.client.get(self.url_lista)
+
+        self.assertContains(respuesta, "El hogar está completo")
+
+    def test_avisa_de_la_discrepancia(self):
+        for numero in range(6):
+            self.persona(apellidos=f"Apellido {numero}")
+
+        respuesta = self.client.get(self.url_lista)
+
+        self.assertContains(respuesta, "personas registradas y la")
+
+    def test_sin_nadie_invita_a_empezar_por_el_jefe_de_hogar(self):
+        respuesta = self.client.get(self.url_lista)
+
+        self.assertContains(respuesta, "Todavía no hay nadie registrado")
+        self.assertContains(respuesta, "Rosa Elena Millán")
+
+    def test_avisa_si_el_nombre_del_jefe_no_coincide(self):
+        self.jefe(nombres="Otra", apellidos="Persona")
+
+        respuesta = self.client.get(self.url_lista)
+
+        self.assertContains(respuesta, "está registrado a nombre de")
+
+    def test_sin_hogar_registrado_manda_a_registrarlo_primero(self):
+        """El parentesco se declara respecto al jefe de hogar: hay un orden real."""
+        otra = self.crear(direccion="Calle 2", estado=EstadoEncuesta.BORRADOR)
+        url = reverse("fichas:integrantes", kwargs={"encuesta_pk": otra.pk})
+
+        respuesta = self.client.get(url)
+
+        self.assertRedirects(
+            respuesta, reverse("fichas:registrar_hogar", kwargs={"pk": otra.pk})
+        )
+
+    def test_la_encuesta_de_otra_persona_responde_404(self):
+        ajena = self.crear(
+            direccion="Calle de Juan", censista=self.juan, estado=EstadoEncuesta.BORRADOR
+        )
+        GrupoFamiliar.objects.create(
+            encuesta=ajena, jefe_hogar_nombre="Otro", integrantes_declarados=1
+        )
+
+        respuesta = self.client.get(
+            reverse("fichas:integrantes", kwargs={"encuesta_pk": ajena.pk})
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_el_supervisor_no_entra_aunque_vea_todas(self):
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_lista)
+
+        self.assertEqual(respuesta.status_code, 302)
+
+    def test_con_la_encuesta_cerrada_no_se_ofrecen_acciones(self):
+        self.persona()
+        self.encuesta.cambiar_estado(EstadoEncuesta.VALIDADA)
+
+        respuesta = self.client.get(self.url_lista)
+
+        self.assertNotContains(respuesta, "Agregar una persona")
+
+
+# ==========================================================================
+# HU-09 — 33. AGREGAR UNA PERSONA
+# ==========================================================================
+
+
+class RegistrarIntegranteTest(BaseIntegranteTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.marta)
+
+    def datos(self, **extra):
+        base = {
+            "parentesco": Parentesco.HIJO,
+            "nombres": "Camila Andrea",
+            "apellidos": "Riquelme Soto",
+            "rut": "",
+            "sexo": Sexo.FEMENINO,
+            "fecha_nacimiento": self.nacido_hace(20).isoformat(),
+            "nivel_educacional": NivelEducacional.MEDIA_COMPLETA,
+            "situacion_ocupacional": SituacionOcupacional.ESTUDIA,
+            "pueblo_originario": PuebloOriginario.NINGUNO,
+            "observaciones": "",
+        }
+        base.update(extra)
+        return base
+
+    def test_muestra_el_formulario(self):
+        respuesta = self.client.get(self.url_nuevo)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertContains(respuesta, "Agregar una persona")
+
+    def test_guarda_a_la_persona(self):
+        self.client.post(self.url_nuevo, self.datos())
+
+        self.assertEqual(self.hogar.integrantes.count(), 1)
+
+    def test_la_asocia_al_hogar_correcto(self):
+        self.client.post(self.url_nuevo, self.datos())
+
+        self.assertEqual(Integrante.objects.get().grupo_familiar, self.hogar)
+
+    def test_vuelve_a_la_lista(self):
+        respuesta = self.client.post(self.url_nuevo, self.datos())
+
+        self.assertRedirects(respuesta, self.url_lista)
+
+    def test_el_mensaje_dice_cuantas_faltan(self):
+        respuesta = self.client.post(self.url_nuevo, self.datos(), follow=True)
+        mensajes = [str(m) for m in respuesta.context["messages"]]
+
+        self.assertTrue(any("Faltan 3" in m for m in mensajes))
+
+    def test_el_mensaje_avisa_cuando_el_hogar_queda_completo(self):
+        for numero in range(3):
+            self.persona(apellidos=f"Apellido {numero}")
+
+        respuesta = self.client.post(self.url_nuevo, self.datos(), follow=True)
+        mensajes = [str(m) for m in respuesta.context["messages"]]
+
+        self.assertTrue(any("completo" in m for m in mensajes))
+
+    def test_guardar_y_seguir_devuelve_al_formulario(self):
+        """Registrar seis personas seguidas no puede costar dieciocho toques."""
+        respuesta = self.client.post(
+            self.url_nuevo, {**self.datos(), "guardar_y_seguir": "1"}
+        )
+
+        self.assertRedirects(respuesta, self.url_nuevo)
+        self.assertEqual(self.hogar.integrantes.count(), 1)
+
+    def test_datos_invalidos_no_guardan_nada(self):
+        self.client.post(self.url_nuevo, self.datos(nombres=""))
+
+        self.assertEqual(Integrante.objects.count(), 0)
+
+    # -- el prellenado de la primera persona -------------------------------
+
+    def test_la_primera_persona_viene_prellenada_como_jefa_de_hogar(self):
+        respuesta = self.client.get(self.url_nuevo)
+        inicial = respuesta.context["form"].initial
+
+        self.assertEqual(inicial["parentesco"], Parentesco.JEFE_HOGAR)
+        self.assertIn("Rosa", inicial["nombres"])
+
+    def test_el_prellenado_arrastra_el_rut_del_hogar(self):
+        self.hogar.jefe_hogar_rut = "12345678-5"
+        self.hogar.save()
+
+        respuesta = self.client.get(self.url_nuevo)
+
+        self.assertEqual(respuesta.context["form"].initial["rut"], "12345678-5")
+
+    def test_con_jefe_ya_registrado_no_se_prellena_nada(self):
+        self.jefe()
+
+        respuesta = self.client.get(self.url_nuevo)
+
+        self.assertEqual(respuesta.context["form"].initial, {})
+
+    def test_se_avisa_de_que_el_prellenado_es_un_borrador(self):
+        respuesta = self.client.get(self.url_nuevo)
+
+        self.assertContains(respuesta, "Corrige lo que haga falta")
+
+    # -- acceso ------------------------------------------------------------
+
+    def test_no_se_puede_agregar_a_la_encuesta_de_otra_persona(self):
+        ajena = self.crear(
+            direccion="Calle de Juan", censista=self.juan, estado=EstadoEncuesta.BORRADOR
+        )
+        GrupoFamiliar.objects.create(
+            encuesta=ajena, jefe_hogar_nombre="Otro", integrantes_declarados=1
+        )
+
+        respuesta = self.client.post(
+            reverse("fichas:integrante_nuevo", kwargs={"encuesta_pk": ajena.pk}),
+            self.datos(),
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+
+    def test_con_la_encuesta_validada_no_se_puede_agregar(self):
+        self.encuesta.cambiar_estado(EstadoEncuesta.VALIDADA)
+
+        self.client.post(self.url_nuevo, self.datos())
+
+        self.assertEqual(Integrante.objects.count(), 0)
+
+    def test_con_una_encuesta_observada_si_se_puede(self):
+        self.devolver(self.encuesta)
+
+        self.client.post(self.url_nuevo, self.datos())
+
+        self.assertEqual(Integrante.objects.count(), 1)
+
+    def test_con_el_operativo_cerrado_no_se_puede(self):
+        self.operativo.estado = EstadoOperativo.CERRADO
+        self.operativo.save()
+
+        self.client.post(self.url_nuevo, self.datos())
+
+        self.assertEqual(Integrante.objects.count(), 0)
+
+    def test_el_supervisor_no_puede_agregar_personas(self):
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.post(self.url_nuevo, self.datos())
+
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertEqual(Integrante.objects.count(), 0)
+
+
+# ==========================================================================
+# HU-09 — 34. EDITAR Y QUITAR
+# ==========================================================================
+
+
+class EditarIntegranteTest(BaseIntegranteTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.marta)
+        self.persona_creada = self.persona()
+
+    def datos(self, **extra):
+        base = {
+            "parentesco": Parentesco.HIJO,
+            "nombres": "Camila Corregida",
+            "apellidos": "Riquelme Soto",
+            "rut": "",
+            "sexo": Sexo.FEMENINO,
+            "fecha_nacimiento": self.nacido_hace(21).isoformat(),
+            "nivel_educacional": NivelEducacional.TECNICA,
+            "situacion_ocupacional": SituacionOcupacional.TRABAJA,
+            "pueblo_originario": PuebloOriginario.MAPUCHE,
+            "observaciones": "",
+        }
+        base.update(extra)
+        return base
+
+    def test_muestra_los_datos_actuales(self):
+        respuesta = self.client.get(self.url_editar(self.persona_creada))
+
+        self.assertContains(respuesta, "Camila Andrea")
+
+    def test_guarda_los_cambios(self):
+        self.client.post(self.url_editar(self.persona_creada), self.datos())
+
+        self.persona_creada.refresh_from_db()
+        self.assertEqual(self.persona_creada.nombres, "Camila Corregida")
+        self.assertEqual(
+            self.persona_creada.pueblo_originario, PuebloOriginario.MAPUCHE
+        )
+
+    def test_no_crea_una_persona_nueva(self):
+        self.client.post(self.url_editar(self.persona_creada), self.datos())
+
+        self.assertEqual(Integrante.objects.count(), 1)
+
+    def test_una_persona_de_otro_hogar_responde_404(self):
+        """La URL lleva la encuesta, así que el filtro por dueño va siempre."""
+        otra = self.crear(
+            direccion="Calle de Juan", censista=self.juan, estado=EstadoEncuesta.BORRADOR
+        )
+        otro_hogar = GrupoFamiliar.objects.create(
+            encuesta=otra, jefe_hogar_nombre="Otro", integrantes_declarados=1
+        )
+        ajena = Integrante.objects.create(
+            grupo_familiar=otro_hogar,
+            parentesco=Parentesco.JEFE_HOGAR,
+            nombres="Ajena",
+            apellidos="Persona",
+            sexo=Sexo.FEMENINO,
+            fecha_nacimiento=self.nacido_hace(40),
+            nivel_educacional=NivelEducacional.MEDIA_COMPLETA,
+            situacion_ocupacional=SituacionOcupacional.TRABAJA,
+        )
+
+        respuesta = self.client.get(
+            reverse(
+                "fichas:integrante_editar",
+                kwargs={"encuesta_pk": self.encuesta.pk, "pk": ajena.pk},
+            )
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+
+
+class QuitarIntegranteTest(BaseIntegranteTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.marta)
+        self.persona_creada = self.persona()
+
+    def test_el_get_solo_pide_confirmacion(self):
+        """Si un GET borrara, un <img src> ajeno lo ejecutaría con tu sesión."""
+        respuesta = self.client.get(self.url_quitar(self.persona_creada))
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(Integrante.objects.count(), 1)
+
+    def test_avisa_de_que_los_datos_se_borran(self):
+        respuesta = self.client.get(self.url_quitar(self.persona_creada))
+
+        self.assertContains(respuesta, "se borran, no se archivan")
+
+    def test_el_post_la_quita(self):
+        self.client.post(self.url_quitar(self.persona_creada))
+
+        self.assertEqual(Integrante.objects.count(), 0)
+
+    def test_vuelve_a_la_lista(self):
+        respuesta = self.client.post(self.url_quitar(self.persona_creada))
+
+        self.assertRedirects(respuesta, self.url_lista)
+
+    def test_quitar_al_jefe_avisa_de_que_el_hogar_queda_sin_jefe(self):
+        jefe = self.jefe(apellidos="Millán")
+
+        respuesta = self.client.post(self.url_quitar(jefe), follow=True)
+        mensajes = [str(m) for m in respuesta.context["messages"]]
+
+        self.assertTrue(any("sin jefe de hogar" in m for m in mensajes))
+
+    def test_al_confirmar_se_avisa_si_es_el_jefe(self):
+        jefe = self.jefe(apellidos="Millán")
+
+        respuesta = self.client.get(self.url_quitar(jefe))
+
+        self.assertContains(respuesta, "jefa de hogar")
+
+    def test_con_la_encuesta_cerrada_no_se_puede_quitar(self):
+        self.encuesta.cambiar_estado(EstadoEncuesta.VALIDADA)
+
+        self.client.post(self.url_quitar(self.persona_creada))
+
+        self.assertEqual(Integrante.objects.count(), 1)
+
+    def test_no_se_puede_quitar_a_alguien_de_otro_encuestador(self):
+        otra = self.crear(
+            direccion="Calle de Juan", censista=self.juan, estado=EstadoEncuesta.BORRADOR
+        )
+        otro_hogar = GrupoFamiliar.objects.create(
+            encuesta=otra, jefe_hogar_nombre="Otro", integrantes_declarados=1
+        )
+        ajena = Integrante.objects.create(
+            grupo_familiar=otro_hogar,
+            parentesco=Parentesco.JEFE_HOGAR,
+            nombres="Ajena",
+            apellidos="Persona",
+            sexo=Sexo.FEMENINO,
+            fecha_nacimiento=self.nacido_hace(40),
+            nivel_educacional=NivelEducacional.MEDIA_COMPLETA,
+            situacion_ocupacional=SituacionOcupacional.TRABAJA,
+        )
+
+        respuesta = self.client.post(
+            reverse(
+                "fichas:integrante_quitar",
+                kwargs={"encuesta_pk": otra.pk, "pk": ajena.pk},
+            )
+        )
+
+        self.assertEqual(respuesta.status_code, 404)
+        self.assertEqual(Integrante.objects.count(), 2)
+
+
+# ==========================================================================
+# HU-09 — 35. LO QUE GANAN LAS PANTALLAS ANTERIORES
+# ==========================================================================
+
+
+class FichaConIntegrantesTest(BaseIntegranteTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.marta)
+
+    def test_la_ficha_muestra_cuantas_personas_van(self):
+        self.persona()
+
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertContains(respuesta, "1 de")
+        self.assertContains(respuesta, "faltan 3")
+
+    def test_la_ficha_enlaza_la_pantalla_de_integrantes(self):
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertContains(respuesta, self.url_lista)
+
+    def test_la_ficha_dice_cuando_el_hogar_esta_completo(self):
+        for numero in range(4):
+            self.persona(apellidos=f"Apellido {numero}")
+
+        respuesta = self.client.get(self.url_detalle(self.encuesta))
+
+        self.assertContains(respuesta, "completo")
+
+
+class ConsultasIntegrantesTest(BaseIntegranteTest):
+    """La lista no debe pagar una consulta por persona."""
+
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.marta)
+
+    def contar(self):
+        with CaptureQueriesContext(connection) as captura:
+            self.client.get(self.url_lista)
+        return len(captura.captured_queries)
+
+    def test_el_numero_de_consultas_no_crece_con_las_personas(self):
+        self.persona(apellidos="Uno")
+        con_una = self.contar()
+
+        self.persona(apellidos="Dos")
+        self.persona(apellidos="Tres")
+        con_tres = self.contar()
+
+        self.assertEqual(con_una, con_tres)
+
+
+# ==========================================================================
+# HU-09 — 36. RECORRIDO COMPLETO
+# ==========================================================================
+
+
+class IntegracionHU09Test(BaseIntegranteTest):
+    """Del hogar registrado (HU-08) al hogar enumerado (HU-09)."""
+
+    def test_recorrido_completo(self):
+        self.client.force_login(self.marta)
+
+        # 1. Al entrar no hay nadie y el sistema propone empezar por el jefe.
+        respuesta = self.client.get(self.url_lista)
+        self.assertContains(respuesta, "Todavía no hay nadie registrado")
+
+        # 2. La primera persona viene prellenada como jefa de hogar.
+        respuesta = self.client.get(self.url_nuevo)
+        self.assertEqual(
+            respuesta.context["form"].initial["parentesco"], Parentesco.JEFE_HOGAR
+        )
+
+        # 3. Se registra a la jefa de hogar.
+        self.client.post(
+            self.url_nuevo,
+            {
+                "parentesco": Parentesco.JEFE_HOGAR,
+                "nombres": "Rosa Elena",
+                "apellidos": "Millán",
+                "rut": "12345678-5",
+                "sexo": Sexo.FEMENINO,
+                "fecha_nacimiento": self.nacido_hace(42).isoformat(),
+                "nivel_educacional": NivelEducacional.MEDIA_COMPLETA,
+                "situacion_ocupacional": SituacionOcupacional.TRABAJA,
+                "pueblo_originario": PuebloOriginario.MAPUCHE,
+                "observaciones": "",
+                "guardar_y_seguir": "1",
+            },
+        )
+        self.assertTrue(self.hogar.nombre_del_jefe_coincide)
+
+        # 4. Y a una hija de 3 años, a quien no se le pide escolaridad.
+        self.client.post(
+            self.url_nuevo,
+            {
+                "parentesco": Parentesco.HIJO,
+                "nombres": "Emilia Paz",
+                "apellidos": "Millán",
+                "rut": "",
+                "sexo": Sexo.FEMENINO,
+                "fecha_nacimiento": self.nacido_hace(3).isoformat(),
+                "nivel_educacional": "",
+                "situacion_ocupacional": "",
+                "pueblo_originario": PuebloOriginario.NINGUNO,
+                "observaciones": "",
+            },
+        )
+        self.assertEqual(self.hogar.total_integrantes(), 2)
+
+        # 5. Ya no se puede registrar a un segundo jefe de hogar.
+        valores = [
+            v
+            for v, _ in IntegranteForm(grupo_familiar=self.hogar)
+            .fields["parentesco"]
+            .choices
+        ]
+        self.assertNotIn(Parentesco.JEFE_HOGAR, valores)
+
+        # 6. La lista pone a la jefa primero y avisa de lo que falta.
+        respuesta = self.client.get(self.url_lista)
+        self.assertEqual(
+            respuesta.context["integrantes"][0].parentesco, Parentesco.JEFE_HOGAR
+        )
+        self.assertContains(respuesta, "Faltan")
+
+        # 7. Se quita a alguien agregado por error y el recuento lo refleja.
+        sobrante = self.persona(nombres="Agregada", apellidos="Por Error")
+        self.assertEqual(self.hogar.total_integrantes(), 3)
+        self.client.post(self.url_quitar(sobrante))
+        self.assertEqual(self.hogar.total_integrantes(), 2)
+
+        # 8. Y Juan sigue sin poder ver ni tocar nada de este hogar.
+        self.client.force_login(self.juan)
+        self.assertEqual(self.client.get(self.url_lista).status_code, 404)
+
+
