@@ -149,6 +149,14 @@ class DashboardSupervisorView(RolRequeridoMixin, TemplateView):
             .select_related("vivienda", "censista")
             .order_by("cerrada_en")[:5]
         )
+
+        # HU-16: alertas de calidad de datos. Mismo universo que resumen_revision
+        # de arriba —revisables, sin las PENDIENTE— para que los números de un
+        # mismo panel no respondan a criterios distintos sin que nada lo avise.
+        contexto["alertas_calidad"] = Encuesta.resumen_alertas_calidad(revisables)
+        # Se pasa el umbral en vez de escribir «7» en la plantilla: si el modelo
+        # cambia la constante, el texto del panel no se queda desactualizado.
+        contexto["dias_espera_prolongada"] = Encuesta.DIAS_ESPERA_PROLONGADA
         return contexto
 
 

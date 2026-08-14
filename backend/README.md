@@ -26,8 +26,9 @@ Proyecto de título · Ingeniería en Computación e Informática.
 | HU-13 · Revisión de las encuestas recibidas | ✅ Implementada | [`docs/HU-13_revision_de_encuestas.md`](docs/HU-13_revision_de_encuestas.md) |
 | HU-14 · Aprobar o anular encuestas | ✅ Implementada | [`docs/HU-14_aprobar_o_anular.md`](docs/HU-14_aprobar_o_anular.md) |
 | HU-15 · Devolver encuestas con observaciones | ✅ Implementada | [`docs/HU-15_devolver_con_observaciones.md`](docs/HU-15_devolver_con_observaciones.md) |
+| HU-16 · Alertas de registros incompletos | ✅ Implementada | [`docs/HU-16_alertas_de_registros_incompletos.md`](docs/HU-16_alertas_de_registros_incompletos.md) |
 
-**1.319 pruebas automáticas** en total (`python manage.py test` → OK).
+**1.338 pruebas automáticas** en total (`python manage.py test` → OK).
 
 ---
 
@@ -177,14 +178,14 @@ EMAIL_HOST_PASSWORD=contraseña-de-aplicacion-de-16-caracteres
 ## Pruebas
 
 ```bash
-python manage.py test                                 # 1.319 pruebas
+python manage.py test                                 # 1.338 pruebas
 python manage.py test -v 2                            # con el nombre de cada prueba
 python manage.py test usuarios.tests                  # solo HU-01 y HU-02 (80)
 python manage.py test usuarios.tests_gestion          # solo HU-03 (69)
 python manage.py test usuarios.tests_permisos         # solo HU-04 (132)
 python manage.py test operativos.tests                # solo HU-05 (141)
 python manage.py test operativos.tests_asignaciones   # solo HU-06 (124)
-python manage.py test fichas                          # HU-07 a HU-15 (773)
+python manage.py test fichas                          # HU-07 a HU-16 (792)
 ```
 
 Si PostgreSQL no está disponible, se puede correr la batería sobre SQLite en memoria:

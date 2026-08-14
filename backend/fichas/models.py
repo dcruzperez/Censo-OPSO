@@ -74,6 +74,7 @@ entraron colgando de GrupoFamiliar sin tocar una sola columna de las otras tres
 tablas.
 """
 
+from datetime import timedelta
 from decimal import Decimal
 from math import atan2, cos, radians, sin, sqrt
 from pathlib import Path
@@ -1519,6 +1520,79 @@ class Encuesta(models.Model):
             "vivienda_descrita": self.vivienda.datos_completos,
             "tiene_ubicacion": self.vivienda.tiene_ubicacion,
             "fotografias": self.vivienda.fotografias.count(),
+        }
+
+    # ------------------------------------------------------------------
+    # ALERTAS DE CALIDAD DE DATOS (HU-16)
+    #
+    # No inventan ninguna señal nueva: juntan y CUENTAN lo que ya calculaban
+    # resumen_para_revision() y espera_prolongada, ambas de la HU-13, y
+    # visita_pendiente_vencida, de la HU-10. La HU-15 ya había reservado este
+    # número y advertido que faltaba «convertir en reglas con umbrales» lo que
+    # entonces solo se usaba como texto sugerido al devolver una ficha.
+    # ------------------------------------------------------------------
+
+    @property
+    def tiene_datos_incompletos(self):
+        """True si le falta algo que `resumen_para_revision()` sabe contar.
+
+        Es la misma pregunta que arma las frases de `problemas_detectados()`
+        (HU-15), pero como booleano: aquí interesa CONTAR cuántas fichas tienen
+        algún problema, no describirlo. No mira el estado a propósito —una
+        vivienda sin describir es igual de real esté la encuesta en borrador o
+        ya enviada—; quien llama decide a qué estados le importa el dato (el
+        panel del supervisor solo cuenta las COMPLETADA: una en borrador se
+        supone incompleta todavía, no es una alerta).
+        """
+        datos = self.resumen_para_revision()
+
+        return (
+            not datos["tiene_hogar"]
+            or datos["personas"] < datos["declaradas"]
+            or not datos["vivienda_descrita"]
+            or not datos["tiene_ubicacion"]
+        )
+
+    @classmethod
+    def resumen_alertas_calidad(cls, queryset=None):
+        """Cuenta las tres alertas de calidad, listas para un panel.
+
+        `queryset` acota el universo (por ejemplo, a los operativos vigentes);
+        por defecto son todas las encuestas del sistema. Vive en el modelo y no
+        en la vista que lo consume porque no es un cálculo de una sola pantalla:
+        el panel del supervisor es el primer consumidor, pero cualquier otra
+        pantalla que necesite el mismo número —un reporte, la propia bandeja—
+        debe obtenerlo de aquí y no reimplementar el criterio.
+
+        Las dos primeras se resuelven con un COUNT en la base de datos, porque
+        son comparaciones de fecha directas. La tercera («datos incompletos»)
+        no: depende de comparar cuántos integrantes hay contra cuántos declaró
+        la familia, una cuenta sobre una relación que Django no puede
+        traducir a un único COUNT con filtro. Se restringe primero a
+        COMPLETADA —así el universo a recorrer en Python es, en la práctica,
+        la bandeja de revisión y no todo el histórico del operativo— y se
+        cuenta con `tiene_datos_incompletos` fila por fila, igual que ya hace
+        la bandeja para pintar sus badges (HU-13).
+        """
+        base = cls.objects.all() if queryset is None else queryset
+
+        completadas = base.filter(estado=EstadoEncuesta.COMPLETADA).select_related(
+            "vivienda", "grupo_familiar"
+        )
+
+        return {
+            "datos_incompletos": sum(
+                1 for encuesta in completadas if encuesta.tiene_datos_incompletos
+            ),
+            "espera_prolongada": completadas.filter(
+                cerrada_en__lte=timezone.now()
+                - timedelta(days=cls.DIAS_ESPERA_PROLONGADA)
+            ).count(),
+            "visitas_vencidas": base.filter(
+                estado__in=ESTADOS_ABIERTOS,
+                proxima_visita__isnull=False,
+                proxima_visita__lte=timezone.localdate(),
+            ).count(),
         }
 
     # ------------------------------------------------------------------

@@ -7921,3 +7921,194 @@ class IntegracionHU15Test(BaseRevisionTest):
         # 9. Y queda registro de que costó dos intentos.
         self.assertEqual(encuesta.veces_devuelta, 1)
         self.assertTrue(encuesta.fue_devuelta)
+
+
+# ==========================================================================
+# HU-16 — 74. ALERTAS DE CALIDAD DE DATOS
+# ==========================================================================
+
+
+class DatosIncompletosTest(BaseRevisionTest):
+    """`tiene_datos_incompletos` no mira el estado: eso lo decide quien cuenta."""
+
+    def test_todo_completo_no_es_una_alerta(self):
+        encuesta = self.recibida()
+        self.con_hogar(encuesta, declarados=2, personas=2)
+        encuesta.vivienda.latitud = -36.8270
+        encuesta.vivienda.longitud = -73.0498
+        encuesta.vivienda.save()
+
+        self.assertFalse(encuesta.tiene_datos_incompletos)
+
+    def test_sin_hogar_es_una_alerta(self):
+        encuesta = self.recibida()
+
+        self.assertTrue(encuesta.tiene_datos_incompletos)
+
+    def test_menos_personas_que_declaradas_es_una_alerta(self):
+        encuesta = self.recibida()
+        self.con_hogar(encuesta, declarados=4, personas=2)
+
+        self.assertTrue(encuesta.tiene_datos_incompletos)
+
+    def test_vivienda_sin_describir_es_una_alerta(self):
+        vivienda = Vivienda.objects.create(zona=self.zona1, direccion="Sin describir")
+        encuesta = self.recibida(vivienda=vivienda, direccion="Sin describir")
+        self.con_hogar(encuesta, declarados=1, personas=1)
+
+        self.assertTrue(encuesta.tiene_datos_incompletos)
+
+    def test_sin_ubicacion_es_una_alerta(self):
+        encuesta = self.recibida()
+        self.con_hogar(encuesta, declarados=1, personas=1)
+
+        self.assertTrue(encuesta.tiene_datos_incompletos)
+
+    def test_no_depende_del_estado(self):
+        """Una vivienda sin describir es igual de real en cualquier estado.
+
+        Que solo las COMPLETADA cuenten como alerta es una decisión de
+        `resumen_alertas_calidad()`, no de esta propiedad.
+        """
+        encuesta = self.crear(estado=EstadoEncuesta.BORRADOR)
+
+        self.assertTrue(encuesta.tiene_datos_incompletos)
+
+
+class ResumenAlertasCalidadTest(BaseRevisionTest):
+    def test_sin_encuestas_todo_en_cero(self):
+        resumen = Encuesta.resumen_alertas_calidad()
+
+        self.assertEqual(
+            resumen,
+            {"datos_incompletos": 0, "espera_prolongada": 0, "visitas_vencidas": 0},
+        )
+
+    def test_cuenta_datos_incompletos_solo_entre_las_completadas(self):
+        self.recibida(direccion="Enviada incompleta")  # COMPLETADA, sin hogar
+        self.crear(direccion="Borrador incompleto", estado=EstadoEncuesta.BORRADOR)
+
+        resumen = Encuesta.resumen_alertas_calidad()
+
+        self.assertEqual(resumen["datos_incompletos"], 1)
+
+    def test_una_completada_sin_problemas_no_cuenta(self):
+        encuesta = self.recibida()
+        self.con_hogar(encuesta, declarados=1, personas=1)
+        encuesta.vivienda.latitud = -36.8270
+        encuesta.vivienda.longitud = -73.0498
+        encuesta.vivienda.save()
+
+        resumen = Encuesta.resumen_alertas_calidad()
+
+        self.assertEqual(resumen["datos_incompletos"], 0)
+
+    def test_cuenta_espera_prolongada_con_el_mismo_umbral(self):
+        self.recibida(direccion="Recién llegada", hace_dias=2)
+        self.recibida(direccion="Esperando demasiado", hace_dias=10)
+
+        resumen = Encuesta.resumen_alertas_calidad()
+
+        self.assertEqual(resumen["espera_prolongada"], 1)
+
+    def test_una_visita_vencida_cuenta(self):
+        self.crear(
+            direccion="Visita atrasada",
+            estado=EstadoEncuesta.BORRADOR,
+            proxima_visita=timezone.localdate() - timedelta(days=1),
+        )
+
+        resumen = Encuesta.resumen_alertas_calidad()
+
+        self.assertEqual(resumen["visitas_vencidas"], 1)
+
+    def test_una_visita_futura_no_cuenta(self):
+        self.crear(
+            direccion="Visita a tiempo",
+            estado=EstadoEncuesta.BORRADOR,
+            proxima_visita=timezone.localdate() + timedelta(days=3),
+        )
+
+        resumen = Encuesta.resumen_alertas_calidad()
+
+        self.assertEqual(resumen["visitas_vencidas"], 0)
+
+    def test_sin_proxima_visita_no_cuenta(self):
+        self.crear(direccion="Sin fecha", estado=EstadoEncuesta.BORRADOR)
+
+        resumen = Encuesta.resumen_alertas_calidad()
+
+        self.assertEqual(resumen["visitas_vencidas"], 0)
+
+    def test_una_encuesta_cerrada_con_visita_vencida_no_cuenta(self):
+        """`proxima_visita` sobrevive al cierre, pero ya no es trabajo pendiente."""
+        encuesta = self.recibida(direccion="Ya resuelta")
+        self.con_hogar(encuesta, declarados=1, personas=1)
+        encuesta.proxima_visita = timezone.localdate() - timedelta(days=5)
+        encuesta.save(update_fields=["proxima_visita"])
+        encuesta.resolver(
+            EstadoEncuesta.VALIDADA, usuario=self.supervisor, comentario="Correcta."
+        )
+
+        resumen = Encuesta.resumen_alertas_calidad()
+
+        self.assertEqual(resumen["visitas_vencidas"], 0)
+
+    def test_el_queryset_acota_el_universo(self):
+        """Pasar un queryset debe respetarlo y no mirar el resto del sistema."""
+        self.recibida(direccion="Fuera del universo")
+        acotado = Encuesta.objects.none()
+
+        resumen = Encuesta.resumen_alertas_calidad(acotado)
+
+        self.assertEqual(resumen["datos_incompletos"], 0)
+
+
+class AlertasEnElPanelTest(BaseRevisionTest):
+    def setUp(self):
+        super().setUp()
+        self.url_panel = reverse("dashboards:supervisor")
+
+    def test_el_panel_muestra_las_fichas_incompletas(self):
+        self.recibida(direccion="Incompleta")
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_panel)
+
+        self.assertEqual(respuesta.context["alertas_calidad"]["datos_incompletos"], 1)
+
+    def test_el_panel_muestra_las_visitas_vencidas(self):
+        self.crear(
+            direccion="Atrasada",
+            estado=EstadoEncuesta.BORRADOR,
+            proxima_visita=timezone.localdate() - timedelta(days=2),
+        )
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_panel)
+
+        self.assertEqual(respuesta.context["alertas_calidad"]["visitas_vencidas"], 1)
+        self.assertContains(respuesta, "Visita vencida")
+
+    def test_sin_alertas_el_panel_lo_dice(self):
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_panel)
+
+        self.assertContains(respuesta, "Sin alertas")
+
+    def test_el_umbral_de_espera_viene_del_modelo_y_no_esta_fijo_en_la_plantilla(self):
+        # El texto del umbral solo se pinta cuando hay alguna alerta que mostrar;
+        # sin esto el panel toma la rama «Sin alertas» y la prueba no vería nada.
+        self.recibida()
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_panel)
+
+        self.assertEqual(
+            respuesta.context["dias_espera_prolongada"], Encuesta.DIAS_ESPERA_PROLONGADA
+        )
+        self.assertContains(
+            respuesta,
+            f"hace más de {Encuesta.DIAS_ESPERA_PROLONGADA} días",
+        )
