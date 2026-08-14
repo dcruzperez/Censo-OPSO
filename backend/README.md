@@ -27,8 +27,10 @@ Proyecto de título · Ingeniería en Computación e Informática.
 | HU-14 · Aprobar o anular encuestas | ✅ Implementada | [`docs/HU-14_aprobar_o_anular.md`](docs/HU-14_aprobar_o_anular.md) |
 | HU-15 · Devolver encuestas con observaciones | ✅ Implementada | [`docs/HU-15_devolver_con_observaciones.md`](docs/HU-15_devolver_con_observaciones.md) |
 | HU-16 · Alertas de registros incompletos | ✅ Implementada | [`docs/HU-16_alertas_de_registros_incompletos.md`](docs/HU-16_alertas_de_registros_incompletos.md) |
+| HU-17 · Editar registros permitidos (corregir errores detectados) | ✅ Resuelta sin código nuevo — reutiliza el flujo de devolución de la HU-15 | [`docs/HU-17_editar_registros_permitidos.md`](docs/HU-17_editar_registros_permitidos.md) |
 
-**1.338 pruebas automáticas** en total (`python manage.py test` → OK).
+**1.338 pruebas automáticas** en total (`python manage.py test` → OK). La HU-17 no
+agregó pruebas propias: no tiene comportamiento nuevo que probar.
 
 ---
 
