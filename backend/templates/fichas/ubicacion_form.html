@@ -1,12 +1,15 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% comment %} ==========================================================================
    CAPTURAR LA UBICACIÓN — /encuestas/viviendas/<pk>/ubicacion/
 
-   Es la ÚNICA pantalla del proyecto con JavaScript propio, y conviene decir por qué
-   y con qué límites.
+   Hasta la HU-21 era la ÚNICA pantalla del proyecto con JavaScript propio, y
+   conviene seguir diciendo por qué y con qué límites — ahora que ya no es la
+   única, para no dejar dicho algo que dejó de ser cierto.
 
-   POR QUÉ HACE FALTA JAVASCRIPT AQUÍ Y EN NINGÚN OTRO SITIO
+   POR QUÉ HACE FALTA JAVASCRIPT AQUÍ Y EN NINGÚN OTRO SITIO (salvo el
+   autoguardado de la HU-21, que es harina de otro costal, ver abajo)
    La historia pide capturar la ubicación AUTOMÁTICAMENTE. La posición del aparato
    solo la puede pedir el navegador, con navigator.geolocation, y eso es JavaScript
    por definición: no existe forma de obtenerla desde el servidor.
@@ -25,9 +28,16 @@
    un tercero cada vez que alguien abre la ficha. Si el mapa hiciera falta, la forma
    correcta sería un servidor de teselas propio.
 
-   EL SCRIPT VA EN LA PÁGINA Y NO EN UN ARCHIVO APARTE porque son treinta líneas que
-   solo sirven aquí, y un archivo en static/ obligaría a recordar
-   `collectstatic` para una pantalla.
+   EL SCRIPT DE GEOLOCALIZACIÓN VA EN LA PÁGINA Y NO EN UN ARCHIVO APARTE porque
+   son treinta líneas que solo sirven aquí, y un archivo en static/ obligaría a
+   recordar `collectstatic` para una pantalla que es la única que lo usa.
+
+   EL AUTOGUARDADO (HU-21), EN CAMBIO, SÍ VA EN static/js/autoguardado.js
+   Es la razón contraria: lo usan CINCO pantallas de la encuesta (vivienda, hogar,
+   integrantes, ubicación —esta— y el borrador), así que copiarlo aquí adentro
+   habría significado mantener el mismo código en cinco sitios. Las dos decisiones
+   siguen el mismo criterio —"¿esto lo usa una pantalla o varias?"—, solo que
+   llegan a una respuesta distinta cada vez.
    ========================================================================= {% endcomment %}
 
 {% block titulo %}Ubicación de {{ vivienda.direccion }}{% endblock %}
@@ -163,6 +173,13 @@
 {% endblock %}
 
 {% block js_extra %}
+{% comment %} HU-21: autoguardado local mientras se escribe, por si se corta la
+   conexión antes de enviar. También protege las coordenadas que ponga el
+   script de geolocalización de abajo (ver static/js/autoguardado.js: el
+   muestreo periódico existe justamente para eso). {% endcomment %}
+<script src="{% static 'js/autoguardado.js' %}"></script>
+<script>OPSOAutoguardado.iniciar("ubicacion-{{ vivienda.pk }}");</script>
+
 <script>
 (function () {
   "use strict";

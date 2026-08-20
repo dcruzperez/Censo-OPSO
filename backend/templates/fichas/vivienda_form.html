@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% comment %} ==========================================================================
    REGISTRAR O CORREGIR UNA VIVIENDA — /encuestas/viviendas/nueva/ y .../editar/
@@ -147,4 +148,13 @@
   </div>
 </form>
 
+{% endblock %}
+
+{% comment %} HU-21: autoguardado local mientras se escribe, por si se corta la
+   conexión antes de enviar. Ver static/js/autoguardado.js. {% endcomment %}
+{% block js_extra %}
+<script src="{% static 'js/autoguardado.js' %}"></script>
+<script>
+  OPSOAutoguardado.iniciar("vivienda-{% if es_alta %}nueva{% else %}{{ vivienda.pk }}{% endif %}");
+</script>
 {% endblock %}

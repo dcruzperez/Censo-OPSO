@@ -31,9 +31,12 @@ Proyecto de título · Ingeniería en Computación e Informática.
 | HU-18 · Filtrar por fecha, sector, estado y censista | ✅ Implementada | [`docs/HU-18_filtrar_por_fecha_sector_estado_censista.md`](docs/HU-18_filtrar_por_fecha_sector_estado_censista.md) |
 | HU-19 · Generar reportes en PDF y Excel | ✅ Implementada | [`docs/HU-19_reportes_pdf_excel.md`](docs/HU-19_reportes_pdf_excel.md) |
 | HU-20 · Exportar la base consolidada en Excel y CSV | ✅ Implementada | [`docs/HU-20_base_consolidada.md`](docs/HU-20_base_consolidada.md) |
+| HU-21 · Almacenar temporalmente sin conexión | ✅ Implementada — verificada manualmente, sin pruebas automáticas (ver el documento) | [`docs/HU-21_autoguardado_sin_conexion.md`](docs/HU-21_autoguardado_sin_conexion.md) |
 
 **1.389 pruebas automáticas** en total (`python manage.py test` → OK). La HU-17 no
-agregó pruebas propias: no tiene comportamiento nuevo que probar.
+agregó pruebas propias: no tiene comportamiento nuevo que probar. La HU-21 es la
+primera funcionalidad del proyecto sin pruebas automáticas —es JavaScript de cliente,
+y no hay Selenium ni Playwright configurado—; se verificó a mano (ver el documento).
 
 ---
 

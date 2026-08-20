@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% comment %} ==========================================================================
    AGREGAR O EDITAR UNA PERSONA — /encuestas/<pk>/integrantes/nuevo/ y .../editar/
@@ -141,4 +142,15 @@
   </div>
 </form>
 
+{% endblock %}
+
+{% comment %} HU-21: autoguardado local mientras se escribe, por si se corta la
+   conexión antes de enviar. Ver static/js/autoguardado.js. {% endcomment %}
+{% block js_extra %}
+<script src="{% static 'js/autoguardado.js' %}"></script>
+<script>
+  OPSOAutoguardado.iniciar(
+    "integrante-{% if es_alta %}nuevo-{{ encuesta.pk }}{% else %}{{ integrante.pk }}{% endif %}"
+  );
+</script>
 {% endblock %}
