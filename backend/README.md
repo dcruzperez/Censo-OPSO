@@ -33,12 +33,13 @@ Proyecto de título · Ingeniería en Computación e Informática.
 | HU-20 · Exportar la base consolidada en Excel y CSV | ✅ Implementada | [`docs/HU-20_base_consolidada.md`](docs/HU-20_base_consolidada.md) |
 | HU-21 · Almacenar temporalmente sin conexión | ✅ Implementada — verificada manualmente, sin pruebas automáticas (ver el documento) | [`docs/HU-21_autoguardado_sin_conexion.md`](docs/HU-21_autoguardado_sin_conexion.md) |
 | HU-22 · Sincronizar al recuperar conexión | ✅ Resuelta sin código propio — es la consecuencia directa del diseño de la HU-21 | [`docs/HU-22_sincronizar_al_recuperar_conexion.md`](docs/HU-22_sincronizar_al_recuperar_conexion.md) |
+| HU-23 · Visualizar indicadores en tiempo real | ✅ Implementada — verificada en un navegador real, sin pruebas automáticas (ver el documento) | [`docs/HU-23_indicadores_en_tiempo_real.md`](docs/HU-23_indicadores_en_tiempo_real.md) |
 
 **1.389 pruebas automáticas** en total (`python manage.py test` → OK). La HU-17 y la
 HU-22 no agregaron pruebas propias: no tienen comportamiento propio que probar. La
-HU-21 es la primera funcionalidad del proyecto sin pruebas automáticas —es JavaScript
-de cliente, y no hay Selenium ni Playwright configurado—; se verificó a mano (ver el
-documento).
+HU-21 y la HU-23 son JavaScript de cliente y no tienen pruebas automáticas —no hay
+Selenium ni Playwright configurado—; las dos se verificaron en un navegador real (ver
+cada documento).
 
 ---
 

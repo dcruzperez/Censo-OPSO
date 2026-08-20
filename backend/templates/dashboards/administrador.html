@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load permisos %}
+{% load static permisos %}
 
 {% block titulo %}Panel del Administrador{% endblock %}
 
@@ -9,7 +9,13 @@
     <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">Panel del Administrador</h1>
     <p class="text-secondary mb-0">Gestión de usuarios, roles y auditoría del sistema.</p>
   </div>
-  <span class="badge text-bg-light border">Acceso total</span>
+  <div class="d-flex align-items-center gap-2">
+    {% comment %} HU-23: indicadores en tiempo real. Ver
+       static/js/actualizacion_automatica.js. {% endcomment %}
+    <span id="opso-actualizacion-indicador" class="badge text-bg-light border small fw-normal"
+          role="status" aria-live="polite"></span>
+    <span class="badge text-bg-light border">Acceso total</span>
+  </div>
 </div>
 
 <div class="row g-3 mb-4">
@@ -228,4 +234,9 @@
     </div>
   </div>
 </div>
+{% endblock %}
+
+{% block js_extra %}
+<script src="{% static 'js/actualizacion_automatica.js' %}"></script>
+<script>OPSOActualizacionAutomatica.iniciar();</script>
 {% endblock %}

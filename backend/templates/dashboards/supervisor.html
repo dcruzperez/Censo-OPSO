@@ -1,13 +1,22 @@
 {% extends "base.html" %}
+{% load static %}
 
 {% block titulo %}Panel del Supervisor{% endblock %}
 
 {% block contenido %}
-<div class="mb-4">
-  <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">Panel del Supervisor</h1>
-  <p class="text-secondary mb-0">
-    Seguimiento del trabajo en terreno y validación de las fichas levantadas.
-  </p>
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">Panel del Supervisor</h1>
+    <p class="text-secondary mb-0">
+      Seguimiento del trabajo en terreno y validación de las fichas levantadas.
+    </p>
+  </div>
+  {% comment %} HU-23: indicadores en tiempo real. El texto lo escribe
+     actualizacion_automatica.js; sin JavaScript queda vacío y el panel
+     sigue mostrando los datos de la carga actual, solo que sin refrescarse
+     solo. {% endcomment %}
+  <span id="opso-actualizacion-indicador" class="badge text-bg-light border small fw-normal"
+        role="status" aria-live="polite"></span>
 </div>
 
 <div class="row g-3 mb-4">
@@ -196,4 +205,9 @@
     <li>Consultar reportes de su equipo (sin acceso a la configuración del sistema).</li>
   </ul>
 </div>
+{% endblock %}
+
+{% block js_extra %}
+<script src="{% static 'js/actualizacion_automatica.js' %}"></script>
+<script>OPSOActualizacionAutomatica.iniciar();</script>
 {% endblock %}
