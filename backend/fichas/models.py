@@ -82,6 +82,7 @@ from uuid import uuid4
 
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.db.models import Count, Q
 from django.urls import reverse
 from django.utils import timezone
 
@@ -782,6 +783,16 @@ ESTADOS_SIN_LEVANTAR = (
     EstadoEncuesta.NO_UBICADA,
     EstadoEncuesta.RECHAZADA,
 )
+
+
+def _porcentaje(parte, total):
+    """`parte` como porcentaje de `total`, a un decimal, o 0 si `total` es 0.
+
+    Función de módulo y no un método: la usa `resumen_para_reporte()` (HU-19)
+    para dos bloques distintos y no hay ningún estado que le corresponda a un
+    modelo.
+    """
+    return round(parte / total * 100, 1) if total else 0
 
 
 class Encuesta(models.Model):
@@ -1593,6 +1604,77 @@ class Encuesta(models.Model):
                 proxima_visita__isnull=False,
                 proxima_visita__lte=timezone.localdate(),
             ).count(),
+        }
+
+    # ------------------------------------------------------------------
+    # REPORTE DE RESULTADOS (HU-19)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def resumen_para_reporte(cls, queryset):
+        """Los datos de un reporte de resultados: general, por estado, sector y censista.
+
+        Recibe el queryset YA filtrado —el mismo que arma la bandeja de revisión
+        (HU-13, HU-18)— porque el reporte responde «¿cómo va lo que estoy mirando
+        ahora mismo?», no «¿cómo va todo el sistema?»: exportar tiene que coincidir
+        exactamente con lo que la pantalla mostraba al pedirlo.
+
+        Las cuentas son `.values().annotate(Count(...))`: a diferencia de
+        `resumen_alertas_calidad()`, ninguna necesita mirar una relación
+        uno-a-muchos ni releer cada fila en Python, así que no hay razón para no
+        dejar que PostgreSQL agrupe. Las alertas de calidad SÍ se reutilizan tal
+        cual (HU-16): el reporte no inventa un segundo criterio de "ficha con
+        problemas" distinto del que ya usa el panel del supervisor.
+        """
+        total = queryset.count()
+
+        return {
+            "total": total,
+            "generado_en": timezone.localtime(timezone.now()),
+            "alertas": cls.resumen_alertas_calidad(queryset),
+            "por_estado": [
+                {
+                    "etiqueta": EstadoEncuesta(fila["estado"]).label,
+                    "total": fila["total"],
+                    "porcentaje": _porcentaje(fila["total"], total),
+                }
+                for fila in queryset.values("estado")
+                .annotate(total=Count("id"))
+                .order_by("estado")
+            ],
+            "por_sector": [
+                {
+                    "sector": fila["vivienda__zona__sector__nombre"],
+                    "comuna": fila["vivienda__zona__sector__comuna__nombre"],
+                    "total": fila["total"],
+                    "porcentaje": _porcentaje(fila["total"], total),
+                }
+                for fila in queryset.values(
+                    "vivienda__zona__sector__nombre",
+                    "vivienda__zona__sector__comuna__nombre",
+                )
+                .annotate(total=Count("id"))
+                .order_by("-total", "vivienda__zona__sector__nombre")
+            ],
+            "por_censista": [
+                {
+                    "censista": (
+                        f"{fila['censista__first_name']} {fila['censista__last_name']}"
+                    ).strip(),
+                    "total": fila["total"],
+                    "validadas": fila["validadas"],
+                    "observadas": fila["observadas"],
+                }
+                for fila in queryset.values(
+                    "censista__first_name", "censista__last_name"
+                )
+                .annotate(
+                    total=Count("id"),
+                    validadas=Count("id", filter=Q(estado=EstadoEncuesta.VALIDADA)),
+                    observadas=Count("id", filter=Q(estado=EstadoEncuesta.OBSERVADA)),
+                )
+                .order_by("-total", "censista__first_name")
+            ],
         }
 
     # ------------------------------------------------------------------

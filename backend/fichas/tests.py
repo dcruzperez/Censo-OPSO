@@ -22,6 +22,7 @@ from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 
+from openpyxl import load_workbook
 from PIL import Image
 
 from django.conf import settings
@@ -85,6 +86,7 @@ from .models import (
     TipoVivienda,
     Vivienda,
 )
+from .reportes import construir_reporte_excel, construir_reporte_pdf
 
 CLAVE_VALIDA = "Censo2026#Opso"
 
@@ -8207,3 +8209,306 @@ class FiltroPorFechaTest(BaseRevisionTest):
         )
 
         self.assertNotIn("A medias", direcciones)
+
+
+# ==========================================================================
+# HU-19 — 76. REPORTES EN PDF Y EXCEL
+# ==========================================================================
+
+
+class ResumenParaReporteTest(BaseRevisionTest):
+    def test_total_cuenta_el_queryset_recibido(self):
+        self.recibida(direccion="A")
+        self.crear(direccion="B", estado=EstadoEncuesta.VALIDADA)
+
+        resumen = Encuesta.resumen_para_reporte(Encuesta.objects.all())
+
+        self.assertEqual(resumen["total"], 2)
+
+    def test_incluye_la_fecha_de_generacion(self):
+        resumen = Encuesta.resumen_para_reporte(Encuesta.objects.none())
+
+        self.assertAlmostEqual(
+            resumen["generado_en"], timezone.localtime(timezone.now()),
+            delta=timedelta(seconds=5),
+        )
+
+    def test_reutiliza_las_alertas_de_calidad_de_la_hu16(self):
+        """No inventa un segundo criterio de "ficha con problemas"."""
+        encuesta = self.recibida()
+
+        resumen = Encuesta.resumen_para_reporte(Encuesta.objects.all())
+
+        self.assertEqual(
+            resumen["alertas"],
+            Encuesta.resumen_alertas_calidad(Encuesta.objects.all()),
+        )
+        self.assertTrue(encuesta.tiene_datos_incompletos)
+        self.assertEqual(resumen["alertas"]["datos_incompletos"], 1)
+
+    def test_por_estado_usa_la_etiqueta_legible_y_calcula_el_porcentaje(self):
+        self.recibida(direccion="A")
+        self.recibida(direccion="B")
+        self.crear(direccion="C", estado=EstadoEncuesta.VALIDADA)
+
+        resumen = Encuesta.resumen_para_reporte(Encuesta.objects.all())
+
+        self.assertEqual(
+            resumen["por_estado"],
+            [
+                {"etiqueta": "Completada", "total": 2, "porcentaje": 66.7},
+                {"etiqueta": "Validada", "total": 1, "porcentaje": 33.3},
+            ],
+        )
+
+    def test_por_sector_agrupa_por_nombre_e_incluye_la_comuna(self):
+        self.recibida()  # cae en self.boldos («Los Boldos», comuna Concepción)
+
+        resumen = Encuesta.resumen_para_reporte(Encuesta.objects.all())
+
+        self.assertEqual(
+            resumen["por_sector"],
+            [
+                {
+                    "sector": "Los Boldos",
+                    "comuna": "Concepción",
+                    "total": 1,
+                    "porcentaje": 100.0,
+                }
+            ],
+        )
+
+    def test_por_censista_junta_nombre_y_apellido_y_desglosa_la_resolucion(self):
+        self.recibida(censista=self.juan)
+        self.crear(
+            direccion="Devuelta", censista=self.juan, estado=EstadoEncuesta.OBSERVADA
+        )
+        self.crear(
+            direccion="Aprobada", censista=self.juan, estado=EstadoEncuesta.VALIDADA
+        )
+
+        resumen = Encuesta.resumen_para_reporte(Encuesta.objects.all())
+
+        self.assertEqual(
+            resumen["por_censista"],
+            [{"censista": "Juan Vera", "total": 3, "validadas": 1, "observadas": 1}],
+        )
+
+    def test_respeta_el_queryset_que_recibe(self):
+        """No mira `Encuesta.objects.all()` por su cuenta: cuenta lo que le pasan."""
+        self.recibida(direccion="Dentro", censista=self.marta)
+        self.recibida(direccion="Fuera", censista=self.juan)
+
+        resumen = Encuesta.resumen_para_reporte(
+            Encuesta.objects.filter(censista=self.marta)
+        )
+
+        self.assertEqual(resumen["total"], 1)
+
+    def test_un_queryset_vacio_no_rompe_nada(self):
+        resumen = Encuesta.resumen_para_reporte(Encuesta.objects.none())
+
+        self.assertEqual(resumen["total"], 0)
+        self.assertEqual(resumen["por_estado"], [])
+        self.assertEqual(resumen["por_sector"], [])
+        self.assertEqual(resumen["por_censista"], [])
+        self.assertEqual(
+            resumen["alertas"],
+            {"datos_incompletos": 0, "espera_prolongada": 0, "visitas_vencidas": 0},
+        )
+
+
+class ConstruirReporteExcelTest(BaseRevisionTest):
+    def leer(self, resumen):
+        libro = construir_reporte_excel(resumen)
+        buffer = BytesIO()
+        libro.save(buffer)
+        buffer.seek(0)
+        return load_workbook(buffer)
+
+    def test_incluye_el_resumen_general(self):
+        resumen = Encuesta.resumen_para_reporte(Encuesta.objects.none())
+        resumen["total"] = 5
+
+        celdas = [fila[0].value for fila in self.leer(resumen).active.iter_rows()]
+
+        self.assertIn("Resumen general", celdas)
+        self.assertIn("Total de encuestas", celdas)
+        self.assertIn("Visitas vencidas", celdas)
+
+    def test_incluye_los_tres_bloques_con_sus_columnas_y_datos(self):
+        self.recibida(censista=self.marta)
+
+        resumen = Encuesta.resumen_para_reporte(Encuesta.objects.all())
+        filas = list(self.leer(resumen).active.iter_rows(values_only=True))
+        celdas = [fila[0] for fila in filas]
+
+        self.assertIn("Por estado", celdas)
+        self.assertIn("Por sector", celdas)
+        self.assertIn("Por censista", celdas)
+        self.assertIn("Marta Soto", celdas)
+        # Las columnas nuevas de esta ronda: comuna en «por sector», y el
+        # desglose de validadas/observadas en «por censista».
+        self.assertIn(("Sector", "Comuna", "Total", "%"), filas)
+        self.assertIn(("Censista", "Total", "Validadas", "Observadas"), filas)
+
+    def test_un_bloque_sin_filas_lo_dice_en_vez_de_dejar_solo_el_encabezado(self):
+        resumen = Encuesta.resumen_para_reporte(Encuesta.objects.none())
+
+        celdas = [fila[0].value for fila in self.leer(resumen).active.iter_rows()]
+
+        self.assertIn("Sin datos para este filtro.", celdas)
+
+
+class ConstruirReportePdfTest(BaseRevisionTest):
+    def test_produce_un_pdf_valido(self):
+        resumen = Encuesta.resumen_para_reporte(Encuesta.objects.none())
+        buffer = BytesIO()
+
+        construir_reporte_pdf(buffer, resumen)
+
+        self.assertTrue(buffer.getvalue().startswith(b"%PDF"))
+
+    def test_un_bloque_vacio_no_lanza_una_excepcion(self):
+        """Un filtro sin resultados en algún bloque no debe romper el armado."""
+        resumen = Encuesta.resumen_para_reporte(Encuesta.objects.none())
+        buffer = BytesIO()
+
+        construir_reporte_pdf(buffer, resumen)  # no debe lanzar
+
+        self.assertTrue(buffer.getvalue().startswith(b"%PDF"))
+
+
+class ExportarReportesTest(BaseRevisionTest):
+    def setUp(self):
+        super().setUp()
+        self.url_excel = reverse("fichas:reporte_excel")
+        self.url_pdf = reverse("fichas:reporte_pdf")
+
+    def test_el_supervisor_descarga_el_excel(self):
+        self.recibida()
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_excel)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(
+            respuesta["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn("attachment", respuesta["Content-Disposition"])
+
+    def test_el_supervisor_descarga_el_pdf(self):
+        self.recibida()
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_pdf)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta["Content-Type"], "application/pdf")
+        self.assertIn("attachment", respuesta["Content-Disposition"])
+
+    def test_el_administrador_tambien_descarga(self):
+        self.client.force_login(self.admin)
+
+        self.assertEqual(self.client.get(self.url_excel).status_code, 200)
+        self.assertEqual(self.client.get(self.url_pdf).status_code, 200)
+
+    def test_el_censista_no_puede_exportar(self):
+        self.client.force_login(self.marta)
+
+        self.assertEqual(self.client.get(self.url_excel).status_code, 302)
+        self.assertEqual(self.client.get(self.url_pdf).status_code, 302)
+
+    def test_un_visitante_anonimo_va_al_login(self):
+        respuesta = self.client.get(self.url_excel)
+
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertIn(reverse("usuarios:login"), respuesta.url)
+
+    def test_sin_ver_todas_el_supervisor_igual_puede_exportar(self):
+        """`reportes.exportar` es el permiso correcto, no `fichas.ver_todas`."""
+        self.rol_supervisor.permisos.remove(
+            Permiso.objects.get(codigo="fichas.ver_todas")
+        )
+        self.client.force_login(self.supervisor)
+
+        self.assertEqual(self.client.get(self.url_excel).status_code, 200)
+
+    def test_sin_reportes_exportar_el_supervisor_no_puede(self):
+        self.rol_supervisor.permisos.remove(
+            Permiso.objects.get(codigo="reportes.exportar")
+        )
+        self.client.force_login(self.supervisor)
+
+        self.assertEqual(self.client.get(self.url_excel).status_code, 302)
+
+    def test_respeta_los_filtros_de_la_bandeja(self):
+        """Lo exportado coincide con lo que la bandeja mostraría con el mismo filtro."""
+        self.recibida(direccion="De Marta", censista=self.marta)
+        self.recibida(direccion="De Juan", censista=self.juan)
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(
+            self.url_excel, {"estado": "TODAS", "censista": self.juan.pk}
+        )
+
+        celdas = [
+            fila[0].value
+            for fila in load_workbook(BytesIO(respuesta.content)).active.iter_rows()
+        ]
+
+        self.assertIn("Juan Vera", celdas)
+        self.assertNotIn("Marta Soto", celdas)
+
+    def test_el_pdf_tambien_respeta_el_filtro_por_defecto(self):
+        """No repite lo anterior: solo confirma que el PDF sigue el mismo camino."""
+        self.recibida(direccion="Enviada")
+        self.crear(direccion="Sin enviar")  # PENDIENTE: no debería contarse
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_pdf)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertTrue(respuesta.content.startswith(b"%PDF"))
+
+    def test_un_rango_de_fecha_invertido_no_rompe_la_exportacion(self):
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(
+            self.url_excel,
+            {
+                "fecha_desde": timezone.localdate(),
+                "fecha_hasta": timezone.localdate() - timedelta(days=5),
+            },
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+
+
+class BotonesDeExportarTest(BaseRevisionTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.supervisor)
+
+    def test_el_supervisor_ve_los_botones(self):
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertContains(respuesta, "Exportar Excel")
+        self.assertContains(respuesta, "Exportar PDF")
+
+    def test_sin_reportes_exportar_no_se_ven_los_botones(self):
+        self.rol_supervisor.permisos.remove(
+            Permiso.objects.get(codigo="reportes.exportar")
+        )
+
+        respuesta = self.client.get(self.url_bandeja)
+
+        self.assertNotContains(respuesta, "Exportar Excel")
+
+    def test_los_enlaces_llevan_los_filtros_activos(self):
+        """Exportar es «descargar lo que estoy viendo», no una pantalla aparte."""
+        respuesta = self.client.get(self.url_bandeja, {"censista": self.juan.pk})
+
+        self.assertContains(respuesta, f"reporte.xlsx?censista={self.juan.pk}")
+        self.assertContains(respuesta, f"reporte.pdf?censista={self.juan.pk}")

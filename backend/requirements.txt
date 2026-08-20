@@ -22,3 +22,10 @@ argon2-cffi==25.1.0
 # eso lo hace Pillow. Mirar la extensión no valida nada, porque cualquiera puede
 # renombrar un archivo.
 Pillow==12.3.0
+
+# Reportes exportables (HU-19): Excel y PDF. Las dos son puro Python, sin
+# dependencias nativas de sistema (WeasyPrint, la alternativa HTML→PDF, exige
+# GTK/Pango instalados aparte del entorno virtual) — se instalan igual en el
+# equipo de desarrollo, en el del profesor corrector y en producción.
+openpyxl==3.1.5
+reportlab==5.0.1

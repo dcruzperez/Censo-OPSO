@@ -48,6 +48,19 @@ urlpatterns = [
         views.BandejaRevisionView.as_view(),
         name="bandeja_revision",
     ),
+    # HU-19: exportar lo que la bandeja está mostrando. Rutas fijas dentro de
+    # revision/, por lo mismo que revision/ está antes de <int:pk>/: son
+    # excepciones y van antes de lo genérico.
+    path(
+        "revision/reporte.xlsx",
+        views.ExportarReporteExcelView.as_view(),
+        name="reporte_excel",
+    ),
+    path(
+        "revision/reporte.pdf",
+        views.ExportarReportePDFView.as_view(),
+        name="reporte_pdf",
+    ),
     # ------------------------------------------------------------------
     # VIVIENDAS (HU-08) — rutas fijas antes de las que llevan <int:pk>
     #

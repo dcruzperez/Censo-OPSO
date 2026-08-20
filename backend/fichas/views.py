@@ -74,7 +74,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.db import transaction
 from django.db.models import Case, Count, F, IntegerField, Q, Value, When
-from django.http import FileResponse, Http404
+from django.http import FileResponse, Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.utils.functional import cached_property
@@ -110,6 +110,7 @@ from .models import (
     Parentesco,
     Vivienda,
 )
+from .reportes import construir_reporte_excel, construir_reporte_pdf
 
 # --------------------------------------------------------------------------
 # EL ORDEN DE LA JORNADA
@@ -1870,13 +1871,18 @@ class RevisionMixin(PermisoRequeridoMixin):
         "No tienes permiso para revisar las encuestas de otras personas."
     )
 
-    def encuestas_revisables(self):
+    @staticmethod
+    def encuestas_revisables():
         """Todas las encuestas ya levantadas, con lo necesario para juzgarlas.
 
         Se excluyen las PENDIENTES: una puerta que nadie ha tocado no es trabajo
         recibido y llenaría la bandeja de ruido. Las cerradas sin levantar
         —no ubicada, rechazada— SÍ entran: el supervisor tiene que poder leer el
         motivo y decidir si manda a otra persona.
+
+        Es estático (no usa `self`) a propósito: así lo reutilizan también las
+        exportaciones de reportes (HU-19), que exigen `reportes.exportar` y no
+        `fichas.ver_todas`, sin tener que heredar de este mixin.
         """
         return (
             Encuesta.objects.exclude(estado=EstadoEncuesta.PENDIENTE)
@@ -1945,7 +1951,15 @@ class BandejaRevisionView(RevisionMixin, ListView):
         # debería existir— no encabece la cola.
         return consulta.order_by(F("cerrada_en").asc(nulls_last=True), "id")
 
-    def aplicar_filtros(self, consulta, datos):
+    @staticmethod
+    def aplicar_filtros(consulta, datos):
+        """Aplica sobre `consulta` los filtros ya limpios de un `FiltroRevisionForm`.
+
+        Estático porque no depende de la petición: es estático también para que
+        las exportaciones de reportes (HU-19) apliquen exactamente el mismo
+        criterio de filtrado que esta pantalla sin heredar de `BandejaRevisionView`
+        ni duplicar esta lógica.
+        """
         estado = datos.get("estado")
 
         if estado == FiltroRevisionForm.GRUPO_RECIBIDAS:
@@ -2026,6 +2040,85 @@ class BandejaRevisionView(RevisionMixin, ListView):
             .order_by("cerrada_en")
             .first()
         )
+
+
+def _encuestas_filtradas_para_reporte(get_params):
+    """Las mismas encuestas que vería la bandeja con estos parámetros de URL.
+
+    Comparte el criterio exacto de `BandejaRevisionView.get_queryset()`
+    (`encuestas_revisables()` + `aplicar_filtros()`, ambos `@staticmethod` por
+    esto mismo) porque el reporte responde «¿cómo va lo que estoy mirando
+    ahora mismo?»: si exportar aplicara el filtro de otro modo, un supervisor
+    podría descargar un PDF que no coincide con la pantalla desde la que lo pidió.
+    """
+    consulta = RevisionMixin.encuestas_revisables()
+    filtro = FiltroRevisionForm(get_params or None)
+
+    if filtro.is_valid():
+        consulta = BandejaRevisionView.aplicar_filtros(consulta, filtro.cleaned_data)
+    else:
+        consulta = consulta.filter(estado=EstadoEncuesta.COMPLETADA)
+
+    return consulta
+
+
+class ReporteMixin(PermisoRequeridoMixin):
+    """Puerta de las exportaciones de reportes (HU-19).
+
+    `reportes.exportar`, no `fichas.ver_todas`. El reporte solo lleva conteos
+    —ningún dato de una familia— así que puede vivir separado del permiso que
+    abre la ficha de otra persona: es la misma separación de responsabilidades
+    que `RevisionMixin` ya hizo entre `ver_todas` y `validar` en la HU-13.
+    """
+
+    permisos_requeridos = ("reportes.exportar",)
+    mensaje_sin_permiso = "No tienes permiso para exportar reportes."
+
+
+class ExportarReporteExcelView(ReporteMixin, View):
+    """El resumen de resultados filtrado, como archivo .xlsx.
+
+    URL: /encuestas/revision/reporte.xlsx
+
+    Acepta los mismos parámetros de query que la bandeja de revisión
+    (`?estado=&sector=&censista=&fecha_desde=&fecha_hasta=`, HU-13 y HU-18):
+    exportar es "descargar lo que estoy viendo", no una pantalla aparte.
+    """
+
+    def get(self, request, *args, **kwargs):
+        consulta = _encuestas_filtradas_para_reporte(request.GET)
+        resumen = Encuesta.resumen_para_reporte(consulta)
+        libro = construir_reporte_excel(resumen)
+
+        respuesta = HttpResponse(
+            content_type=(
+                "application/vnd.openxmlformats-officedocument"
+                ".spreadsheetml.sheet"
+            )
+        )
+        nombre = f"reporte_operativo_{timezone.localdate().isoformat()}.xlsx"
+        respuesta["Content-Disposition"] = f'attachment; filename="{nombre}"'
+        libro.save(respuesta)
+        return respuesta
+
+
+class ExportarReportePDFView(ReporteMixin, View):
+    """El resumen de resultados filtrado, como archivo .pdf.
+
+    URL: /encuestas/revision/reporte.pdf
+
+    Mismos parámetros de query que `ExportarReporteExcelView`, por la misma razón.
+    """
+
+    def get(self, request, *args, **kwargs):
+        consulta = _encuestas_filtradas_para_reporte(request.GET)
+        resumen = Encuesta.resumen_para_reporte(consulta)
+
+        respuesta = HttpResponse(content_type="application/pdf")
+        nombre = f"reporte_operativo_{timezone.localdate().isoformat()}.pdf"
+        respuesta["Content-Disposition"] = f'attachment; filename="{nombre}"'
+        construir_reporte_pdf(respuesta, resumen)
+        return respuesta
 
 
 class RevisarEncuestaView(RevisionMixin, DetailView):

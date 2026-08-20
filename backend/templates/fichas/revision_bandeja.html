@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load permisos %}
 
 {% comment %} ==========================================================================
    BANDEJA DE REVISIÓN — /encuestas/revision/
@@ -30,6 +31,16 @@
       Las fichas que los encuestadores enviaron, en orden de llegada.
     </p>
   </div>
+  {% comment %} HU-19: exportan lo que esta pantalla está mostrando AHORA MISMO
+     —los mismos parámetros de filtro—, no todo el histórico del operativo. {% endcomment %}
+  {% if user|tiene_permiso:"reportes.exportar" %}
+    <div class="d-flex gap-2">
+      <a href="{% url 'fichas:reporte_excel' %}?{{ parametros }}"
+         class="btn btn-success btn-sm">Exportar Excel</a>
+      <a href="{% url 'fichas:reporte_pdf' %}?{{ parametros }}"
+         class="btn btn-danger btn-sm">Exportar PDF</a>
+    </div>
+  {% endif %}
 </div>
 
 {# ---------- El estado de la cola ---------- #}
