@@ -1972,6 +1972,15 @@ class BandejaRevisionView(RevisionMixin, ListView):
         if censista := datos.get("censista"):
             consulta = consulta.filter(censista=censista)
 
+        # HU-18: rango de fechas sobre `cerrada_en`. `__date` compara en la zona
+        # horaria local (TIME_ZONE), igual que `dias_esperando` en el modelo, para
+        # que un cierre de las 23:50 no caiga en el día siguiente por estar en UTC.
+        if fecha_desde := datos.get("fecha_desde"):
+            consulta = consulta.filter(cerrada_en__date__gte=fecha_desde)
+
+        if fecha_hasta := datos.get("fecha_hasta"):
+            consulta = consulta.filter(cerrada_en__date__lte=fecha_hasta)
+
         return consulta
 
     def get_context_data(self, **kwargs):

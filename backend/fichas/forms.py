@@ -1337,6 +1337,19 @@ class FiltroRevisionForm(forms.Form):
         empty_label="Cualquier encuestador",
         widget=forms.Select(attrs={"class": CLASE_SELECT}),
     )
+    # HU-18: rango sobre `cerrada_en`, el mismo campo por el que ya se ordena la
+    # cola. Dos campos y no uno solo («fecha»), porque un supervisor mirando el
+    # avance de la semana necesita un rango, no un día exacto.
+    fecha_desde = forms.DateField(
+        label="Desde",
+        required=False,
+        widget=forms.DateInput(attrs={"class": CLASE_TEXTO, "type": "date"}, format="%Y-%m-%d"),
+    )
+    fecha_hasta = forms.DateField(
+        label="Hasta",
+        required=False,
+        widget=forms.DateInput(attrs={"class": CLASE_TEXTO, "type": "date"}, format="%Y-%m-%d"),
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -1374,6 +1387,20 @@ class FiltroRevisionForm(forms.Form):
         trabajo pendiente.
         """
         return self.cleaned_data.get("estado") or self.GRUPO_RECIBIDAS
+
+    def clean(self):
+        limpios = super().clean()
+        desde = limpios.get("fecha_desde")
+        hasta = limpios.get("fecha_hasta")
+
+        if desde and hasta and desde > hasta:
+            # Un rango invertido no tiene una lectura razonable: se avisa en el
+            # campo «hasta» en vez de adivinar cuál de las dos fechas se equivocó.
+            self.add_error(
+                "fecha_hasta", "La fecha «hasta» no puede ser anterior a «desde»."
+            )
+
+        return limpios
 
 
 # ==========================================================================

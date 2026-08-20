@@ -8112,3 +8112,98 @@ class AlertasEnElPanelTest(BaseRevisionTest):
             respuesta,
             f"hace más de {Encuesta.DIAS_ESPERA_PROLONGADA} días",
         )
+
+
+# ==========================================================================
+# HU-18 — 75. FILTRAR POR FECHA
+# ==========================================================================
+#
+# El resto del filtro —estado, sector, censista, y de regalo operativo y texto
+# libre— ya existía desde la HU-13 (FiltrosRevisionTest, arriba). Lo único que
+# faltaba era acotar por fecha, así que esta sección solo prueba el rango
+# nuevo: FiltroRevisionTest cubre que sí conviva con los filtros de siempre.
+
+
+class FiltroPorFechaTest(BaseRevisionTest):
+    def setUp(self):
+        super().setUp()
+        self.client.force_login(self.supervisor)
+        self.antigua = self.recibida(direccion="Antigua", hace_dias=10)
+        self.reciente = self.recibida(direccion="Reciente", hace_dias=1)
+
+    def direcciones(self, **filtros):
+        respuesta = self.client.get(
+            self.url_bandeja, {"estado": "TODAS", **filtros}
+        )
+        return [e.direccion for e in respuesta.context["encuestas"]]
+
+    def test_desde_excluye_lo_anterior(self):
+        desde = timezone.localdate() - timedelta(days=5)
+
+        self.assertEqual(self.direcciones(fecha_desde=desde), ["Reciente"])
+
+    def test_hasta_excluye_lo_posterior(self):
+        hasta = timezone.localdate() - timedelta(days=5)
+
+        self.assertEqual(self.direcciones(fecha_hasta=hasta), ["Antigua"])
+
+    def test_el_rango_combina_ambos_extremos(self):
+        entremedio = self.recibida(direccion="Entremedio", hace_dias=5)
+
+        direcciones = self.direcciones(
+            fecha_desde=timezone.localdate() - timedelta(days=7),
+            fecha_hasta=timezone.localdate() - timedelta(days=3),
+        )
+
+        self.assertEqual(direcciones, [entremedio.direccion])
+
+    def test_convive_con_el_filtro_de_censista(self):
+        de_juan = self.recibida(
+            direccion="De Juan", hace_dias=1, censista=self.juan
+        )
+
+        direcciones = self.direcciones(
+            fecha_desde=timezone.localdate() - timedelta(days=5),
+            censista=self.juan.pk,
+        )
+
+        self.assertEqual(direcciones, [de_juan.direccion])
+
+    def test_un_rango_invertido_no_rompe_la_pantalla(self):
+        respuesta = self.client.get(
+            self.url_bandeja,
+            {
+                "estado": "TODAS",
+                "fecha_desde": timezone.localdate(),
+                "fecha_hasta": timezone.localdate() - timedelta(days=5),
+            },
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_un_rango_invertido_avisa_en_el_campo_y_no_filtra_nada(self):
+        """Sin filtros válidos, la bandeja cae al valor por defecto: lo recibido."""
+        respuesta = self.client.get(
+            self.url_bandeja,
+            {
+                "estado": "TODAS",
+                "fecha_desde": timezone.localdate(),
+                "fecha_hasta": timezone.localdate() - timedelta(days=5),
+            },
+        )
+
+        # Con el formulario inválido, la vista ni siquiera mira el «estado» del
+        # GET: cae al valor por defecto sin filtro alguno (ambas COMPLETADA).
+        self.assertContains(respuesta, "no puede ser anterior")
+        direcciones = {e.direccion for e in respuesta.context["encuestas"]}
+        self.assertEqual(direcciones, {"Antigua", "Reciente"})
+
+    def test_una_encuesta_sin_cerrar_no_entra_en_ningun_rango(self):
+        """Sin `cerrada_en` no hay con qué comparar: filtrar por fecha la deja fuera."""
+        self.crear(direccion="A medias", estado=EstadoEncuesta.BORRADOR)
+
+        direcciones = self.direcciones(
+            fecha_desde=timezone.localdate() - timedelta(days=30)
+        )
+
+        self.assertNotIn("A medias", direcciones)
