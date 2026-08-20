@@ -110,7 +110,12 @@ from .models import (
     Parentesco,
     Vivienda,
 )
-from .reportes import construir_reporte_excel, construir_reporte_pdf
+from .reportes import (
+    construir_base_csv,
+    construir_base_excel,
+    construir_reporte_excel,
+    construir_reporte_pdf,
+)
 
 # --------------------------------------------------------------------------
 # EL ORDEN DE LA JORNADA
@@ -2118,6 +2123,61 @@ class ExportarReportePDFView(ReporteMixin, View):
         nombre = f"reporte_operativo_{timezone.localdate().isoformat()}.pdf"
         respuesta["Content-Disposition"] = f'attachment; filename="{nombre}"'
         construir_reporte_pdf(respuesta, resumen)
+        return respuesta
+
+
+class BaseConsolidadaMixin(PermisoRequeridoMixin):
+    """Puerta de la base consolidada (HU-20).
+
+    `reportes.exportar_base`, un permiso DISTINTO de `reportes.exportar`
+    (HU-19) y a propósito: aquel descarga agregados —conteos, sin un solo dato
+    de una familia—, y este descarga nombre, RUT, teléfono e ingreso del hogar
+    de cada persona. Que compartieran permiso le habría dado a cualquiera con
+    `reportes.exportar` —hoy, el rol Supervisor completo— acceso a datos
+    personales que esta historia solo le pide al administrador. La migración
+    `0008_permiso_exportar_base` se lo concede explícitamente solo al rol
+    ADMINISTRADOR —a nadie más—, igual que 0005 hizo con el reparto inicial.
+    """
+
+    permisos_requeridos = ("reportes.exportar_base",)
+    mensaje_sin_permiso = "No tienes permiso para exportar la base consolidada."
+
+
+class ExportarBaseExcelView(BaseConsolidadaMixin, View):
+    """La base consolidada completa, como archivo .xlsx.
+
+    URL: /encuestas/base-consolidada.xlsx
+
+    Sin filtros: a diferencia de la HU-19, esta historia pidió exportar «la
+    base consolidada», no un recorte —ver `docs/HU-20_*.md` para la decisión—.
+    """
+
+    def get(self, request, *args, **kwargs):
+        libro = construir_base_excel(Integrante.base_consolidada())
+
+        respuesta = HttpResponse(
+            content_type=(
+                "application/vnd.openxmlformats-officedocument"
+                ".spreadsheetml.sheet"
+            )
+        )
+        nombre = f"base_consolidada_{timezone.localdate().isoformat()}.xlsx"
+        respuesta["Content-Disposition"] = f'attachment; filename="{nombre}"'
+        libro.save(respuesta)
+        return respuesta
+
+
+class ExportarBaseCSVView(BaseConsolidadaMixin, View):
+    """La base consolidada completa, como archivo .csv.
+
+    URL: /encuestas/base-consolidada.csv
+    """
+
+    def get(self, request, *args, **kwargs):
+        respuesta = HttpResponse(content_type="text/csv")
+        nombre = f"base_consolidada_{timezone.localdate().isoformat()}.csv"
+        respuesta["Content-Disposition"] = f'attachment; filename="{nombre}"'
+        construir_base_csv(respuesta, Integrante.base_consolidada())
         return respuesta
 
 

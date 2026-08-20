@@ -15,11 +15,12 @@ romperían la historia sin dar ningún error visible:
   4. Que el coste en consultas no crezca con el número de encuestas.
 """
 
+import csv
 import shutil
 import tempfile
 from datetime import date, timedelta
 from decimal import Decimal
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -86,7 +87,13 @@ from .models import (
     TipoVivienda,
     Vivienda,
 )
-from .reportes import construir_reporte_excel, construir_reporte_pdf
+from .reportes import (
+    COLUMNAS_BASE_CONSOLIDADA,
+    construir_base_csv,
+    construir_base_excel,
+    construir_reporte_excel,
+    construir_reporte_pdf,
+)
 
 CLAVE_VALIDA = "Censo2026#Opso"
 
@@ -8512,3 +8519,198 @@ class BotonesDeExportarTest(BaseRevisionTest):
 
         self.assertContains(respuesta, f"reporte.xlsx?censista={self.juan.pk}")
         self.assertContains(respuesta, f"reporte.pdf?censista={self.juan.pk}")
+
+
+# ==========================================================================
+# HU-20 — 77. BASE CONSOLIDADA (EXCEL Y CSV)
+# ==========================================================================
+
+
+class BaseConsolidadaTest(BaseRevisionTest):
+    """`Integrante.base_consolidada()`: una fila por persona."""
+
+    def test_una_fila_por_persona(self):
+        encuesta = self.recibida()
+        self.con_hogar(encuesta, declarados=2, personas=2)
+
+        self.assertEqual(len(Integrante.base_consolidada()), 2)
+
+    def test_incluye_los_datos_de_la_vivienda_y_del_hogar(self):
+        encuesta = self.recibida()
+        self.con_hogar(encuesta, declarados=3, personas=1)
+
+        fila = Integrante.base_consolidada()[0]
+
+        self.assertEqual(fila["operativo"], self.operativo.nombre)
+        self.assertEqual(fila["comuna"], "Concepción")
+        self.assertEqual(fila["sector"], "Los Boldos")
+        self.assertEqual(fila["direccion"], encuesta.direccion)
+        self.assertEqual(fila["jefe_hogar_nombre"], "Rosa Elena Millán")
+        self.assertEqual(fila["integrantes_declarados"], 3)
+
+    def test_incluye_los_datos_de_la_persona(self):
+        encuesta = self.recibida()
+        hogar = self.con_hogar(encuesta, declarados=1, personas=1)
+        integrante = hogar.integrantes.get()
+
+        fila = Integrante.base_consolidada()[0]
+
+        self.assertEqual(fila["nombres"], "Persona 0")
+        self.assertEqual(fila["parentesco"], "Jefe o jefa de hogar")
+        self.assertEqual(fila["sexo"], "Femenino")
+        self.assertEqual(fila["edad"], integrante.edad())
+
+    def test_excluye_las_encuestas_anuladas(self):
+        """Un supervisor la anuló porque decidió que ese dato no debía contar."""
+        anulada = self.crear(direccion="Anulada", estado=EstadoEncuesta.ANULADA)
+        self.con_hogar(anulada, declarados=1, personas=1)
+
+        self.assertEqual(Integrante.base_consolidada(), [])
+
+    def test_una_encuesta_sin_hogar_no_aporta_filas(self):
+        self.crear(direccion="A medias", estado=EstadoEncuesta.BORRADOR)
+
+        self.assertEqual(Integrante.base_consolidada(), [])
+
+    def test_no_depende_del_estado_de_la_encuesta(self):
+        """Completada, observada o validada: todas aportan si no fueron anuladas."""
+        for estado in (
+            EstadoEncuesta.COMPLETADA,
+            EstadoEncuesta.OBSERVADA,
+            EstadoEncuesta.VALIDADA,
+        ):
+            with self.subTest(estado=estado):
+                encuesta = self.crear(direccion=f"Calle {estado}", estado=estado)
+                self.con_hogar(encuesta, declarados=1, personas=1)
+
+        self.assertEqual(len(Integrante.base_consolidada()), 3)
+
+
+class ConstruirBaseExcelTest(BaseRevisionTest):
+    def test_arma_el_encabezado_y_las_filas(self):
+        encuesta = self.recibida()
+        self.con_hogar(encuesta, declarados=1, personas=1)
+
+        hoja = construir_base_excel(Integrante.base_consolidada()).active
+
+        encabezado = [celda.value for celda in hoja[1]]
+        self.assertEqual(
+            encabezado, [etiqueta for _, etiqueta in COLUMNAS_BASE_CONSOLIDADA]
+        )
+        self.assertEqual(hoja.max_row, 2)  # encabezado + 1 persona
+
+    def test_sin_filas_solo_queda_el_encabezado(self):
+        hoja = construir_base_excel([]).active
+
+        self.assertEqual(hoja.max_row, 1)
+
+
+class ConstruirBaseCsvTest(BaseRevisionTest):
+    def test_arma_el_encabezado_y_las_filas(self):
+        encuesta = self.recibida()
+        self.con_hogar(encuesta, declarados=1, personas=1)
+
+        buffer = StringIO()
+        construir_base_csv(buffer, Integrante.base_consolidada())
+        buffer.seek(0)
+        filas = list(csv.reader(buffer))
+
+        self.assertEqual(
+            filas[0], [etiqueta for _, etiqueta in COLUMNAS_BASE_CONSOLIDADA]
+        )
+        self.assertEqual(len(filas), 2)  # encabezado + 1 persona
+
+
+class ExportarBaseTest(BaseRevisionTest):
+    def setUp(self):
+        super().setUp()
+        self.url_excel = reverse("fichas:base_consolidada_excel")
+        self.url_csv = reverse("fichas:base_consolidada_csv")
+
+    def test_el_administrador_descarga_el_excel(self):
+        encuesta = self.recibida()
+        self.con_hogar(encuesta, declarados=1, personas=1)
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.get(self.url_excel)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(
+            respuesta["Content-Type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        self.assertIn("attachment", respuesta["Content-Disposition"])
+
+    def test_el_administrador_descarga_el_csv(self):
+        encuesta = self.recibida()
+        self.con_hogar(encuesta, declarados=1, personas=1)
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.get(self.url_csv)
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta["Content-Type"], "text/csv")
+        self.assertIn("attachment", respuesta["Content-Disposition"])
+
+    def test_el_supervisor_no_puede_aunque_tenga_reportes_exportar(self):
+        """`reportes.exportar_base` es un permiso distinto de `reportes.exportar`
+        (HU-19): tenerlo no basta para descargar datos personales.
+        """
+        self.assertTrue(self.supervisor.tiene_permiso("reportes.exportar"))
+        self.client.force_login(self.supervisor)
+
+        self.assertEqual(self.client.get(self.url_excel).status_code, 302)
+        self.assertEqual(self.client.get(self.url_csv).status_code, 302)
+
+    def test_el_supervisor_puede_si_la_matriz_se_lo_concede(self):
+        """El permiso es configurable, no un `if rol == ADMINISTRADOR` fijo en la
+        vista: si el administrador se lo concede a otro rol desde la matriz de
+        la HU-04, ese rol puede usarlo igual.
+        """
+        self.rol_supervisor.permisos.add(
+            Permiso.objects.get(codigo="reportes.exportar_base")
+        )
+        self.client.force_login(self.supervisor)
+
+        self.assertEqual(self.client.get(self.url_excel).status_code, 200)
+
+    def test_el_censista_no_puede(self):
+        self.client.force_login(self.marta)
+
+        self.assertEqual(self.client.get(self.url_excel).status_code, 302)
+
+    def test_un_visitante_anonimo_va_al_login(self):
+        respuesta = self.client.get(self.url_excel)
+
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertIn(reverse("usuarios:login"), respuesta.url)
+
+    def test_el_contenido_coincide_con_base_consolidada(self):
+        encuesta = self.recibida()
+        self.con_hogar(encuesta, declarados=2, personas=2)
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.get(self.url_excel)
+        hoja = load_workbook(BytesIO(respuesta.content)).active
+
+        self.assertEqual(hoja.max_row, 3)  # encabezado + 2 personas
+
+    def test_excluye_las_anuladas_tambien_desde_la_vista(self):
+        anulada = self.crear(direccion="Dirección Anulada", estado=EstadoEncuesta.ANULADA)
+        self.con_hogar(anulada, declarados=1, personas=1)
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.get(self.url_csv)
+
+        self.assertNotIn(b"Direcci\xc3\xb3n Anulada", respuesta.content)
+
+
+class TarjetaBaseConsolidadaTest(BaseRevisionTest):
+    def test_el_administrador_ve_la_tarjeta_con_los_enlaces(self):
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.get(reverse("dashboards:administrador"))
+
+        self.assertContains(respuesta, "Base consolidada")
+        self.assertContains(respuesta, reverse("fichas:base_consolidada_excel"))
+        self.assertContains(respuesta, reverse("fichas:base_consolidada_csv"))

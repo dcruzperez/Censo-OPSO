@@ -30,8 +30,9 @@ Proyecto de título · Ingeniería en Computación e Informática.
 | HU-17 · Editar registros permitidos (corregir errores detectados) | ✅ Resuelta sin código nuevo — reutiliza el flujo de devolución de la HU-15 | [`docs/HU-17_editar_registros_permitidos.md`](docs/HU-17_editar_registros_permitidos.md) |
 | HU-18 · Filtrar por fecha, sector, estado y censista | ✅ Implementada | [`docs/HU-18_filtrar_por_fecha_sector_estado_censista.md`](docs/HU-18_filtrar_por_fecha_sector_estado_censista.md) |
 | HU-19 · Generar reportes en PDF y Excel | ✅ Implementada | [`docs/HU-19_reportes_pdf_excel.md`](docs/HU-19_reportes_pdf_excel.md) |
+| HU-20 · Exportar la base consolidada en Excel y CSV | ✅ Implementada | [`docs/HU-20_base_consolidada.md`](docs/HU-20_base_consolidada.md) |
 
-**1.371 pruebas automáticas** en total (`python manage.py test` → OK). La HU-17 no
+**1.389 pruebas automáticas** en total (`python manage.py test` → OK). La HU-17 no
 agregó pruebas propias: no tiene comportamiento nuevo que probar.
 
 ---
@@ -182,14 +183,14 @@ EMAIL_HOST_PASSWORD=contraseña-de-aplicacion-de-16-caracteres
 ## Pruebas
 
 ```bash
-python manage.py test                                 # 1.371 pruebas
+python manage.py test                                 # 1.389 pruebas
 python manage.py test -v 2                            # con el nombre de cada prueba
 python manage.py test usuarios.tests                  # solo HU-01 y HU-02 (80)
 python manage.py test usuarios.tests_gestion          # solo HU-03 (69)
 python manage.py test usuarios.tests_permisos         # solo HU-04 (132)
 python manage.py test operativos.tests                # solo HU-05 (141)
 python manage.py test operativos.tests_asignaciones   # solo HU-06 (124)
-python manage.py test fichas                          # HU-07 a HU-19 (825)
+python manage.py test fichas                          # HU-07 a HU-20 (843)
 ```
 
 Si PostgreSQL no está disponible, se puede correr la batería sobre SQLite en memoria:

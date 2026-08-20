@@ -61,6 +61,19 @@ urlpatterns = [
         views.ExportarReportePDFView.as_view(),
         name="reporte_pdf",
     ),
+    # HU-20: la base consolidada completa (una fila por persona), sin
+    # filtros. No cuelga de revision/ porque no es "lo que la bandeja está
+    # mostrando": es para el administrador, no para quien revisa.
+    path(
+        "base-consolidada.xlsx",
+        views.ExportarBaseExcelView.as_view(),
+        name="base_consolidada_excel",
+    ),
+    path(
+        "base-consolidada.csv",
+        views.ExportarBaseCSVView.as_view(),
+        name="base_consolidada_csv",
+    ),
     # ------------------------------------------------------------------
     # VIVIENDAS (HU-08) — rutas fijas antes de las que llevan <int:pk>
     #

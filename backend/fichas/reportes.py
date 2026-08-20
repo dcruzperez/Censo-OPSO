@@ -1,18 +1,23 @@
-"""Construcción de los reportes exportables de la HU-19: PDF y Excel.
+"""Construcción de los reportes exportables: HU-19 (PDF/Excel) y HU-20 (base
+consolidada en Excel/CSV).
 
-Funciones puras: reciben el diccionario que arma
-`Encuesta.resumen_para_reporte()` y devuelven el archivo ya construido. No
+Funciones puras: reciben los datos ya armados —el diccionario de
+`Encuesta.resumen_para_reporte()`, o la lista de diccionarios de
+`Integrante.base_consolidada()`— y devuelven el archivo construido. No
 conocen `request` ni `HttpResponse` — la vista es quien decide el
 `Content-Type` y el nombre del archivo —, así que se prueban directamente,
 sin simular HTTP. Es el mismo criterio que ya aplican `usuarios/seguridad.py`
 y `usuarios/auditoria.py`: la lógica que no depende de la petición no vive en
 la vista.
 
-Los bloques —resumen general, por estado, por sector, por censista— se arman
-con la misma descripción (`BLOQUES`) en los dos formatos, para que agregar un
-bloque el día de mañana sea una entrada más en esa lista y no un bloque de
-código copiado entre el Excel y el PDF.
+Los bloques del reporte de resultados —resumen general, por estado, por
+sector, por censista— se arman con la misma descripción (`BLOQUES`) en los
+dos formatos, para que agregar un bloque el día de mañana sea una entrada más
+en esa lista y no un bloque de código copiado entre el Excel y el PDF. La
+base consolidada usa el mismo recurso con `COLUMNAS_BASE_CONSOLIDADA`.
 """
+
+import csv
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -163,3 +168,91 @@ def _tabla_pdf(columnas, filas, anchos):
         )
     )
     return tabla
+
+
+# ==========================================================================
+# HU-20 — BASE CONSOLIDADA (una fila por persona)
+# ==========================================================================
+
+# (clave del diccionario de `Integrante.base_consolidada()`, encabezado de columna).
+# La misma lista arma el Excel y el CSV, para que agregar una columna el día de
+# mañana sea una entrada más aquí y no un cambio en dos formatos por separado.
+COLUMNAS_BASE_CONSOLIDADA = (
+    ("operativo", "Operativo"),
+    ("region", "Región"),
+    ("comuna", "Comuna"),
+    ("sector", "Sector"),
+    ("zona", "Zona"),
+    ("direccion", "Dirección"),
+    ("referencia", "Referencia"),
+    ("tipo_vivienda", "Tipo de vivienda"),
+    ("tenencia", "Tenencia"),
+    ("materialidad_muros", "Materialidad de los muros"),
+    ("origen_agua", "Origen del agua"),
+    ("sistema_sanitario", "Sistema sanitario"),
+    ("tiene_electricidad", "Tiene electricidad"),
+    ("latitud", "Latitud"),
+    ("longitud", "Longitud"),
+    ("jefe_hogar_nombre", "Jefe de hogar"),
+    ("jefe_hogar_rut", "RUT jefe de hogar"),
+    ("telefono_contacto", "Teléfono de contacto"),
+    ("integrantes_declarados", "Personas declaradas"),
+    ("ingreso_mensual", "Ingreso mensual del hogar"),
+    ("nombres", "Nombres"),
+    ("apellidos", "Apellidos"),
+    ("rut", "RUT"),
+    ("parentesco", "Parentesco"),
+    ("sexo", "Sexo"),
+    ("fecha_nacimiento", "Fecha de nacimiento"),
+    ("edad", "Edad"),
+    ("nivel_educacional", "Nivel educacional"),
+    ("situacion_ocupacional", "Situación ocupacional"),
+    ("pueblo_originario", "Pueblo originario"),
+    ("tiene_discapacidad", "Presenta discapacidad"),
+    ("estado_encuesta", "Estado de la encuesta"),
+    ("cerrada_en", "Fecha de cierre"),
+)
+
+
+def _tabla_base_consolidada(filas):
+    """Los encabezados y el cuerpo, en el mismo orden, listos para escribir."""
+    claves = [clave for clave, _ in COLUMNAS_BASE_CONSOLIDADA]
+    encabezados = [etiqueta for _, etiqueta in COLUMNAS_BASE_CONSOLIDADA]
+    cuerpo = [[fila[clave] for clave in claves] for fila in filas]
+    return encabezados, cuerpo
+
+
+def construir_base_excel(filas):
+    """Arma el libro .xlsx de la base consolidada: una fila por persona.
+
+    A diferencia de `construir_reporte_excel()`, no hay bloques ni resumen:
+    es una tabla ancha y plana, el formato que un análisis externo espera.
+    """
+    encabezados, cuerpo = _tabla_base_consolidada(filas)
+
+    libro = Workbook()
+    hoja = libro.active
+    hoja.title = "Base consolidada"
+
+    hoja.append(encabezados)
+    for celda in hoja[1]:
+        celda.font = Font(bold=True)
+    hoja.freeze_panes = "A2"  # el encabezado queda fijo al desplazarse
+
+    for fila in cuerpo:
+        hoja.append(fila)
+
+    return libro
+
+
+def construir_base_csv(buffer, filas):
+    """Escribe en `buffer` la base consolidada en CSV: una fila por persona.
+
+    `buffer` es cualquier objeto con `.write()` — un `HttpResponse` calza sin
+    envoltorio adicional, y así lo usa `ExportarBaseCSVView`.
+    """
+    encabezados, cuerpo = _tabla_base_consolidada(filas)
+
+    escritor = csv.writer(buffer)
+    escritor.writerow(encabezados)
+    escritor.writerows(cuerpo)

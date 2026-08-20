@@ -126,10 +126,10 @@ class PermisoModeloTest(BasePermisosTest):
     """El catálogo de permisos y sus restricciones."""
 
     def test_la_migracion_siembra_el_catalogo_completo(self):
-        self.assertEqual(Permiso.objects.count(), 19)
+        self.assertEqual(Permiso.objects.count(), 20)
 
     def test_todos_los_permisos_nacen_activos(self):
-        self.assertEqual(Permiso.objects.filter(activo=True).count(), 19)
+        self.assertEqual(Permiso.objects.filter(activo=True).count(), 20)
 
     def test_el_codigo_es_unico(self):
         with self.assertRaises(IntegrityError):
@@ -341,7 +341,7 @@ class UsuarioTienePermisoTest(BasePermisosTest):
         permiso.save()
 
         codigos = self.admin.codigos_permisos()
-        self.assertEqual(len(codigos), 18)
+        self.assertEqual(len(codigos), 19)
         self.assertNotIn("reportes.exportar", codigos)
 
     def test_codigos_permisos_sin_rol_es_un_conjunto_vacio(self):
@@ -570,10 +570,10 @@ class MatrizGetTest(BasePermisosTest):
         self.assertEqual(modulos[0], "Usuarios")
         self.assertEqual(modulos[-1], "Reportes")
 
-    def test_muestra_los_diecinueve_permisos(self):
+    def test_muestra_los_veinte_permisos(self):
         total = sum(len(g["filas"]) for g in self.respuesta.context["grupos"])
-        self.assertEqual(total, 19)
-        self.assertEqual(self.respuesta.context["total_permisos"], 19)
+        self.assertEqual(total, 20)
+        self.assertEqual(self.respuesta.context["total_permisos"], 20)
 
     def test_solo_hay_formulario_para_los_roles_editables(self):
         """El Administrador no tiene formulario: concede todo implícitamente."""
@@ -614,7 +614,7 @@ class MatrizGetTest(BasePermisosTest):
             for fila in grupo["filas"]
         ]
         self.assertNotIn("reportes.exportar", codigos)
-        self.assertEqual(len(codigos), 18)
+        self.assertEqual(len(codigos), 19)
 
     def test_incluye_los_roles_desactivados_con_su_marca(self):
         self.rol_censista.activo = False

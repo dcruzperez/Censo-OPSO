@@ -2556,6 +2556,125 @@ class Integrante(models.Model):
                     }
                 )
 
+    # ------------------------------------------------------------------
+    # BASE CONSOLIDADA (HU-20)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def base_consolidada(cls):
+        """Una fila por persona, con su vivienda y su hogar, para análisis externo.
+
+        Toda fila de esta tabla YA cuelga de un `GrupoFamiliar` —es la propia
+        definición de `Integrante`—, así que "encuestas con hogar registrado" no
+        necesita filtrarse aparte: alcanza con excluir las `ANULADA`. Un
+        supervisor las anuló porque decidió que ese dato no debía contar
+        (duplicado, información inválida), y una base para análisis externo no
+        debe arrastrar lo que el propio sistema ya descartó.
+
+        Devuelve una LISTA DE DICCIONARIOS y no un queryset: quien arma el
+        Excel o el CSV (`fichas/reportes.py`) no necesita saber de Django ni
+        de relaciones, solo iterar filas planas con las mismas claves. Es la
+        misma separación que ya usa `resumen_para_reporte()` (HU-19), llevada
+        al nivel de fila en vez de al de agregado.
+        """
+        calificados = (
+            cls.objects.exclude(
+                grupo_familiar__encuesta__estado=EstadoEncuesta.ANULADA
+            )
+            .select_related(
+                "grupo_familiar",
+                "grupo_familiar__encuesta",
+                "grupo_familiar__encuesta__vivienda",
+                "grupo_familiar__encuesta__vivienda__zona",
+                "grupo_familiar__encuesta__vivienda__zona__sector",
+                "grupo_familiar__encuesta__vivienda__zona__sector__comuna",
+                "grupo_familiar__encuesta__vivienda__zona__sector__comuna__region",
+                "grupo_familiar__encuesta__vivienda__zona__sector__operativo",
+            )
+            .order_by(
+                "grupo_familiar__encuesta__vivienda__zona__sector__comuna__nombre",
+                "grupo_familiar__encuesta__vivienda__zona__sector__nombre",
+                "grupo_familiar__encuesta__vivienda__direccion",
+                "grupo_familiar_id",
+                "fecha_nacimiento",
+            )
+        )
+
+        return [_fila_base_consolidada(integrante) for integrante in calificados]
+
+
+def _si_no(valor):
+    """"Sí" / "No" / "Sin dato", para los booleanos que admiten NULL (HU-20).
+
+    Función de módulo: la usa `_fila_base_consolidada()` para dos campos
+    distintos (`tiene_electricidad` de la vivienda, `tiene_discapacidad` de la
+    persona) y ninguno de los dos le pertenece más que el otro.
+    """
+    if valor is None:
+        return "Sin dato"
+    return "Sí" if valor else "No"
+
+
+def _fila_base_consolidada(integrante):
+    """Aplana UNA persona con su vivienda y su hogar en un diccionario (HU-20).
+
+    Función de módulo y no un método de `Integrante`: lee tres modelos además
+    de sí misma (`GrupoFamiliar`, `Encuesta`, `Vivienda` y su jerarquía
+    territorial), así que ponerla como método sugeriría que le pertenece más a
+    `Integrante` que a los otros tres, y no es el caso.
+    """
+    hogar = integrante.grupo_familiar
+    encuesta = hogar.encuesta
+    vivienda = encuesta.vivienda
+    zona = vivienda.zona
+    sector = zona.sector
+    comuna = sector.comuna
+
+    return {
+        "operativo": sector.operativo.nombre,
+        "region": comuna.region.nombre,
+        "comuna": comuna.nombre,
+        "sector": sector.nombre,
+        "zona": zona.nombre,
+        "direccion": vivienda.direccion,
+        "referencia": vivienda.referencia,
+        "tipo_vivienda": vivienda.get_tipo_display(),
+        "tenencia": vivienda.get_tenencia_display(),
+        "materialidad_muros": vivienda.get_materialidad_muros_display(),
+        "origen_agua": vivienda.get_origen_agua_display(),
+        "sistema_sanitario": vivienda.get_sistema_sanitario_display(),
+        "tiene_electricidad": _si_no(vivienda.tiene_electricidad),
+        "latitud": vivienda.latitud,
+        "longitud": vivienda.longitud,
+        "jefe_hogar_nombre": hogar.jefe_hogar_nombre,
+        "jefe_hogar_rut": hogar.jefe_hogar_rut,
+        "telefono_contacto": hogar.telefono_contacto,
+        "integrantes_declarados": hogar.integrantes_declarados,
+        "ingreso_mensual": hogar.ingreso_mensual,
+        "nombres": integrante.nombres,
+        "apellidos": integrante.apellidos,
+        "rut": integrante.rut,
+        "parentesco": integrante.get_parentesco_display(),
+        "sexo": integrante.get_sexo_display(),
+        "fecha_nacimiento": integrante.fecha_nacimiento,
+        "edad": integrante.edad(),
+        "nivel_educacional": integrante.get_nivel_educacional_display(),
+        "situacion_ocupacional": integrante.get_situacion_ocupacional_display(),
+        "pueblo_originario": integrante.get_pueblo_originario_display(),
+        "tiene_discapacidad": _si_no(integrante.tiene_discapacidad),
+        "estado_encuesta": encuesta.get_estado_display(),
+        # Sin tzinfo: Excel no admite datetimes con zona horaria, y ya está en
+        # hora local (`replace` después de `localtime`, no antes) — no es un
+        # cambio de hora, es soltar la etiqueta de una conversión ya hecha.
+        "cerrada_en": (
+            timezone.localtime(encuesta.cerrada_en).replace(
+                tzinfo=None, microsecond=0
+            )
+            if encuesta.cerrada_en
+            else ""
+        ),
+    }
+
 
 # ==========================================================================
 # 5. LAS FOTOGRAFÍAS DE LA VIVIENDA (HU-12)
