@@ -533,13 +533,18 @@ python manage.py test                 # 804 en total
 | `ZonasDisponiblesTest` | las cuatro condiciones, y que retirar la asignación corta el acceso |
 | `ViviendaFormTest` | zonas ajenas, las seis obligatorias, el aviso de duplicado |
 | `GrupoFamiliarFormTest` | RUT con dígito verificador, ingreso desmesurado, campos opcionales |
-| `RegistrarViviendaTest` | crea vivienda + encuesta, sin territorio, supervisor rechazado |
+| `EncuestaOfflineViewTest`¹ | sin territorio, supervisor rechazado |
 | `EditarViviendaTest` | completar el padrón heredado, 404 fuera del territorio |
 | `RegistrarHogarTest` | guarda, deja en BORRADOR, ajena 404, cerrada bloqueada por POST |
 | `AgregarHogarTest` | segundo hogar sin duplicar la casa, GET responde 405 |
 | `ViviendaDetalleTest` | dos hogares, sin describir, supervisor sin botón |
 | `FichaConHogarTest` | lo que la pantalla de la HU-07 gana |
 | `IntegracionHU08Test` | recorrido completo: HU-06 reparte → registra casa → hogar → segundo hogar |
+
+¹ La HU-24 reemplazó el formulario de alta de vivienda por un asistente offline; la
+prueba de crear vivienda + encuesta vive ahora en `SincronizarEncuestaOfflineTest`
+(ver `docs/HU-24_captura_de_encuestas_sin_conexion.md`), y esta clase quedó solo con
+las comprobaciones de acceso a la pantalla.
 
 ---
 

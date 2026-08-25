@@ -75,19 +75,32 @@ urlpatterns = [
         name="base_consolidada_csv",
     ),
     # ------------------------------------------------------------------
-    # VIVIENDAS (HU-08) — rutas fijas antes de las que llevan <int:pk>
+    # CREAR UNA ENCUESTA Y SINCRONIZARLA (HU-08, reemplazada por la HU-24) —
+    # rutas fijas antes de las que llevan <int:pk>
     #
-    # /encuestas/viviendas/nueva/ tiene que declararse antes de
-    # /encuestas/<int:pk>/, por la misma razón que la HU-05 puso /comunas/ antes
-    # de /<int:pk>/: Django recorre la lista en orden y se queda con la primera
-    # que coincide. El conversor «int» nunca haría coincidir la palabra
-    # «viviendas», así que hoy funcionaría igual, pero el orden explícito deja
-    # claro cuál manda si mañana el conversor cambiara.
+    # "nueva/" y "sincronizar/" tienen que declararse antes de /encuestas/<int:pk>/,
+    # por la misma razón que la HU-05 puso /comunas/ antes de /<int:pk>/: Django
+    # recorre la lista en orden y se queda con la primera que coincide.
+    #
+    # Hasta la HU-23 esto era "viviendas/nueva/" -> RegistrarViviendaView, un POST
+    # que guardaba solo la vivienda y redirigía al hogar con el pk que el servidor
+    # acababa de asignar. La HU-24 lo reemplaza por el asistente offline: "nueva/"
+    # sirve una sola pantalla que hace vivienda, hogar, integrantes y ubicación
+    # enteros en el navegador (sin pk del servidor hasta sincronizar), y
+    # "sincronizar/" es el único punto donde ese trabajo toca la base de datos.
+    # Se renombra "vivienda_registrar" -> "encuesta_nueva" porque ya no solo
+    # registra una vivienda: "encuesta" es el nombre que usa el resto del módulo
+    # para ese conjunto (ver la cabecera de este archivo).
     # ------------------------------------------------------------------
     path(
-        "viviendas/nueva/",
-        views.RegistrarViviendaView.as_view(),
-        name="vivienda_registrar",
+        "nueva/",
+        views.EncuestaOfflineView.as_view(),
+        name="encuesta_nueva",
+    ),
+    path(
+        "sincronizar/",
+        views.SincronizarEncuestaOfflineView.as_view(),
+        name="sincronizar_encuesta_offline",
     ),
     path(
         "viviendas/<int:pk>/",

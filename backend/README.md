@@ -31,15 +31,21 @@ Proyecto de título · Ingeniería en Computación e Informática.
 | HU-18 · Filtrar por fecha, sector, estado y censista | ✅ Implementada | [`docs/HU-18_filtrar_por_fecha_sector_estado_censista.md`](docs/HU-18_filtrar_por_fecha_sector_estado_censista.md) |
 | HU-19 · Generar reportes en PDF y Excel | ✅ Implementada | [`docs/HU-19_reportes_pdf_excel.md`](docs/HU-19_reportes_pdf_excel.md) |
 | HU-20 · Exportar la base consolidada en Excel y CSV | ✅ Implementada | [`docs/HU-20_base_consolidada.md`](docs/HU-20_base_consolidada.md) |
-| HU-21 · Almacenar temporalmente sin conexión | ✅ Implementada — verificada manualmente, sin pruebas automáticas (ver el documento) | [`docs/HU-21_autoguardado_sin_conexion.md`](docs/HU-21_autoguardado_sin_conexion.md) |
-| HU-22 · Sincronizar al recuperar conexión | ✅ Resuelta sin código propio — es la consecuencia directa del diseño de la HU-21 | [`docs/HU-22_sincronizar_al_recuperar_conexion.md`](docs/HU-22_sincronizar_al_recuperar_conexion.md) |
+| HU-21 · Almacenar temporalmente sin conexión | ⚠️ Superada por la HU-24 — el mecanismo de esta historia no servía para capturar una encuesta completa sin conexión (ver el documento) | [`docs/HU-21_autoguardado_sin_conexion.md`](docs/HU-21_autoguardado_sin_conexion.md) |
+| HU-22 · Sincronizar al recuperar conexión | ⚠️ Superada por la HU-24 — su diseño dependía del de la HU-21 | [`docs/HU-22_sincronizar_al_recuperar_conexion.md`](docs/HU-22_sincronizar_al_recuperar_conexion.md) |
 | HU-23 · Visualizar indicadores en tiempo real | ✅ Implementada — verificada en un navegador real, sin pruebas automáticas (ver el documento) | [`docs/HU-23_indicadores_en_tiempo_real.md`](docs/HU-23_indicadores_en_tiempo_real.md) |
+| HU-24 · Capturar encuestas completas sin conexión | ✅ Implementada — servidor con pruebas automáticas, asistente JavaScript verificado en un navegador real (ver el documento) | [`docs/HU-24_captura_de_encuestas_sin_conexion.md`](docs/HU-24_captura_de_encuestas_sin_conexion.md) |
 
-**1.389 pruebas automáticas** en total (`python manage.py test` → OK). La HU-17 y la
+**1.398 pruebas automáticas** en total (`python manage.py test` → OK). La HU-17 y la
 HU-22 no agregaron pruebas propias: no tienen comportamiento propio que probar. La
-HU-21 y la HU-23 son JavaScript de cliente y no tienen pruebas automáticas —no hay
-Selenium ni Playwright configurado—; las dos se verificaron en un navegador real (ver
-cada documento).
+HU-23 es JavaScript de cliente puro y no tiene pruebas automáticas —no hay Selenium ni
+Playwright configurado en el proyecto—, verificada en un navegador real (ver el
+documento). La HU-24 reemplaza el mecanismo offline de la HU-21/HU-22: su parte de
+servidor (`SincronizarEncuestaOfflineView`) sí tiene batería completa en
+`fichas.tests`, porque a diferencia de un simple autoguardado, ahora hay una vista real
+con reglas de negocio que probar; el asistente en sí (HTML + JavaScript) se verificó en
+un navegador real con Playwright instalado temporalmente, mismo criterio que la HU-21 y
+la HU-23.
 
 ---
 
@@ -189,14 +195,14 @@ EMAIL_HOST_PASSWORD=contraseña-de-aplicacion-de-16-caracteres
 ## Pruebas
 
 ```bash
-python manage.py test                                 # 1.389 pruebas
+python manage.py test                                 # 1.398 pruebas
 python manage.py test -v 2                            # con el nombre de cada prueba
 python manage.py test usuarios.tests                  # solo HU-01 y HU-02 (80)
 python manage.py test usuarios.tests_gestion          # solo HU-03 (69)
 python manage.py test usuarios.tests_permisos         # solo HU-04 (132)
 python manage.py test operativos.tests                # solo HU-05 (141)
 python manage.py test operativos.tests_asignaciones   # solo HU-06 (124)
-python manage.py test fichas                          # HU-07 a HU-20 (843)
+python manage.py test fichas                          # HU-07 a HU-24 (852)
 ```
 
 Si PostgreSQL no está disponible, se puede correr la batería sobre SQLite en memoria:

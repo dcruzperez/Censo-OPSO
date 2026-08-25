@@ -1,5 +1,15 @@
 # HU-22 · Sincronizar los datos al recuperar conexión
 
+> **⚠️ Superada por la [HU-24](HU-24_captura_de_encuestas_sin_conexion.md).** Esta
+> historia se apoyaba enteramente en el diseño de la HU-21 ("el envío normal del
+> formulario ya es la sincronización"), y ese diseño resultó insuficiente para
+> capturar una encuesta completa sin conexión (ver la nota al inicio de la HU-21). La
+> HU-24 sí necesitó sincronización propia —un endpoint que recibe una encuesta entera
+> y la crea reutilizando los mismos formularios de Django— y ahí es donde vive ahora
+> esa pieza. Este documento se conserva porque el razonamiento que descarta un motor
+> de sincronización en segundo plano (silencioso, sin que el censista vea el
+> resultado) sigue siendo válido y la HU-24 lo hereda tal cual.
+
 **Proyecto:** OPSO — Operativo Social
 **Historia de usuario:** *Como censista, quiero sincronizar los datos cuando exista conexión para enviar la información al servidor central.*
 **Stack:** Python 3.14 · Django 6.0 · PostgreSQL 18 · Bootstrap 5.3

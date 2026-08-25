@@ -8,6 +8,8 @@ cada app define sus propias rutas, lo que mantiene el proyecto ordenado.
 from django.contrib import admin
 from django.urls import include, path
 
+from fichas.views import ServirServiceWorkerView
+
 urlpatterns = [
     # Panel de administración de Django (gestión de usuarios y roles).
     path("admin/", admin.site.urls),
@@ -17,6 +19,12 @@ urlpatterns = [
     path("operativos/", include("operativos.urls")),
     # Encuestas del encuestador: /encuestas/, /encuestas/<pk>/ (HU-07)
     path("encuestas/", include("fichas.urls")),
+    # HU-24: el service worker del asistente offline va en la RAÍZ del
+    # dominio y no bajo /static/js/..., porque su "scope" —qué URLs puede
+    # vigilar— nunca puede ser más amplio que la ruta desde la que el
+    # navegador lo obtuvo. Servido bajo /static/ solo controlaría /static/,
+    # que es inútil para vigilar /encuestas/nueva/. Ver ServirServiceWorkerView.
+    path("sw.js", ServirServiceWorkerView.as_view()),
     # Autenticación y raíz del sitio: /login/, /logout/, /
     # Se incluye al final porque contiene la ruta "" (la más genérica).
     path("", include("usuarios.urls")),

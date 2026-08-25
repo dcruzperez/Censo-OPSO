@@ -1,5 +1,17 @@
 # HU-21 · Almacenar temporalmente la información sin conexión
 
+> **⚠️ Superada por la [HU-24](HU-24_captura_de_encuestas_sin_conexion.md).** En uso
+> real se reportó que este mecanismo no servía: protegía el contenido de UN
+> formulario mientras la pestaña seguía abierta esperando conexión, pero no permitía
+> avanzar de una pantalla a la siguiente sin servidor —y por lo tanto no permitía
+> capturar una encuesta completa sin conexión, que era el problema real—. La HU-24 lo
+> reemplaza con un asistente que hace vivienda, hogar, integrantes y ubicación
+> enteros en el navegador (IndexedDB, no `localStorage`) y sincroniza al final. Este
+> documento se conserva tal cual quedó entonces: explica un diseño real, verificado y
+> con su propio mérito para el problema que sí resolvía (proteger ediciones sobre
+> encuestas que ya existen en el servidor, donde `autoguardado.js` SIGUE en uso), y
+> deja constancia de por qué no alcanzaba para el caso que la HU-24 sí cubre.
+
 **Proyecto:** OPSO — Operativo Social
 **Historia de usuario:** *Como censista, quiero que el sistema almacene temporalmente la información para asegurar la continuidad del trabajo sin conexión.*
 **Stack:** Python 3.14 · Django 6.0 · PostgreSQL 18 · Bootstrap 5.3 · JavaScript nativo (sin librerías)

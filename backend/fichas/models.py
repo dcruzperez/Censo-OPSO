@@ -892,6 +892,27 @@ class Encuesta(models.Model):
         verbose_name="encuestador",
         help_text="Persona que debe levantar esta encuesta.",
     )
+    # ------------------------------------------------------------------
+    # SINCRONIZACIÓN DESDE EL ASISTENTE SIN CONEXIÓN (HU-24)
+    #
+    # El identificador lo genera el TELÉFONO, no el servidor (`crypto.randomUUID()`
+    # en `encuesta_offline.js`), antes de que exista ningún `pk`. Guardarlo aquí es
+    # lo que hace que reintentar una sincronización sea seguro: una conexión débil
+    # puede cortar la RESPUESTA de un POST que en realidad sí se guardó, y sin este
+    # campo el asistente no tendría forma de distinguir eso de un fallo real —
+    # reintentaría y duplicaría la encuesta. `unique=True` es lo que convierte
+    # "reenviar el mismo cliente_id" en un no-op en vez de un duplicado.
+    # ------------------------------------------------------------------
+    origen_offline_id = models.UUIDField(
+        "identificador de captura offline",
+        null=True,
+        blank=True,
+        unique=True,
+        help_text=(
+            "Identificador generado en el teléfono al capturar esta encuesta sin "
+            "conexión. Vacío en las encuestas creadas online."
+        ),
+    )
     estado = models.CharField(
         "estado",
         max_length=20,

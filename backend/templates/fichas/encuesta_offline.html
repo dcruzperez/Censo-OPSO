@@ -1,0 +1,334 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% comment %} ==========================================================================
+   EL ASISTENTE DE CAPTURA SIN CONEXIÓN — /encuestas/nueva/  (HU-24)
+
+   Reemplaza lo que hasta la HU-23 era el formulario de RegistrarViviendaView. La
+   diferencia no es de estilo: esta pantalla no envía nada al servidor hasta que
+   el censista pulsa «Sincronizar» en «Mis encuestas». Vivienda, hogar,
+   integrantes y ubicación se completan aquí, en el navegador, y se guardan en
+   IndexedDB en cada paso — ver static/js/encuesta_offline.js, que es el que hace
+   todo el trabajo. Esta plantilla es, a propósito, solo estructura: los cinco
+   `<section data-paso="...">` de abajo y los datos iniciales incrustados con
+   `json_script`.
+
+   POR QUÉ LOS DATOS INICIALES SE INCRUSTAN Y NO SE PIDEN A UN ENDPOINT APARTE
+   Las zonas asignadas y los catálogos (tipo de vivienda, parentesco, etc.) los
+   necesita el asistente para poder funcionar SIN conexión, así que tienen que
+   llegar en la misma carga de página que ya funcionó con conexión. Pedirlos
+   aparte sería la primera API JSON del proyecto solo para leer un catálogo que
+   ya se puede mandar en el HTML. `json_script` es el filtro nativo de Django
+   para esto: escapa lo necesario para que el contenido no se pueda interpretar
+   como HTML/JS ajeno al insertarlo en un <script type="application/json">.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Nueva encuesta{% endblock %}
+
+{% block contenido %}
+
+{% comment %} json_script TIENE que ir dentro de un {% block %}: base.html se
+   extiende, y Django descarta en silencio cualquier contenido que quede
+   fuera de un bloque, sin avisar con ningún error. {% endcomment %}
+{{ datos_iniciales|json_script:"opso-datos-iniciales" }}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">Nueva encuesta</h1>
+    <p class="text-secondary mb-0">
+      Funciona sin conexión: cada paso se guarda en este teléfono. Sincroniza
+      cuando tengas señal, desde «Mis encuestas».
+    </p>
+  </div>
+  <span class="badge text-bg-light border" id="of-paso-indicador" aria-live="polite">Paso 1 de 5</span>
+</div>
+
+<div id="of-mensaje" class="alert d-none" role="alert" aria-live="polite"></div>
+
+<form id="of-form" novalidate>
+
+  {# ---------- PASO 1: LA VIVIENDA (HU-08) ---------- #}
+  <section data-paso="vivienda" class="card-opso p-4 mb-3">
+    <h2 class="h5 fw-semibold mb-3">1. La vivienda</h2>
+    <div class="row g-3">
+      <div class="col-12 col-md-6">
+        <label class="form-label" for="of-zona">Zona</label>
+        <select class="form-select" id="of-zona" required></select>
+        <div class="form-text">Solo aparecen las zonas de los sectores que tienes asignados.</div>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label" for="of-direccion">Dirección</label>
+        <input type="text" class="form-control" id="of-direccion" placeholder="Pasaje Los Robles 1425" required>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label" for="of-referencia">Referencia</label>
+        <input type="text" class="form-control" id="of-referencia" placeholder="Casa verde, portón negro">
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label" for="of-tipo">Tipo de vivienda</label>
+        <select class="form-select" id="of-tipo" data-catalogo="tipo" required></select>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label" for="of-tenencia">Tenencia</label>
+        <select class="form-select" id="of-tenencia" data-catalogo="tenencia" required></select>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label" for="of-materialidad_muros">Materialidad de los muros</label>
+        <select class="form-select" id="of-materialidad_muros" data-catalogo="materialidad_muros" required></select>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label" for="of-origen_agua">Origen del agua</label>
+        <select class="form-select" id="of-origen_agua" data-catalogo="origen_agua" required></select>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label" for="of-sistema_sanitario">Sistema sanitario</label>
+        <select class="form-select" id="of-sistema_sanitario" data-catalogo="sistema_sanitario" required></select>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label" for="of-tiene_electricidad">¿Tiene electricidad?</label>
+        <select class="form-select" id="of-tiene_electricidad" required>
+          <option value="">Elige una opción</option>
+          <option value="True">Sí</option>
+          <option value="False">No</option>
+        </select>
+      </div>
+      <div class="col-12">
+        <label class="form-label" for="of-vivienda-observaciones">Observaciones</label>
+        <textarea class="form-control" id="of-vivienda-observaciones" rows="2"
+          placeholder="Lo que convenga dejar anotado de la vivienda."></textarea>
+      </div>
+    </div>
+    {% comment %} No hay casilla de «confirmar duplicado» aquí: si dos viviendas de
+       esta jornada terminan compartiendo dirección, el servidor lo puede
+       comprobar recién al sincronizar (offline no hay con qué comparar). Si
+       ocurre, la confirmación se resuelve desde la cola de «Mis encuestas»,
+       sin tener que reabrir el asistente. {% endcomment %}
+    <div class="alert alert-warning small d-none mt-3" id="of-error-vivienda"></div>
+    <div class="mt-3 text-end">
+      <button type="button" class="btn btn-opso" data-siguiente="vivienda">Siguiente: el hogar</button>
+    </div>
+  </section>
+
+  {# ---------- PASO 2: EL HOGAR (HU-08) ---------- #}
+  <section data-paso="hogar" class="card-opso p-4 mb-3 d-none">
+    <h2 class="h5 fw-semibold mb-3">2. El hogar</h2>
+    <div class="row g-3">
+      <div class="col-12 col-md-6">
+        <label class="form-label" for="of-jefe_hogar_nombre">Nombre de la jefa o jefe de hogar</label>
+        <input type="text" class="form-control" id="of-jefe_hogar_nombre" required>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label" for="of-jefe_hogar_rut">RUT (opcional)</label>
+        <input type="text" class="form-control" id="of-jefe_hogar_rut" placeholder="12345678-9">
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label" for="of-telefono_contacto">Teléfono de contacto</label>
+        <input type="text" class="form-control" id="of-telefono_contacto" placeholder="+56 9 1234 5678">
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label" for="of-integrantes_declarados">Cuántas personas viven aquí</label>
+        <input type="number" class="form-control" id="of-integrantes_declarados" min="1" max="30" required>
+      </div>
+      <div class="col-12 col-md-6">
+        <label class="form-label" for="of-ingreso_mensual">Ingreso mensual del hogar (opcional)</label>
+        <input type="number" class="form-control" id="of-ingreso_mensual" min="0" placeholder="En pesos">
+      </div>
+      <div class="col-12">
+        <label class="form-label" for="of-hogar-observaciones">Observaciones</label>
+        <textarea class="form-control" id="of-hogar-observaciones" rows="2"
+          placeholder="Personas con discapacidad, adultos mayores solos, etc."></textarea>
+      </div>
+    </div>
+    <div class="alert alert-warning small d-none mt-3" id="of-error-hogar"></div>
+    <div class="mt-3 d-flex justify-content-between">
+      <button type="button" class="btn btn-outline-secondary" data-volver="vivienda">Volver</button>
+      <button type="button" class="btn btn-opso" data-siguiente="hogar">Siguiente: integrantes</button>
+    </div>
+  </section>
+
+  {# ---------- PASO 3: LOS INTEGRANTES (HU-09) ---------- #}
+  <section data-paso="integrantes" class="card-opso p-4 mb-3 d-none">
+    <h2 class="h5 fw-semibold mb-1">3. Las personas del hogar</h2>
+    <p class="text-secondary small mb-3" id="of-integrantes-resumen"></p>
+
+    <div id="of-integrantes-lista" class="mb-3"></div>
+
+    <div class="border rounded p-3">
+      <h3 class="h6 fw-semibold mb-3">Agregar una persona</h3>
+      <div class="row g-3">
+        <div class="col-12 col-md-6">
+          <label class="form-label" for="of-i-parentesco">Parentesco con la jefa o jefe de hogar</label>
+          <select class="form-select" id="of-i-parentesco" data-catalogo="parentesco" required></select>
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label" for="of-i-nombres">Nombres</label>
+          <input type="text" class="form-control" id="of-i-nombres" required>
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label" for="of-i-apellidos">Apellidos</label>
+          <input type="text" class="form-control" id="of-i-apellidos" required>
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label" for="of-i-rut">RUT (opcional)</label>
+          <input type="text" class="form-control" id="of-i-rut" placeholder="12345678-9">
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label" for="of-i-sexo">Sexo</label>
+          <select class="form-select" id="of-i-sexo" data-catalogo="sexo" required></select>
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label" for="of-i-fecha_nacimiento">Fecha de nacimiento</label>
+          <input type="date" class="form-control" id="of-i-fecha_nacimiento" required>
+        </div>
+        <div class="col-12 col-md-6">
+          <label class="form-label" for="of-i-nivel_educacional">Nivel educacional</label>
+          <select class="form-select" id="of-i-nivel_educacional" data-catalogo="nivel_educacional"></select>
+        </div>
+        <div class="col-12 col-md-6">
+          <label class="form-label" for="of-i-situacion_ocupacional">Situación ocupacional</label>
+          <select class="form-select" id="of-i-situacion_ocupacional" data-catalogo="situacion_ocupacional"></select>
+        </div>
+        <div class="col-12 col-md-8">
+          <label class="form-label" for="of-i-pueblo_originario">Pueblo originario</label>
+          <select class="form-select" id="of-i-pueblo_originario" data-catalogo="pueblo_originario"></select>
+        </div>
+        <div class="col-12 col-md-4 d-flex align-items-end">
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" id="of-i-tiene_discapacidad">
+            <label class="form-check-label" for="of-i-tiene_discapacidad">Tiene discapacidad</label>
+          </div>
+        </div>
+        <div class="col-12">
+          <label class="form-label" for="of-i-observaciones">Observaciones</label>
+          <textarea class="form-control" id="of-i-observaciones" rows="2"></textarea>
+        </div>
+      </div>
+      <div class="alert alert-warning small d-none mt-3" id="of-error-integrante"></div>
+      <div class="mt-3 text-end">
+        <button type="button" class="btn btn-outline-primary btn-sm" id="of-agregar-integrante">
+          Agregar a la lista
+        </button>
+      </div>
+    </div>
+
+    <div class="mt-3 d-flex justify-content-between">
+      <button type="button" class="btn btn-outline-secondary" data-volver="hogar">Volver</button>
+      <button type="button" class="btn btn-opso" data-siguiente="integrantes">Siguiente: ubicación</button>
+    </div>
+  </section>
+
+  {# ---------- PASO 4: LA UBICACIÓN (HU-11), OPCIONAL ---------- #}
+  <section data-paso="ubicacion" class="card-opso p-4 mb-3 d-none">
+    <h2 class="h5 fw-semibold mb-3">4. Ubicación (opcional)</h2>
+    <p class="text-secondary small">
+      Ponte en la puerta de la vivienda y al aire libre. Si no hay señal GPS
+      todavía, puedes seguir sin ubicación y capturarla otro día desde la ficha
+      de la vivienda ya sincronizada.
+    </p>
+    <button type="button" class="btn btn-opso" id="of-capturar-gps">Capturar mi ubicación</button>
+    <div id="of-gps-estado" class="small mt-3 d-none" role="status" aria-live="polite"></div>
+    <div class="row g-3 mt-1">
+      <div class="col-12 col-md-4">
+        <label class="form-label" for="of-latitud">Latitud</label>
+        <input type="number" step="0.000001" class="form-control" id="of-latitud" placeholder="-36.826700">
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label" for="of-longitud">Longitud</label>
+        <input type="number" step="0.000001" class="form-control" id="of-longitud" placeholder="-73.049700">
+      </div>
+      <div class="col-12 col-md-4">
+        <label class="form-label" for="of-precision_metros">Precisión (metros)</label>
+        <input type="number" min="0" class="form-control" id="of-precision_metros">
+      </div>
+    </div>
+    <div class="alert alert-warning small d-none mt-3" id="of-error-ubicacion"></div>
+    <div class="mt-3 d-flex justify-content-between">
+      <button type="button" class="btn btn-outline-secondary" data-volver="integrantes">Volver</button>
+      <button type="button" class="btn btn-opso" data-siguiente="ubicacion">Siguiente: terminar</button>
+    </div>
+  </section>
+
+  {# ---------- PASO 5: EL RESULTADO (HU-10) ---------- #}
+  <section data-paso="resultado" class="card-opso p-4 mb-3 d-none">
+    <h2 class="h5 fw-semibold mb-3">5. ¿Cómo queda esta encuesta?</h2>
+
+    <div class="form-check mb-2">
+      <input class="form-check-input" type="radio" name="of-resultado" id="of-resultado-borrador" value="borrador" checked>
+      <label class="form-check-label" for="of-resultado-borrador">
+        Guardar como borrador — vuelvo a completarla después
+      </label>
+    </div>
+    <div class="form-check mb-2">
+      <input class="form-check-input" type="radio" name="of-resultado" id="of-resultado-completar" value="completar">
+      <label class="form-check-label" for="of-resultado-completar">
+        Dar por terminada y enviar a revisión
+      </label>
+    </div>
+    <div class="form-check mb-3">
+      <input class="form-check-input" type="radio" name="of-resultado" id="of-resultado-cerrar" value="cerrar_sin_datos">
+      <label class="form-check-label" for="of-resultado-cerrar">
+        Cerrar sin datos — no se pudo levantar
+      </label>
+    </div>
+
+    <div id="of-bloque-borrador">
+      <div class="row g-3">
+        <div class="col-12 col-md-6">
+          <label class="form-label" for="of-nota_avance">Nota para continuar (opcional)</label>
+          <textarea class="form-control" id="of-nota_avance" rows="2"
+            placeholder="Falta el módulo de ingresos. La señora vuelve a las 19:00."></textarea>
+        </div>
+        <div class="col-12 col-md-6">
+          <label class="form-label" for="of-proxima_visita">Próxima visita (opcional)</label>
+          <input type="date" class="form-control" id="of-proxima_visita">
+        </div>
+      </div>
+    </div>
+
+    <div id="of-bloque-completar" class="d-none">
+      <p class="text-secondary small mb-0" id="of-completar-pendientes"></p>
+    </div>
+
+    <div id="of-bloque-cerrar" class="d-none">
+      <div class="form-check">
+        <input class="form-check-input" type="radio" name="of-cierre-estado" id="of-cierre-no_ubicada" value="NO_UBICADA" checked>
+        <label class="form-check-label" for="of-cierre-no_ubicada">La dirección no existe o está deshabitada</label>
+      </div>
+      <div class="form-check mb-2">
+        <input class="form-check-input" type="radio" name="of-cierre-estado" id="of-cierre-rechazada" value="RECHAZADA">
+        <label class="form-check-label" for="of-cierre-rechazada">La familia no quiso participar</label>
+      </div>
+      <label class="form-label" for="of-motivo_cierre">Motivo</label>
+      <textarea class="form-control" id="of-motivo_cierre" rows="2"
+        placeholder="La dirección no existe, el pasaje llega hasta el 40. Confirmado con dos vecinos."></textarea>
+    </div>
+
+    <div class="alert alert-warning small d-none mt-3" id="of-error-resultado"></div>
+
+    <div class="mt-3 d-flex justify-content-between">
+      <button type="button" class="btn btn-outline-secondary" data-volver="ubicacion">Volver</button>
+      <button type="button" class="btn btn-opso" id="of-guardar-en-el-telefono">Guardar en este teléfono</button>
+    </div>
+  </section>
+
+</form>
+
+{# ---------- LO QUE SE MUESTRA DESPUÉS DE GUARDAR ---------- #}
+<div id="of-confirmacion" class="card-opso p-4 text-center d-none">
+  <h2 class="h5 fw-semibold mb-2">Encuesta guardada en este teléfono</h2>
+  <p class="text-secondary mb-3">
+    Todavía no se envió al servidor. Sincroniza cuando tengas señal, desde
+    «Mis encuestas».
+  </p>
+  <div class="d-flex justify-content-center gap-2 flex-wrap">
+    <button type="button" class="btn btn-opso" id="of-censar-otra">Censar otra vivienda</button>
+    <a href="{% url 'fichas:mis_encuestas' %}" class="btn btn-outline-secondary">Volver a mis encuestas</a>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block js_extra %}
+<script src="{% static 'js/encuesta_offline.js' %}"></script>
+<script>OPSOEncuestaOffline.iniciarAsistente();</script>
+{% endblock %}

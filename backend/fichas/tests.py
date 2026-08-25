@@ -16,8 +16,10 @@ romperían la historia sin dar ningún error visible:
 """
 
 import csv
+import json
 import shutil
 import tempfile
+import uuid
 from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO, StringIO
@@ -2074,90 +2076,48 @@ class GrupoFamiliarFormTest(BaseEncuestaTest):
 
 
 # ==========================================================================
-# HU-08 — 22. REGISTRAR UNA VIVIENDA (LA PANTALLA)
+# HU-08 — 22. EL ASISTENTE DE CAPTURA (LA PANTALLA)
+#
+# Desde la HU-24, esta URL ya no procesa un formulario: sirve el asistente
+# offline (HTML + JS), y crear la encuesta ocurre en otro sitio, ver
+# SincronizarEncuestaOfflineTest más abajo (sección HU-24). Lo que sigue siendo
+# de esta vista son las comprobaciones de quién puede entrar y con qué
+# territorio, que no cambiaron.
 # ==========================================================================
 
 
-class RegistrarViviendaTest(BaseEncuestaTest):
+class EncuestaOfflineViewTest(BaseEncuestaTest):
     def setUp(self):
         super().setUp()
         AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
-        self.url = reverse("fichas:vivienda_registrar")
+        self.url = reverse("fichas:encuesta_nueva")
         self.client.force_login(self.marta)
 
-    def datos(self, **extra):
-        base = {
-            "zona": self.zona1.pk,
-            "direccion": "Pasaje Nuevo 10",
-            "referencia": "",
-            "tipo": TipoVivienda.CASA,
-            "tenencia": TenenciaVivienda.ARRENDADA,
-            "materialidad_muros": MaterialidadMuros.ALBANILERIA,
-            "origen_agua": OrigenAgua.RED_PUBLICA,
-            "sistema_sanitario": SistemaSanitario.ALCANTARILLADO,
-            "tiene_electricidad": True,
-            "observaciones": "",
-        }
-        base.update(extra)
-        return base
-
-    def test_el_encuestador_ve_el_formulario(self):
+    def test_el_encuestador_ve_el_asistente(self):
         respuesta = self.client.get(self.url)
 
         self.assertEqual(respuesta.status_code, 200)
-        self.assertContains(respuesta, "Registrar una vivienda")
+        self.assertContains(respuesta, "Nueva encuesta")
 
-    def test_guardar_crea_la_vivienda(self):
-        self.client.post(self.url, self.datos())
+    def test_el_asistente_recibe_las_zonas_asignadas(self):
+        respuesta = self.client.get(self.url)
 
-        self.assertEqual(Vivienda.objects.count(), 1)
+        self.assertContains(respuesta, self.zona1.nombre)
+        self.assertNotContains(respuesta, self.zona_norte.nombre)
 
-    def test_guardar_crea_ademas_su_encuesta(self):
-        """Nadie registra una vivienda «por si acaso»: se registra porque se está ahí."""
-        self.client.post(self.url, self.datos())
+    def test_el_asistente_recibe_la_url_de_sincronizar(self):
+        respuesta = self.client.get(self.url)
 
-        encuesta = Encuesta.objects.get()
-        self.assertEqual(encuesta.censista, self.marta)
-        self.assertEqual(encuesta.estado, EstadoEncuesta.BORRADOR)
-
-    def test_la_encuesta_nueva_no_queda_como_pendiente(self):
-        """PENDIENTE significa «sin visitar», y la visita acaba de ocurrir."""
-        self.client.post(self.url, self.datos())
-
-        self.assertIsNotNone(Encuesta.objects.get().iniciada_en)
-
-    def test_despues_de_guardar_lleva_al_formulario_del_hogar(self):
-        respuesta = self.client.post(self.url, self.datos())
-
-        encuesta = Encuesta.objects.get()
-        self.assertRedirects(
-            respuesta, reverse("fichas:registrar_hogar", kwargs={"pk": encuesta.pk})
+        self.assertContains(
+            respuesta, reverse("fichas:sincronizar_encuesta_offline")
         )
 
-    def test_un_formulario_incompleto_no_crea_nada(self):
-        self.client.post(self.url, self.datos(tipo=""))
-
-        self.assertEqual(Vivienda.objects.count(), 0)
-        self.assertEqual(Encuesta.objects.count(), 0)
-
-    def test_una_zona_ajena_no_crea_nada(self):
-        self.client.post(self.url, self.datos(zona=self.zona_norte.pk))
-
-        self.assertEqual(Vivienda.objects.count(), 0)
-
-    def test_sin_territorio_asignado_no_se_ofrece_el_formulario(self):
+    def test_sin_territorio_asignado_no_se_ofrece_el_asistente(self):
         self.client.force_login(self.juan)
 
         respuesta = self.client.get(self.url)
 
         self.assertContains(respuesta, "No tienes territorio donde registrar")
-
-    def test_sin_territorio_asignado_tampoco_se_puede_enviar(self):
-        self.client.force_login(self.juan)
-
-        self.client.post(self.url, self.datos())
-
-        self.assertEqual(Vivienda.objects.count(), 0)
 
     def test_con_el_operativo_cerrado_no_hay_donde_registrar(self):
         self.operativo.estado = EstadoOperativo.CERRADO
@@ -2167,7 +2127,7 @@ class RegistrarViviendaTest(BaseEncuestaTest):
 
         self.assertContains(respuesta, "No tienes territorio donde registrar")
 
-    def test_el_supervisor_no_puede_registrar(self):
+    def test_el_supervisor_no_puede_entrar(self):
         """No tiene fichas.crear: la separación de funciones la aplica la matriz."""
         self.client.force_login(self.supervisor)
 
@@ -2182,29 +2142,6 @@ class RegistrarViviendaTest(BaseEncuestaTest):
         respuesta = self.client.get(self.url)
 
         self.assertEqual(respuesta.status_code, 302)
-
-    def test_una_direccion_repetida_no_se_guarda_a_la_primera(self):
-        self.crear_vivienda(direccion="Pasaje Nuevo 10")
-
-        self.client.post(self.url, self.datos())
-
-        self.assertEqual(Vivienda.objects.count(), 1)
-
-    def test_una_direccion_repetida_se_guarda_al_confirmar(self):
-        self.crear_vivienda(direccion="Pasaje Nuevo 10")
-
-        self.client.post(self.url, self.datos(confirmar_duplicado="on"))
-
-        self.assertEqual(Vivienda.objects.count(), 2)
-
-    def test_el_aviso_enlaza_la_vivienda_que_ya_existe(self):
-        otra = self.crear_vivienda(direccion="Pasaje Nuevo 10")
-
-        respuesta = self.client.post(self.url, self.datos())
-
-        self.assertContains(
-            respuesta, reverse("fichas:vivienda_detalle", kwargs={"pk": otra.pk})
-        )
 
 
 # ==========================================================================
@@ -2598,14 +2535,14 @@ class FichaConHogarTest(BaseEncuestaTest):
     def test_el_listado_ofrece_registrar_una_vivienda(self):
         respuesta = self.client.get(self.url_lista)
 
-        self.assertContains(respuesta, reverse("fichas:vivienda_registrar"))
+        self.assertContains(respuesta, reverse("fichas:encuesta_nueva"))
 
     def test_al_supervisor_no_se_le_ofrece_registrar(self):
         self.client.force_login(self.supervisor)
 
         respuesta = self.client.get(self.url_lista)
 
-        self.assertNotContains(respuesta, reverse("fichas:vivienda_registrar"))
+        self.assertNotContains(respuesta, reverse("fichas:encuesta_nueva"))
 
 
 # ==========================================================================
@@ -2623,26 +2560,19 @@ class IntegracionHU08Test(BaseEncuestaTest):
         )
         self.client.force_login(self.marta)
 
-        # 2. La encuestadora registra una vivienda al llegar a la puerta.
-        respuesta = self.client.post(
-            reverse("fichas:vivienda_registrar"),
-            {
-                "zona": self.zona1.pk,
-                "direccion": "Pasaje Los Robles 47",
-                "referencia": "Sitio con dos casas",
-                "tipo": TipoVivienda.CASA,
-                "tenencia": TenenciaVivienda.PROPIA_PAGADA,
-                "materialidad_muros": MaterialidadMuros.ALBANILERIA,
-                "origen_agua": OrigenAgua.RED_PUBLICA,
-                "sistema_sanitario": SistemaSanitario.ALCANTARILLADO,
-                "tiene_electricidad": True,
-                "observaciones": "",
-            },
+        # 2. La encuestadora registra una vivienda al llegar a la puerta. Desde la
+        # HU-24 eso ocurre en el asistente offline y llega al servidor como un
+        # solo envío a sincronizar (ver SincronizarEncuestaOfflineTest); aquí se
+        # deja ya creada con el helper de la clase base, porque lo que este
+        # recorrido pone a prueba es lo que viene después: hogar, segunda
+        # familia, listado y ficha.
+        vivienda = self.crear_vivienda(
+            direccion="Pasaje Los Robles 47",
+            referencia="Sitio con dos casas",
+            tenencia=TenenciaVivienda.PROPIA_PAGADA,
         )
-        vivienda = Vivienda.objects.get()
-        encuesta = Encuesta.objects.get()
-        self.assertRedirects(
-            respuesta, reverse("fichas:registrar_hogar", kwargs={"pk": encuesta.pk})
+        encuesta = self.crear(
+            vivienda=vivienda, censista=self.marta, estado=EstadoEncuesta.BORRADOR
         )
 
         # 3. Registra el hogar.
@@ -4548,23 +4478,13 @@ class IntegracionHU10Test(BaseEncuestaTest):
         return timezone.localdate() - timedelta(days=anios * 365 + 100)
 
     def test_recorrido_completo(self):
-        # 1. Se registra la vivienda: la encuesta nace en BORRADOR.
-        self.client.post(
-            reverse("fichas:vivienda_registrar"),
-            {
-                "zona": self.zona1.pk,
-                "direccion": "Av. Central 100",
-                "referencia": "",
-                "tipo": TipoVivienda.CASA,
-                "tenencia": TenenciaVivienda.ARRENDADA,
-                "materialidad_muros": MaterialidadMuros.ALBANILERIA,
-                "origen_agua": OrigenAgua.RED_PUBLICA,
-                "sistema_sanitario": SistemaSanitario.ALCANTARILLADO,
-                "tiene_electricidad": True,
-                "observaciones": "",
-            },
+        # 1. Se registra la vivienda: la encuesta nace en BORRADOR. Desde la
+        # HU-24 eso ocurre en el asistente offline (ver
+        # SincronizarEncuestaOfflineTest); este recorrido pone a prueba el ciclo
+        # de vida que viene después, así que se deja ya creada.
+        encuesta = self.crear(
+            direccion="Av. Central 100", censista=self.marta, estado=EstadoEncuesta.BORRADOR
         )
-        encuesta = Encuesta.objects.get()
         self.assertEqual(encuesta.estado, EstadoEncuesta.BORRADOR)
 
         # 2. Todavía no se puede terminar: falta el hogar.
@@ -8713,4 +8633,372 @@ class TarjetaBaseConsolidadaTest(BaseRevisionTest):
 
         self.assertContains(respuesta, "Base consolidada")
         self.assertContains(respuesta, reverse("fichas:base_consolidada_excel"))
-        self.assertContains(respuesta, reverse("fichas:base_consolidada_csv"))
+
+
+# ==========================================================================
+# HU-24 — 78. SINCRONIZAR UNA ENCUESTA CAPTURADA SIN CONEXIÓN
+#
+# El asistente offline (fichas/encuesta_offline.html + static/js/
+# encuesta_offline.js) no tiene pruebas automáticas: es JavaScript de un solo
+# módulo, verificado en un navegador real con Playwright antes de comitear,
+# igual que la HU-21 y la HU-23 (ver docs/HU-24_*.md). Lo que SÍ se prueba
+# aquí, con el corredor de Django, es el único punto donde ese trabajo toca
+# la base de datos: SincronizarEncuestaOfflineView. Reutiliza los mismos
+# forms que RegistrarViviendaTest/RegistrarHogarTest/etc. probaban por
+# separado, así que estas pruebas cubren el mismo terreno de negocio desde
+# un solo POST en vez de una cadena de ellos.
+# ==========================================================================
+
+
+class SincronizarEncuestaOfflineTest(BaseEncuestaTest):
+    def setUp(self):
+        super().setUp()
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
+        self.url = reverse("fichas:sincronizar_encuesta_offline")
+        self.client.force_login(self.marta)
+
+    def datos_vivienda(self, **extra):
+        base = {
+            "zona": self.zona1.pk,
+            "direccion": "Pasaje Offline 10",
+            "referencia": "",
+            "tipo": TipoVivienda.CASA,
+            "tenencia": TenenciaVivienda.ARRENDADA,
+            "materialidad_muros": MaterialidadMuros.ALBANILERIA,
+            "origen_agua": OrigenAgua.RED_PUBLICA,
+            "sistema_sanitario": SistemaSanitario.ALCANTARILLADO,
+            "tiene_electricidad": True,
+            "observaciones": "",
+            "confirmar_duplicado": False,
+        }
+        base.update(extra)
+        return base
+
+    def datos_hogar(self, **extra):
+        base = {
+            "jefe_hogar_nombre": "Rosa Elena Millán",
+            "jefe_hogar_rut": "",
+            "telefono_contacto": "",
+            "integrantes_declarados": 1,
+            "ingreso_mensual": "",
+            "observaciones": "",
+        }
+        base.update(extra)
+        return base
+
+    def datos_integrante(self, **extra):
+        base = {
+            "parentesco": Parentesco.JEFE_HOGAR,
+            "nombres": "Rosa Elena",
+            "apellidos": "Millán",
+            "rut": "",
+            "sexo": Sexo.FEMENINO,
+            "fecha_nacimiento": "1980-05-01",
+            "nivel_educacional": NivelEducacional.MEDIA_COMPLETA,
+            "situacion_ocupacional": SituacionOcupacional.TRABAJA,
+            "pueblo_originario": PuebloOriginario.NINGUNO,
+            "tiene_discapacidad": False,
+            "observaciones": "",
+        }
+        base.update(extra)
+        return base
+
+    def payload(self, **extra):
+        base = {
+            "cliente_id": str(uuid.uuid4()),
+            "vivienda": self.datos_vivienda(),
+            "hogar": self.datos_hogar(),
+            "integrantes": [self.datos_integrante()],
+            "ubicacion": None,
+            "resultado": "borrador",
+            "borrador": {"nota_avance": "", "proxima_visita": ""},
+            "cierre": {},
+        }
+        base.update(extra)
+        return base
+
+    def sincronizar(self, payload):
+        return self.client.post(
+            self.url, data=json.dumps(payload), content_type="application/json"
+        )
+
+    # -- El caso feliz ------------------------------------------------------
+
+    def test_un_payload_valido_crea_las_cuatro_filas(self):
+        respuesta = self.sincronizar(self.payload())
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta.json()["exito"], True)
+        self.assertEqual(Vivienda.objects.count(), 1)
+        self.assertEqual(Encuesta.objects.count(), 1)
+        self.assertEqual(GrupoFamiliar.objects.count(), 1)
+        self.assertEqual(Integrante.objects.count(), 1)
+
+    def test_la_encuesta_queda_a_nombre_de_quien_sincroniza(self):
+        self.sincronizar(self.payload())
+
+        encuesta = Encuesta.objects.get()
+        self.assertEqual(encuesta.censista, self.marta)
+        self.assertEqual(Vivienda.objects.get().registrada_por, self.marta)
+
+    def test_sin_resultado_explicito_queda_como_borrador(self):
+        self.sincronizar(self.payload())
+
+        self.assertEqual(Encuesta.objects.get().estado, EstadoEncuesta.BORRADOR)
+
+    def test_guarda_el_origen_offline_id(self):
+        cliente_id = str(uuid.uuid4())
+        self.sincronizar(self.payload(cliente_id=cliente_id))
+
+        self.assertEqual(
+            str(Encuesta.objects.get().origen_offline_id), cliente_id
+        )
+
+    # -- Idempotencia: sincronizar dos veces es seguro -----------------------
+
+    def test_reenviar_el_mismo_cliente_id_no_duplica(self):
+        payload = self.payload()
+
+        self.sincronizar(payload)
+        respuesta = self.sincronizar(payload)
+
+        self.assertEqual(respuesta.json()["ya_existia"], True)
+        self.assertEqual(Encuesta.objects.count(), 1)
+
+    def test_falta_cliente_id_responde_400(self):
+        payload = self.payload()
+        del payload["cliente_id"]
+
+        respuesta = self.sincronizar(payload)
+
+        self.assertEqual(respuesta.status_code, 400)
+        self.assertEqual(Encuesta.objects.count(), 0)
+
+    def test_json_invalido_responde_400(self):
+        respuesta = self.client.post(
+            self.url, data="esto no es json", content_type="application/json"
+        )
+
+        self.assertEqual(respuesta.status_code, 400)
+
+    # -- El servidor no confía en lo que asegura el cliente -------------------
+
+    def test_una_zona_ajena_no_crea_nada(self):
+        respuesta = self.sincronizar(
+            self.payload(vivienda=self.datos_vivienda(zona=self.zona_norte.pk))
+        )
+
+        self.assertEqual(respuesta.status_code, 422)
+        self.assertIn("vivienda", respuesta.json()["errores"])
+        self.assertEqual(Vivienda.objects.count(), 0)
+
+    def test_un_formulario_incompleto_no_crea_nada(self):
+        respuesta = self.sincronizar(
+            self.payload(vivienda=self.datos_vivienda(tipo=""))
+        )
+
+        self.assertEqual(respuesta.status_code, 422)
+        self.assertEqual(Vivienda.objects.count(), 0)
+        self.assertEqual(Encuesta.objects.count(), 0)
+
+    def test_sin_el_permiso_de_crear_se_rechaza(self):
+        self.rol_censista.permisos.remove(Permiso.objects.get(codigo="fichas.crear"))
+        self.rol_censista.permisos.remove(Permiso.objects.get(codigo="fichas.editar"))
+
+        respuesta = self.sincronizar(self.payload())
+
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertEqual(Encuesta.objects.count(), 0)
+
+    # -- Duplicados: avisa y solo pasa al confirmar (mismo criterio online) --
+
+    def test_una_direccion_repetida_no_se_crea_sin_confirmar(self):
+        self.crear_vivienda(direccion="Pasaje Offline 10")
+
+        respuesta = self.sincronizar(self.payload())
+
+        self.assertEqual(respuesta.status_code, 422)
+        self.assertEqual(Vivienda.objects.count(), 1)
+
+    def test_una_direccion_repetida_se_crea_al_confirmar(self):
+        self.crear_vivienda(direccion="Pasaje Offline 10")
+
+        respuesta = self.sincronizar(
+            self.payload(
+                vivienda=self.datos_vivienda(confirmar_duplicado=True)
+            )
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(Vivienda.objects.count(), 2)
+
+    # -- Los integrantes: se guardan de a uno, como el flujo online ----------
+
+    def test_dos_integrantes_validos_se_guardan_los_dos(self):
+        segundo = self.datos_integrante(
+            parentesco=Parentesco.HIJO,
+            nombres="Pedro",
+            apellidos="Millán",
+            fecha_nacimiento="2015-01-01",
+            nivel_educacional=NivelEducacional.BASICA_INCOMPLETA,
+            situacion_ocupacional="",
+        )
+
+        respuesta = self.sincronizar(
+            self.payload(
+                hogar=self.datos_hogar(integrantes_declarados=2),
+                integrantes=[self.datos_integrante(), segundo],
+            )
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(Integrante.objects.count(), 2)
+
+    def test_un_rut_repetido_entre_integrantes_no_crea_nada(self):
+        primero = self.datos_integrante(rut="12345678-5")
+        segundo = self.datos_integrante(
+            parentesco=Parentesco.CONYUGE, nombres="Pedro", rut="12345678-5"
+        )
+
+        respuesta = self.sincronizar(
+            self.payload(
+                hogar=self.datos_hogar(integrantes_declarados=2),
+                integrantes=[primero, segundo],
+            )
+        )
+
+        self.assertEqual(respuesta.status_code, 422)
+        self.assertIn("integrantes", respuesta.json()["errores"])
+        # Ni la vivienda ni el primer integrante quedan a medias: es la misma
+        # transacción completa la que se revierte.
+        self.assertEqual(Vivienda.objects.count(), 0)
+        self.assertEqual(Integrante.objects.count(), 0)
+
+    def test_una_fecha_de_nacimiento_futura_no_crea_nada(self):
+        manana = (timezone.localdate() + timedelta(days=1)).isoformat()
+
+        respuesta = self.sincronizar(
+            self.payload(integrantes=[self.datos_integrante(fecha_nacimiento=manana)])
+        )
+
+        self.assertEqual(respuesta.status_code, 422)
+        self.assertEqual(Vivienda.objects.count(), 0)
+
+    # -- La ubicación (HU-11), opcional --------------------------------------
+
+    def test_con_ubicacion_valida_guarda_las_coordenadas(self):
+        respuesta = self.sincronizar(
+            self.payload(
+                ubicacion={
+                    "latitud": "-36.826700",
+                    "longitud": "-73.049700",
+                    "precision_metros": 8,
+                    "confirmar_lejania": False,
+                    "capturada_por_gps": True,
+                }
+            )
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+        vivienda = Vivienda.objects.get()
+        self.assertIsNotNone(vivienda.latitud)
+        self.assertFalse(vivienda.ubicacion_manual)
+
+    def test_una_ubicacion_fuera_de_chile_no_crea_nada(self):
+        respuesta = self.sincronizar(
+            self.payload(
+                ubicacion={
+                    "latitud": "10.000000",
+                    "longitud": "-73.049700",
+                    "precision_metros": 8,
+                    "confirmar_lejania": False,
+                    "capturada_por_gps": False,
+                }
+            )
+        )
+
+        self.assertEqual(respuesta.status_code, 422)
+        self.assertEqual(Vivienda.objects.count(), 0)
+
+    # -- El resultado: borrador, completar o cerrar sin datos ----------------
+
+    def test_completar_con_todo_lo_necesario_deja_la_encuesta_completada(self):
+        respuesta = self.sincronizar(self.payload(resultado="completar"))
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(Encuesta.objects.get().estado, EstadoEncuesta.COMPLETADA)
+
+    def test_completar_sin_todos_los_integrantes_no_crea_nada(self):
+        respuesta = self.sincronizar(
+            self.payload(
+                hogar=self.datos_hogar(integrantes_declarados=3),
+                resultado="completar",
+            )
+        )
+
+        self.assertEqual(respuesta.status_code, 422)
+        self.assertIn("completar", respuesta.json()["errores"])
+        self.assertEqual(Vivienda.objects.count(), 0)
+
+    def test_cerrar_sin_datos_deja_la_encuesta_no_ubicada(self):
+        respuesta = self.sincronizar(
+            self.payload(
+                hogar=None,
+                integrantes=[],
+                resultado="cerrar_sin_datos",
+                cierre={
+                    "estado": "NO_UBICADA",
+                    "motivo_cierre": "La dirección no existe, el pasaje llega hasta el 40.",
+                },
+            )
+        )
+
+        self.assertEqual(respuesta.status_code, 200)
+        encuesta = Encuesta.objects.get()
+        self.assertEqual(encuesta.estado, EstadoEncuesta.NO_UBICADA)
+        self.assertIsNone(GrupoFamiliar.objects.first())
+
+    def test_cerrar_sin_motivo_suficiente_no_crea_nada(self):
+        respuesta = self.sincronizar(
+            self.payload(
+                hogar=None,
+                integrantes=[],
+                resultado="cerrar_sin_datos",
+                cierre={"estado": "NO_UBICADA", "motivo_cierre": "no hay"},
+            )
+        )
+
+        self.assertEqual(respuesta.status_code, 422)
+        self.assertEqual(Vivienda.objects.count(), 0)
+
+
+class EncuestaOfflineViewTest(BaseEncuestaTest):
+    """El GET que sirve el asistente: además de las comprobaciones ya cubiertas
+    más arriba (sección 22), verifica que el JSON incrustado en la página trae
+    lo que necesita el JavaScript.
+    """
+
+    def setUp(self):
+        super().setUp()
+        AsignacionSector.objects.create(sector=self.boldos, censista=self.marta)
+        self.client.force_login(self.marta)
+
+    def test_carga_el_modulo_del_asistente(self):
+        """El registro del service worker vive dentro de encuesta_offline.js,
+        no en el HTML: aquí solo se comprueba que la página lo carga."""
+        respuesta = self.client.get(reverse("fichas:encuesta_nueva"))
+
+        self.assertContains(respuesta, "encuesta_offline.js")
+        self.assertContains(respuesta, "OPSOEncuestaOffline.iniciarAsistente")
+
+    def test_el_sw_js_se_sirve_desde_la_raiz(self):
+        respuesta = self.client.get("/sw.js")
+
+        self.assertEqual(respuesta.status_code, 200)
+        self.assertEqual(respuesta["Content-Type"], "application/javascript")
+
+    def test_sw_js_exige_sesion(self):
+        self.client.logout()
+
+        respuesta = self.client.get("/sw.js")
+        self.assertEqual(respuesta.status_code, 302)

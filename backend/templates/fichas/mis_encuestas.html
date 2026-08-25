@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% load permisos %}
+{% load static permisos %}
 
 {% comment %} ==========================================================================
    MIS ENCUESTAS — /encuestas/
@@ -37,11 +37,12 @@
     </p>
   </div>
   <div class="d-flex gap-2 flex-wrap">
-    {% comment %} El botón de registrar (HU-08) se muestra por PERMISO, igual que el
-       enlace del menú. Quien no puede crear fichas —un supervisor, por ejemplo— no
-       lo ve, y si escribe la dirección a mano la vista lo rechaza igual. {% endcomment %}
+    {% comment %} El botón de registrar (HU-08, ahora el asistente de la HU-24) se
+       muestra por PERMISO, igual que el enlace del menú. Quien no puede crear
+       fichas —un supervisor, por ejemplo— no lo ve, y si escribe la dirección a
+       mano la vista lo rechaza igual. {% endcomment %}
     {% if user|tiene_algun_permiso:"fichas.crear,fichas.editar" %}
-      <a href="{% url 'fichas:vivienda_registrar' %}" class="btn btn-opso btn-sm">
+      <a href="{% url 'fichas:encuesta_nueva' %}" class="btn btn-opso btn-sm">
         Registrar una vivienda
       </a>
     {% endif %}
@@ -52,6 +53,36 @@
     {% endif %}
   </div>
 </div>
+
+{% comment %} HU-24: encuestas capturadas sin conexión que todavía no llegaron al
+   servidor. Vive fuera del `{% if hay_encuestas %}` de abajo a propósito: una
+   cola pendiente tiene que verse aunque el listado del servidor esté vacío —es
+   exactamente el caso de "recién empiezo a censar y todavía no tengo señal para
+   sincronizar la primera". Oculto por CSS hasta que `encuesta_offline.js`
+   encuentre algo en IndexedDB y lo muestre; sin JavaScript simplemente no
+   aparece, porque no hay nada que gestionar sin él. {% endcomment %}
+{% if user|tiene_algun_permiso:"fichas.crear,fichas.editar" %}
+  <div id="opso-cola-offline" class="card-opso p-4 mb-4 d-none">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
+      <div>
+        <h2 class="h5 fw-semibold mb-1">Encuestas pendientes de sincronizar</h2>
+        <p class="text-secondary small mb-0">
+          Capturadas sin conexión en este mismo teléfono. Nadie más puede verlas
+          hasta que se sincronicen.
+        </p>
+      </div>
+      <button type="button" id="opso-cola-offline-sincronizar" class="btn btn-opso btn-sm">
+        Sincronizar
+      </button>
+    </div>
+    <div id="opso-cola-offline-lista" class="table-responsive"></div>
+  </div>
+  <script src="{% static 'js/encuesta_offline.js' %}"></script>
+  <script>OPSOEncuestaOffline.iniciarCola({
+    urlSincronizar: "{% url 'fichas:sincronizar_encuesta_offline' %}",
+    urlAsistente: "{% url 'fichas:encuesta_nueva' %}"
+  });</script>
+{% endif %}
 
 {% if hay_encuestas %}
 
@@ -307,7 +338,7 @@
       {% comment %} Con territorio asignado, la salida útil no es esperar: es
          registrar la primera vivienda al llegar a terreno (HU-08). {% endcomment %}
       {% if user|tiene_algun_permiso:"fichas.crear,fichas.editar" %}
-        <a href="{% url 'fichas:vivienda_registrar' %}" class="btn btn-opso btn-sm mb-3">
+        <a href="{% url 'fichas:encuesta_nueva' %}" class="btn btn-opso btn-sm mb-3">
           Registrar la primera vivienda
         </a>
       {% endif %}

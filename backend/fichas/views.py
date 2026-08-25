@@ -70,12 +70,17 @@ Dicho de otro modo: `operativos.ver_propios` no existe porque no habría ningún
 motivo operativo para revocarlo; `fichas.ver_propias` existe porque sí lo hay.
 """
 
+import json
+import uuid
+from pathlib import Path
+
 from django.conf import settings
 from django.contrib import messages
 from django.db import transaction
 from django.db.models import Case, Count, F, IntegerField, Q, Value, When
-from django.http import FileResponse, Http404, HttpResponse
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 from django.utils.functional import cached_property
 from django.views import View
@@ -106,8 +111,18 @@ from .models import (
     Encuesta,
     EstadoEncuesta,
     Fotografia,
+    GrupoFamiliar,
     Integrante,
+    MaterialidadMuros,
+    NivelEducacional,
+    OrigenAgua,
     Parentesco,
+    PuebloOriginario,
+    Sexo,
+    SistemaSanitario,
+    SituacionOcupacional,
+    TenenciaVivienda,
+    TipoVivienda,
     Vivienda,
 )
 from .reportes import (
@@ -475,90 +490,402 @@ class RegistroEnTerrenoMixin(PermisoRequeridoMixin):
     )
 
 
-class RegistrarViviendaView(RegistroEnTerrenoMixin, View):
-    """Alta de una vivienda nueva y de su primera encuesta. GET muestra, POST guarda.
+def _catalogos_offline():
+    """Los TextChoices que usan los formularios de captura, listos para JSON.
 
-    URL: /encuestas/viviendas/nueva/
+    Se leen de los mismos enums que ya usan `ViviendaForm`/`GrupoFamiliarForm`/
+    `IntegranteForm` — no se copian a mano — para que un valor agregado a un
+    catálogo aparezca aquí solo, sin necesidad de acordarse de actualizar esta
+    función.
+    """
+    return {
+        "tipo": list(TipoVivienda.choices),
+        "tenencia": list(TenenciaVivienda.choices),
+        "materialidad_muros": list(MaterialidadMuros.choices),
+        "origen_agua": list(OrigenAgua.choices),
+        "sistema_sanitario": list(SistemaSanitario.choices),
+        "parentesco": list(Parentesco.choices),
+        "sexo": list(Sexo.choices),
+        "nivel_educacional": list(NivelEducacional.choices),
+        "situacion_ocupacional": list(SituacionOcupacional.choices),
+        "pueblo_originario": list(PuebloOriginario.choices),
+    }
+
+
+def _zonas_offline(censista):
+    """Las zonas asignadas a esta persona, con la misma etiqueta que CampoZona."""
+    return [
+        {
+            "id": zona.pk,
+            "etiqueta": f"{zona.nombre} · {zona.sector.nombre} · {zona.sector.comuna.nombre}",
+        }
+        for zona in zonas_disponibles(censista)
+    ]
+
+
+class EncuestaOfflineView(RegistroEnTerrenoMixin, View):
+    """El asistente de captura de una encuesta nueva, pensado para funcionar sin
+    conexión (HU-24): vivienda, hogar, integrantes y ubicación en una sola
+    pantalla, sin recargar y sin tocar el servidor hasta que se sincroniza.
+
+    URL: /encuestas/nueva/
 
     ----------------------------------------------------------------------
-    UNA VIVIENDA NUEVA NACE SIEMPRE CON UNA ENCUESTA
+    POR QUÉ REEMPLAZA A LO QUE ANTES ERA RegistrarViviendaView
     ----------------------------------------------------------------------
-    Guardar la vivienda crea además la encuesta de quien la registró, en estado
-    BORRADOR. Las dos cosas ocurren en la misma transacción y no hay pantalla para
-    hacer solo una.
+    Hasta la HU-23, registrar una vivienda nueva era un POST real que devolvía un
+    `pk` real, y la pantalla del hogar necesitaba ese `pk` para poder existir. Sin
+    conexión eso es, literalmente, imposible: no hay servidor que devuelva nada.
 
-    Es deliberado: nadie registra una vivienda en terreno «por si acaso». Se
-    registra porque se está ahí, tocando esa puerta, y por lo tanto el trabajo
-    empezó. Dejar la vivienda sin encuesta produciría casas que no le aparecen a
-    nadie en «Mis encuestas» y que nadie va a levantar; dejar la encuesta en
-    PENDIENTE diría que todavía no se visita, y la visita es justamente lo que
-    acaba de pasar.
+    Esta vista ya no procesa un formulario: SIRVE el asistente (plantilla + JS de
+    `static/js/encuesta_offline.js`) que hace vivienda, hogar, integrantes y
+    ubicación enteros en el navegador, guardando cada paso en IndexedDB. El único
+    contacto con el servidor ocurre al pulsar «Sincronizar», que es
+    `SincronizarEncuestaOfflineView`. Es la única forma de crear una encuesta
+    nueva, con o sin conexión: no se mantienen dos pantallas para lo mismo.
 
-    ----------------------------------------------------------------------
-    POR QUÉ View Y NO CreateView
-    ----------------------------------------------------------------------
-    Mismo motivo que AsignarSectorView en la HU-06: aquí no se guarda UN objeto.
-    Se guardan dos, en una transacción, y el destino depende del segundo. Con
-    CreateView habría que sobrescribir `form_valid`, `get_form_kwargs` y
-    `get_success_url` hasta no dejar nada del comportamiento original.
+    Sigue exigiendo el mismo permiso que antes (`RegistroEnTerrenoMixin`): quien
+    puede registrar una vivienda es exactamente la misma persona, tenga o no
+    señal en ese momento.
     """
 
-    template_name = "fichas/vivienda_form.html"
-
-    def formulario(self, datos=None):
-        return ViviendaForm(datos, censista=self.request.user)
+    template_name = "fichas/encuesta_offline.html"
 
     def hay_donde_registrar(self):
         """¿Tiene esta persona alguna zona donde registrar? Si no, no hay pantalla.
 
-        Se comprueba antes de dibujar el formulario porque un formulario cuyo
-        primer desplegable está vacío no se puede completar, y dejar que la persona
-        lo descubra rellenando los otros nueve campos es maltratarla.
+        Un asistente cuyo primer paso no tiene ninguna zona que ofrecer no sirve
+        ni siquiera offline, así que se comprueba aquí, con conexión, antes de
+        entregarlo.
         """
         return zonas_disponibles(self.request.user).exists()
 
     def get(self, request, *args, **kwargs):
         if not self.hay_donde_registrar():
-            return render(request, "fichas/sin_territorio.html", self.contexto_vacio())
-
-        return render(request, self.template_name, self.contexto(self.formulario()))
-
-    def post(self, request, *args, **kwargs):
-        if not self.hay_donde_registrar():
-            return render(request, "fichas/sin_territorio.html", self.contexto_vacio())
-
-        formulario = self.formulario(request.POST)
-
-        if not formulario.is_valid():
-            return render(request, self.template_name, self.contexto(formulario))
-
-        # Las dos escrituras en una sola transacción: una vivienda sin su encuesta
-        # sería una casa que no le aparece a nadie, y es peor que no haber
-        # guardado nada.
-        with transaction.atomic():
-            vivienda = formulario.save()
-            encuesta = Encuesta.objects.create(
-                vivienda=vivienda, censista=request.user
+            return render(
+                request,
+                "fichas/sin_territorio.html",
+                {"titulo_pagina": "Registrar una vivienda"},
             )
-            encuesta.cambiar_estado(EstadoEncuesta.BORRADOR)
 
-        messages.success(
-            request,
-            f"Vivienda «{vivienda.direccion}» registrada. Ahora completa los datos "
-            "del hogar.",
-        )
-        return redirect("fichas:registrar_hogar", pk=encuesta.pk)
+        return render(request, self.template_name, self.contexto())
 
-    def contexto(self, formulario):
+    def contexto(self):
         return {
-            "titulo_pagina": "Registrar una vivienda",
-            "form": formulario,
-            "duplicadas": getattr(formulario, "duplicadas", None),
-            "es_alta": True,
+            "titulo_pagina": "Nueva encuesta",
+            "datos_iniciales": {
+                "zonas": _zonas_offline(self.request.user),
+                "catalogos": _catalogos_offline(),
+                "limites": {
+                    "latitud_minima": str(Vivienda.LATITUD_MINIMA),
+                    "latitud_maxima": str(Vivienda.LATITUD_MAXIMA),
+                    "longitud_minima": str(Vivienda.LONGITUD_MINIMA),
+                    "longitud_maxima": str(Vivienda.LONGITUD_MAXIMA),
+                    "edad_escolaridad": Integrante.EDAD_ESCOLARIDAD,
+                    "edad_ocupacion": Integrante.EDAD_OCUPACION,
+                    "ingreso_maximo": GrupoFamiliarForm.INGRESO_MAXIMO,
+                    "motivo_cierre_minimo": CerrarSinDatosForm.MOTIVO_MINIMO,
+                    "precision_aceptable": Vivienda.PRECISION_ACEPTABLE,
+                },
+                "urls": {
+                    "sincronizar": reverse("fichas:sincronizar_encuesta_offline"),
+                    "mis_encuestas": reverse("fichas:mis_encuestas"),
+                },
+            },
         }
 
-    def contexto_vacio(self):
-        return {"titulo_pagina": "Registrar una vivienda"}
+
+def _a_texto_de_formulario(datos, campos_booleanos_select=(), campos_casilla=()):
+    """Traduce un dict JSON (bool/número/texto nativos) al formato de cadenas que
+    esperan los widgets de Django, sin obligar al JavaScript del asistente a
+    conocer esa diferencia.
+
+    Django distingue dos convenciones de cadena para "verdadero"/"falso" según el
+    widget, y son distintas a propósito de Django, no un capricho de este
+    proyecto:
+
+      - Un `<select>` con opciones `(True, "Sí"), (False, "No")` (como
+        `tiene_electricidad`) renderiza y espera literalmente "True"/"False".
+      - Un `CheckboxInput` (como `confirmar_duplicado` o `tiene_discapacidad`)
+        espera "true"/"false" en minúscula, o directamente la ausencia de la
+        clave para "no marcado".
+
+    Centralizar la traducción aquí, en Python, es lo que evita reescribir a mano
+    en JavaScript estas dos convenciones —y sus mayúsculas— y arriesgarse a que
+    una de las dos copias se equivoque.
+    """
+    normalizado = dict(datos)
+
+    for campo in campos_booleanos_select:
+        if normalizado.get(campo) is not None:
+            normalizado[campo] = str(bool(normalizado[campo]))
+
+    for campo in campos_casilla:
+        normalizado[campo] = "true" if normalizado.get(campo) else "false"
+
+    return normalizado
+
+
+class SincronizacionOfflineInvalida(Exception):
+    """Se levanta dentro de la transacción de sincronización para revertirla.
+
+    `transaction.atomic()` deshace todo lo escrito en cuanto una excepción
+    escapa de su bloque; esta lleva además el detalle de qué falló, para que la
+    vista lo traduzca a la respuesta JSON sin tener que adivinarlo de nuevo.
+    """
+
+    def __init__(self, errores):
+        super().__init__(errores)
+        self.errores = errores
+
+
+class SincronizarEncuestaOfflineView(RegistroEnTerrenoMixin, View):
+    """Recibe UNA encuesta capturada offline y la crea, reutilizando los mismos
+    formularios que usaría el flujo online (HU-24).
+
+    URL: /encuestas/sincronizar/  (POST, JSON)
+
+    ----------------------------------------------------------------------
+    POR QUÉ REUTILIZA LOS FORMS EN VEZ DE VALIDAR "A MANO"
+    ----------------------------------------------------------------------
+    `ViviendaForm`, `GrupoFamiliarForm`, `IntegranteForm`, `UbicacionForm`,
+    `BorradorForm` y `CerrarSinDatosForm` ya conocen cada regla de negocio de
+    estas cuatro tablas: dirección duplicada, zona vigente, RUT único en el
+    hogar, cercanía al resto de la zona, edad mínima para exigir escolaridad…
+    Repetir esas reglas aquí sería mantenerlas en dos sitios, con la certeza de
+    que algún día se desincronizarían. La única validación que SÍ es propia de
+    esta vista es la del punto 2 de abajo.
+
+    ----------------------------------------------------------------------
+    LA SEGURIDAD FRENTE A UN CLIENTE QUE MIENTE
+    ----------------------------------------------------------------------
+    El JavaScript del asistente no valida nada que dependa del servidor —zona
+    todavía asignada, dirección duplicada, RUT repetido— porque offline no puede.
+    Esta vista tampoco confía en lo que el celular asegura: `ViviendaForm` vuelve
+    a construir el queryset de zonas permitidas con `censista=request.user` en
+    este mismo instante, así que una zona que dejó de estar asignada se rechaza
+    aquí igual que se rechazaría en el flujo online, aunque el payload la incluya.
+
+    ----------------------------------------------------------------------
+    SINCRONIZAR DOS VECES LA MISMA ENCUESTA ES SEGURO
+    ----------------------------------------------------------------------
+    Ver `Encuesta.origen_offline_id`. Si el `cliente_id` ya existe, se devuelve la
+    encuesta ya creada en vez de duplicarla — necesario porque una conexión débil
+    puede cortar la RESPUESTA de un envío que en realidad sí se guardó, y el
+    asistente no tiene forma de distinguir eso de un fallo real.
+    """
+
+    def post(self, request, *args, **kwargs):
+        try:
+            payload = json.loads(request.body.decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return JsonResponse(
+                {"exito": False, "error": "El cuerpo de la petición no es JSON válido."},
+                status=400,
+            )
+
+        try:
+            cliente_id = uuid.UUID(str(payload.get("cliente_id")))
+        except (TypeError, ValueError):
+            return JsonResponse(
+                {"exito": False, "error": "Falta un cliente_id válido."}, status=400
+            )
+
+        existente = Encuesta.objects.filter(origen_offline_id=cliente_id).first()
+
+        if existente is not None:
+            return JsonResponse(
+                {
+                    "exito": True,
+                    "ya_existia": True,
+                    "encuesta_id": existente.pk,
+                    "vivienda_id": existente.vivienda_id,
+                }
+            )
+
+        try:
+            with transaction.atomic():
+                encuesta = self._crear_encuesta(request, payload, cliente_id)
+        except SincronizacionOfflineInvalida as error:
+            return JsonResponse({"exito": False, "errores": error.errores}, status=422)
+
+        return JsonResponse(
+            {
+                "exito": True,
+                "ya_existia": False,
+                "encuesta_id": encuesta.pk,
+                "vivienda_id": encuesta.vivienda_id,
+            }
+        )
+
+    def _crear_encuesta(self, request, payload, cliente_id):
+        """Todo lo que ocurre DENTRO de la transacción: si algo falla a mitad de
+        camino, nada de lo anterior queda a medias — ni la vivienda, ni el hogar,
+        ni los integrantes ya guardados de esta misma encuesta.
+        """
+        datos_vivienda = _a_texto_de_formulario(
+            payload.get("vivienda") or {},
+            campos_booleanos_select=("tiene_electricidad",),
+            campos_casilla=("confirmar_duplicado",),
+        )
+        vivienda_form = ViviendaForm(datos_vivienda, censista=request.user)
+
+        if not vivienda_form.is_valid():
+            raise SincronizacionOfflineInvalida(
+                {"vivienda": vivienda_form.errors.get_json_data()}
+            )
+
+        vivienda = vivienda_form.save()
+
+        encuesta = Encuesta.objects.create(
+            vivienda=vivienda, censista=request.user, origen_offline_id=cliente_id
+        )
+        encuesta.cambiar_estado(EstadoEncuesta.BORRADOR)
+
+        datos_hogar = payload.get("hogar")
+
+        if datos_hogar:
+            hogar_form = GrupoFamiliarForm(datos_hogar)
+
+            if not hogar_form.is_valid():
+                raise SincronizacionOfflineInvalida(
+                    {"hogar": hogar_form.errors.get_json_data()}
+                )
+
+            hogar = hogar_form.save(commit=False)
+            hogar.encuesta = encuesta
+            hogar.save()
+
+            errores_integrantes = []
+
+            for indice, datos_integrante in enumerate(payload.get("integrantes") or []):
+                integrante_form = IntegranteForm(
+                    _a_texto_de_formulario(
+                        datos_integrante, campos_casilla=("tiene_discapacidad",)
+                    ),
+                    grupo_familiar=hogar,
+                )
+
+                if not integrante_form.is_valid():
+                    errores_integrantes.append(
+                        {
+                            "indice": indice,
+                            "errores": integrante_form.errors.get_json_data(),
+                        }
+                    )
+                    continue
+
+                # Se guarda de inmediato, no al final: la validación de RUT único
+                # del SIGUIENTE integrante consulta `grupo_familiar.integrantes`
+                # en la base de datos, y solo ve a este si ya está guardado — es
+                # lo mismo que ocurre online, donde cada persona es un POST
+                # aparte que se confirma antes de que llegue la siguiente.
+                integrante_form.save()
+
+            if errores_integrantes:
+                raise SincronizacionOfflineInvalida({"integrantes": errores_integrantes})
+
+        datos_ubicacion = payload.get("ubicacion")
+
+        if datos_ubicacion:
+            datos_ubicacion = dict(datos_ubicacion)
+            # UbicacionForm.save() no mira cleaned_data para esto: mira
+            # self.data.get("capturada") == "1", igual que hace la plantilla
+            # online cuando el navegador entregó el punto solo.
+            if datos_ubicacion.pop("capturada_por_gps", False):
+                datos_ubicacion["capturada"] = "1"
+
+            ubicacion_form = UbicacionForm(
+                _a_texto_de_formulario(
+                    datos_ubicacion, campos_casilla=("confirmar_lejania",)
+                ),
+                instance=vivienda,
+            )
+
+            if not ubicacion_form.is_valid():
+                raise SincronizacionOfflineInvalida(
+                    {"ubicacion": ubicacion_form.errors.get_json_data()}
+                )
+
+            ubicacion_form.save()
+
+        # Se vuelve a leer desde la base para que `pasos_pendientes()` vea el
+        # hogar y los integrantes recién guardados: el objeto `encuesta` en
+        # memoria todavía tiene en caché el estado de ANTES de guardarlos.
+        encuesta = Encuesta.objects.select_related(
+            "vivienda", "grupo_familiar"
+        ).get(pk=encuesta.pk)
+
+        resultado = payload.get("resultado")
+
+        if resultado == "completar":
+            pendientes = encuesta.pasos_pendientes()
+
+            if pendientes:
+                raise SincronizacionOfflineInvalida(
+                    {"completar": pendientes[0]["texto"]}
+                )
+
+            encuesta.cambiar_estado(EstadoEncuesta.COMPLETADA)
+        elif resultado == "cerrar_sin_datos":
+            cierre_form = CerrarSinDatosForm(payload.get("cierre") or {})
+
+            if not cierre_form.is_valid():
+                raise SincronizacionOfflineInvalida(
+                    {"cierre": cierre_form.errors.get_json_data()}
+                )
+
+            encuesta.motivo_cierre = cierre_form.cleaned_data["motivo_cierre"]
+            # La próxima visita se borra: la encuesta ya no espera a nadie, igual
+            # que en CerrarSinDatosView.
+            encuesta.proxima_visita = None
+            encuesta.save(update_fields=["motivo_cierre", "proxima_visita"])
+            encuesta.cambiar_estado(cierre_form.cleaned_data["estado"])
+        else:
+            borrador_form = BorradorForm(payload.get("borrador") or {}, instance=encuesta)
+
+            if not borrador_form.is_valid():
+                raise SincronizacionOfflineInvalida(
+                    {"borrador": borrador_form.errors.get_json_data()}
+                )
+
+            borrador_form.save()
+
+        return encuesta
+
+
+class ServirServiceWorkerView(View):
+    """Entrega el service worker del asistente offline desde la raíz del sitio.
+
+    URL: /sw.js (declarada en config/urls.py, no aquí — ver el comentario ahí)
+
+    Un service worker solo puede controlar el subárbol de URLs igual o superior a
+    la ruta desde la que el navegador lo obtuvo: servirlo bajo `/static/js/...` lo
+    dejaría atrapado en `/static/`, que no sirve para vigilar `/encuestas/`. Se
+    lee el archivo directamente del disco —no pasa por `collectstatic` ni por
+    `ManifestStaticFilesStorage`— para que la URL sea siempre la misma y no un
+    nombre con hash que cambia en cada despliegue: un service worker registrado
+    con una URL que dejó de existir simplemente deja de poder actualizarse. Mismo
+    principio que `ServirFotografiaView`: no todo archivo se sirve como se
+    guarda.
+
+    No exige ningún permiso de `fichas`, solo sesión iniciada (la exige el
+    middleware de la HU-01 por defecto): es un script genérico, no un dato del
+    censo, y el navegador solo necesita descargarlo una vez —estando conectado—
+    para instalarlo.
+    """
+
+    RUTA_ARCHIVO = Path(settings.BASE_DIR) / "static" / "js" / "encuesta_offline_sw.js"
+
+    def get(self, request, *args, **kwargs):
+        contenido = self.RUTA_ARCHIVO.read_bytes()
+
+        respuesta = HttpResponse(contenido, content_type="application/javascript")
+        # Sin esto, el navegador puede tardar hasta 24 horas en notar que el
+        # service worker cambió: el propio estándar recomienda no cachearlo.
+        respuesta["Cache-Control"] = "no-cache"
+        respuesta["X-Content-Type-Options"] = "nosniff"
+        return respuesta
 
 
 class EditarViviendaView(RegistroEnTerrenoMixin, View):
