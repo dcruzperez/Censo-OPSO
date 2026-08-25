@@ -138,9 +138,24 @@ mantener esas reglas escritas dos veces. Si algún día cambia una regla —el l
 mínimo de un motivo de cierre, el rango de coordenadas de Chile—, cambia en un solo
 sitio y las dos vías la heredan.
 
-Si cualquier formulario falla, no se crea nada (`transaction.atomic()` revierte la
-vivienda, el hogar y los integrantes que sí se habían guardado) y se devuelve
-`{"exito": false, "errores": {...}}` con el detalle por campo.
+Si cualquier formulario falla —un dato realmente inválido: un RUT mal escrito, una
+zona ya no asignada—, no se crea nada (`transaction.atomic()` revierte la vivienda, el
+hogar y los integrantes que sí se habían guardado) y se devuelve `{"exito": false,
+"errores": {...}}` con el detalle por campo.
+
+**Excepción deliberada: pedir "completar" sin tener todo lo necesario no revierte
+nada.** Se detectó probando el asistente con datos reales: si faltaba registrar a la
+jefa de hogar y se elegía "dar por terminada", la transacción entera se revertía —ni
+siquiera la vivienda quedaba creada— y la encuesta desaparecía sin dejar rastro en el
+servidor. Como el asistente offline no tiene pantalla de edición, eso dejaba a la
+persona sin ningún lugar donde corregirlo: la única salida era volver a capturar la
+encuesta entera. Se corrigió para que, en ese caso puntual, la encuesta se guarde de
+todas formas como `BORRADOR` —con la vivienda, el hogar y lo que sí se capturó— y la
+respuesta incluya `"advertencia"` con qué falta; la cola de "Mis encuestas" lo muestra
+como aviso (no como error) con un enlace directo a la ficha, para terminarla ahí por
+las pantallas online de siempre. Es, en el fondo, imitar lo que ya pasaba en el flujo
+online: crear la encuesta y completarla son dos pasos distintos, así que uno puede
+fallar sin borrar el otro.
 
 El botón **"Sincronizar"** (en `templates/fichas/mis_encuestas.html`, cargando
 `encuesta_offline.js` en modo "gestionar cola") recorre la cola local **una por una,
@@ -338,15 +353,19 @@ completa hasta que quedó limpia.
 
 ## 11. Limitaciones
 
-**Corregir un dato rechazado al sincronizar (fuera de duplicado/lejanía) exige volver
-a capturar.** La cola de "Mis encuestas" no reabre el asistente pre-rellenado para
-editar una encuesta ya guardada localmente con un error de validación genuino (un RUT
-mal escrito, por ejemplo): solo ofrece eliminarla de la cola. Es una limitación real,
-aceptada a propósito por alcance: reabrir el asistente en modo edición para una
-encuesta que todavía no tiene `pk` del servidor habría significado duplicar buena
-parte de la lógica de "restaurar campos" que ya existe para la recuperación de
-borradores, para un caso que en la práctica debería ser raro (el asistente ya replica
-en el cliente casi todas las reglas de formato que producen ese tipo de rechazo).
+**Corregir un DATO realmente inválido (no "falta algo para completar", sino "un campo
+está mal escrito") exige volver a capturar.** La cola de "Mis encuestas" no reabre el
+asistente pre-rellenado para editar una encuesta ya guardada localmente con un RUT mal
+escrito, por ejemplo: solo ofrece eliminarla de la cola. El caso más frecuente en la
+práctica —faltó algo para poder "completar" (el jefe de hogar, un integrante)— **ya no
+cae en esta limitación**: se corrigió para que la encuesta se guarde de todas formas
+como borrador (ver §5), y termine de completarse desde la ficha ya creada en el
+servidor. Lo que queda de esta limitación es más angosto: un dato genuinamente mal
+formado que el asistente debería haber atajado en el propio celular y no lo hizo. Se
+acepta por alcance —reabrir el asistente en modo edición para una encuesta sin `pk`
+todavía habría significado duplicar buena parte de la lógica de "restaurar campos"
+que ya existe para la recuperación de borradores, para un caso que ya es la
+excepción de la excepción—.
 
 **Solo un borrador "en progreso" a la vez.** El asistente resuelve "cerré la pestaña a
 medio camino de la vivienda que estoy censando ahora mismo", no "tengo tres viviendas

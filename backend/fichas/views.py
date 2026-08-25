@@ -673,6 +673,16 @@ class SincronizarEncuestaOfflineView(RegistroEnTerrenoMixin, View):
     encuesta ya creada en vez de duplicarla — necesario porque una conexión débil
     puede cortar la RESPUESTA de un envío que en realidad sí se guardó, y el
     asistente no tiene forma de distinguir eso de un fallo real.
+
+    ----------------------------------------------------------------------
+    "COMPLETAR" SIN TODO LO NECESARIO NO DESCARTA LA ENCUESTA
+    ----------------------------------------------------------------------
+    Si faltan piezas para completar (el jefe de hogar, algún integrante
+    declarado), la vivienda, el hogar y lo que sí se capturó se guardan de
+    todas formas, como BORRADOR — no se revierte la transacción entera. El
+    asistente offline no tiene pantalla de edición, así que descartarlo todo
+    dejaría a la persona sin ningún lugar donde corregir lo que falta. Ver el
+    detalle en `_crear_encuesta`.
     """
 
     def post(self, request, *args, **kwargs):
@@ -705,7 +715,7 @@ class SincronizarEncuestaOfflineView(RegistroEnTerrenoMixin, View):
 
         try:
             with transaction.atomic():
-                encuesta = self._crear_encuesta(request, payload, cliente_id)
+                encuesta, advertencia = self._crear_encuesta(request, payload, cliente_id)
         except SincronizacionOfflineInvalida as error:
             return JsonResponse({"exito": False, "errores": error.errores}, status=422)
 
@@ -715,13 +725,20 @@ class SincronizarEncuestaOfflineView(RegistroEnTerrenoMixin, View):
                 "ya_existia": False,
                 "encuesta_id": encuesta.pk,
                 "vivienda_id": encuesta.vivienda_id,
+                "advertencia": advertencia,
             }
         )
 
     def _crear_encuesta(self, request, payload, cliente_id):
-        """Todo lo que ocurre DENTRO de la transacción: si algo falla a mitad de
-        camino, nada de lo anterior queda a medias — ni la vivienda, ni el hogar,
-        ni los integrantes ya guardados de esta misma encuesta.
+        """Todo lo que ocurre DENTRO de la transacción. Devuelve `(encuesta,
+        advertencia)`: `advertencia` es `None` salvo cuando se pidió
+        "completar" y faltaba algo, caso en el que la encuesta SÍ se crea
+        —como borrador— y se explica qué falta en vez de descartar todo.
+
+        Para cualquier otro problema (un formulario inválido de verdad: un
+        RUT mal escrito, una zona que ya no está asignada), si algo falla a
+        mitad de camino nada de lo anterior queda a medias — ni la vivienda,
+        ni el hogar, ni los integrantes ya guardados de esta misma encuesta.
         """
         datos_vivienda = _a_texto_de_formulario(
             payload.get("vivienda") or {},
@@ -817,16 +834,36 @@ class SincronizarEncuestaOfflineView(RegistroEnTerrenoMixin, View):
         ).get(pk=encuesta.pk)
 
         resultado = payload.get("resultado")
+        advertencia = None
 
         if resultado == "completar":
             pendientes = encuesta.pasos_pendientes()
 
+            # A propósito, esto NO levanta SincronizacionOfflineInvalida.
+            #
+            # Si lo hiciera, la transacción completa se revertiría — vivienda,
+            # hogar y los integrantes que sí se alcanzaron a capturar— y la
+            # encuesta desaparecería sin dejar rastro en el servidor. Eso deja
+            # a la persona sin ningún lugar donde corregir lo que falta: el
+            # asistente offline no tiene pantalla de edición, así que "se
+            # perdió todo, vuelve a capturarla entera" sería la única salida.
+            #
+            # En el flujo ONLINE esto no pasa porque crear la encuesta y
+            # completarla son dos POST distintos: si falta el jefe de hogar,
+            # CompletarEncuestaView avisa pero la vivienda y el hogar ya están
+            # guardados desde antes, y se completan por las pantallas
+            # normales. Aquí se imita ese mismo resultado sin necesitar dos
+            # peticiones: se deja la encuesta en BORRADOR —que es el estado en
+            # el que ya está, ver más arriba— y se avisa qué falta, para que
+            # la persona la termine desde "Mis encuestas" con conexión.
             if pendientes:
-                raise SincronizacionOfflineInvalida(
-                    {"completar": pendientes[0]["texto"]}
+                advertencia = (
+                    "Se guardó como borrador: no se pudo completar porque "
+                    f"falta {pendientes[0]['texto'].rstrip('.').lower()}. "
+                    "Complétala desde «Mis encuestas»."
                 )
-
-            encuesta.cambiar_estado(EstadoEncuesta.COMPLETADA)
+            else:
+                encuesta.cambiar_estado(EstadoEncuesta.COMPLETADA)
         elif resultado == "cerrar_sin_datos":
             cierre_form = CerrarSinDatosForm(payload.get("cierre") or {})
 
@@ -851,7 +888,7 @@ class SincronizarEncuestaOfflineView(RegistroEnTerrenoMixin, View):
 
             borrador_form.save()
 
-        return encuesta
+        return encuesta, advertencia
 
 
 class ServirServiceWorkerView(View):

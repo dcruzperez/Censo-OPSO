@@ -867,14 +867,26 @@ window.OPSOEncuestaOffline = (function () {
         })
         .then(function (resultado) {
           if (resultado.ok && resultado.cuerpo.exito) {
-            return eliminarRegistro(registro.clienteId);
+            return eliminarRegistro(registro.clienteId).then(function () {
+              return resultado.cuerpo.advertencia
+                ? {
+                    direccion: registro.direccionEtiqueta,
+                    advertencia: resultado.cuerpo.advertencia,
+                    encuestaId: resultado.cuerpo.encuesta_id,
+                  }
+                : null;
+            });
           }
           registro.errorSync = interpretarError(resultado.cuerpo);
-          return guardarRegistro(registro);
+          return guardarRegistro(registro).then(function () {
+            return null;
+          });
         })
         .catch(function () {
           registro.errorSync = { mensaje: "No se pudo enviar: revisa tu conexión e inténtalo de nuevo.", campoConfirmar: null };
-          return guardarRegistro(registro);
+          return guardarRegistro(registro).then(function () {
+            return null;
+          });
         });
     }
 
@@ -947,9 +959,31 @@ window.OPSOEncuestaOffline = (function () {
       return "";
     }
 
+    function pintarAvisos(avisos) {
+      var contenedor = document.getElementById("opso-cola-offline-avisos");
+      if (!avisos.length) {
+        contenedor.innerHTML = "";
+        return;
+      }
+
+      contenedor.innerHTML = avisos.map(function (aviso) {
+        var url = aviso.encuestaId
+          ? opciones.patronUrlEncuesta.replace(/0(\/?)$/, aviso.encuestaId + "$1")
+          : null;
+        return (
+          '<div class="alert alert-warning small mb-2" role="alert">' +
+          "<strong>" + (aviso.direccion || "Una encuesta") + ":</strong> " + aviso.advertencia +
+          (url ? ' <a href="' + url + '">Ir a la encuesta</a>' : "") +
+          "</div>"
+        );
+      }).join("");
+    }
+
     botonSincronizar.addEventListener("click", function () {
       botonSincronizar.disabled = true;
       botonSincronizar.textContent = "Sincronizando…";
+
+      var avisos = [];
 
       listarRegistros()
         .then(function (registros) {
@@ -968,11 +1002,16 @@ window.OPSOEncuestaOffline = (function () {
                 registro[destino.bloque][destino.campo] = true;
               }
             }
-            return cadena.then(function () { return sincronizarUna(registro); });
+            return cadena.then(function () {
+              return sincronizarUna(registro).then(function (aviso) {
+                if (aviso) avisos.push(aviso);
+              });
+            });
           }, Promise.resolve());
         })
         .then(refrescar)
         .then(function () {
+          pintarAvisos(avisos);
           botonSincronizar.disabled = false;
           botonSincronizar.textContent = "Sincronizar";
         });

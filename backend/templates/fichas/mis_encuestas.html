@@ -76,11 +76,20 @@
       </button>
     </div>
     <div id="opso-cola-offline-lista" class="table-responsive"></div>
+    {% comment %} Se llena solo tras pulsar "Sincronizar", y solo si alguna
+       encuesta se guardó pero quedó incompleta (p. ej. faltó el jefe de
+       hogar): sync la crea igual, como borrador, en vez de descartarla —ver
+       SincronizarEncuestaOfflineView, sección "COMPLETAR" SIN TODO LO
+       NECESARIO. {% endcomment %}
+    <div id="opso-cola-offline-avisos" class="mt-3"></div>
   </div>
   <script src="{% static 'js/encuesta_offline.js' %}"></script>
   <script>OPSOEncuestaOffline.iniciarCola({
     urlSincronizar: "{% url 'fichas:sincronizar_encuesta_offline' %}",
-    urlAsistente: "{% url 'fichas:encuesta_nueva' %}"
+    urlAsistente: "{% url 'fichas:encuesta_nueva' %}",
+    {% comment %} Patrón con un pk de relleno (0): el JS le cambia el "0" por
+       el id real. Evita construir la URL de la ficha a mano en JavaScript. {% endcomment %}
+    patronUrlEncuesta: "{% url 'fichas:encuesta_detalle' 0 %}"
   });</script>
 {% endif %}
 

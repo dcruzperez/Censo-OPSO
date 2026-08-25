@@ -8928,7 +8928,13 @@ class SincronizarEncuestaOfflineTest(BaseEncuestaTest):
         self.assertEqual(respuesta.status_code, 200)
         self.assertEqual(Encuesta.objects.get().estado, EstadoEncuesta.COMPLETADA)
 
-    def test_completar_sin_todos_los_integrantes_no_crea_nada(self):
+    def test_completar_sin_todos_los_integrantes_se_guarda_como_borrador(self):
+        """No se descarta la encuesta: el asistente offline no tiene pantalla
+        de edición, así que perder la vivienda y el hogar ya capturados por
+        no poder "completar" dejaría a la persona sin dónde corregirlo. Se
+        guarda como borrador —que es el estado en el que ya nace— y se avisa
+        qué falta, para terminarla desde "Mis encuestas" por el flujo online.
+        """
         respuesta = self.sincronizar(
             self.payload(
                 hogar=self.datos_hogar(integrantes_declarados=3),
@@ -8936,9 +8942,20 @@ class SincronizarEncuestaOfflineTest(BaseEncuestaTest):
             )
         )
 
-        self.assertEqual(respuesta.status_code, 422)
-        self.assertIn("completar", respuesta.json()["errores"])
-        self.assertEqual(Vivienda.objects.count(), 0)
+        self.assertEqual(respuesta.status_code, 200)
+        cuerpo = respuesta.json()
+        self.assertTrue(cuerpo["exito"])
+        self.assertIsNotNone(cuerpo["advertencia"])
+        self.assertEqual(Vivienda.objects.count(), 1)
+        encuesta = Encuesta.objects.get()
+        self.assertEqual(encuesta.estado, EstadoEncuesta.BORRADOR)
+        self.assertEqual(GrupoFamiliar.objects.count(), 1)
+        self.assertEqual(Integrante.objects.count(), 1)
+
+    def test_completar_exitoso_no_trae_advertencia(self):
+        respuesta = self.sincronizar(self.payload(resultado="completar"))
+
+        self.assertIsNone(respuesta.json()["advertencia"])
 
     def test_cerrar_sin_datos_deja_la_encuesta_no_ubicada(self):
         respuesta = self.sincronizar(
