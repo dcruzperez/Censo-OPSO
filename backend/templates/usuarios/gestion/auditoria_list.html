@@ -91,8 +91,6 @@
                 <span class="badge text-bg-light border">Rol</span>
                 {{ registro.rol_afectado_nombre }}
               {% elif registro.objeto_nombre %}
-                {# HU-05: el tipo va delante porque «Los Boldos» no dice si es un
-                   sector o una comuna, y en una bitácora esa diferencia importa. #}
                 <span class="badge text-bg-light border">{{ registro.etiqueta_objeto }}</span>
                 {{ registro.objeto_nombre }}
               {% else %}

@@ -8572,25 +8572,50 @@ class ExportarBaseTest(BaseRevisionTest):
         self.assertEqual(respuesta["Content-Type"], "text/csv")
         self.assertIn("attachment", respuesta["Content-Disposition"])
 
-    def test_el_supervisor_no_puede_aunque_tenga_reportes_exportar(self):
-        """`reportes.exportar_base` es un permiso distinto de `reportes.exportar`
-        (HU-19): tenerlo no basta para descargar datos personales.
+    def test_el_supervisor_descarga_el_excel(self):
+        """El alcance de HU-20 se amplió al Supervisor (0009_exportar_base_supervisor):
+        ya no es exclusivo del Administrador.
+        """
+        encuesta = self.recibida()
+        self.con_hogar(encuesta, declarados=1, personas=1)
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_excel)
+
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_el_supervisor_descarga_el_csv(self):
+        encuesta = self.recibida()
+        self.con_hogar(encuesta, declarados=1, personas=1)
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url_csv)
+
+        self.assertEqual(respuesta.status_code, 200)
+
+    def test_el_supervisor_pierde_acceso_si_se_retira_solo_ese_permiso(self):
+        """`reportes.exportar_base` sigue siendo un permiso distinto de
+        `reportes.exportar` (HU-19): tener el segundo no basta para el primero,
+        aunque hoy el Supervisor tenga ambos por defecto.
         """
         self.assertTrue(self.supervisor.tiene_permiso("reportes.exportar"))
+        self.rol_supervisor.permisos.remove(
+            Permiso.objects.get(codigo="reportes.exportar_base")
+        )
         self.client.force_login(self.supervisor)
 
         self.assertEqual(self.client.get(self.url_excel).status_code, 302)
         self.assertEqual(self.client.get(self.url_csv).status_code, 302)
 
-    def test_el_supervisor_puede_si_la_matriz_se_lo_concede(self):
-        """El permiso es configurable, no un `if rol == ADMINISTRADOR` fijo en la
-        vista: si el administrador se lo concede a otro rol desde la matriz de
-        la HU-04, ese rol puede usarlo igual.
+    def test_el_censista_puede_si_la_matriz_se_lo_concede(self):
+        """El permiso sigue siendo configurable, no un `if rol in (...)` fijo en
+        la vista: si el administrador se lo concede a un tercer rol desde la
+        matriz de la HU-04, ese rol puede usarlo igual.
         """
-        self.rol_supervisor.permisos.add(
+        self.rol_censista.permisos.add(
             Permiso.objects.get(codigo="reportes.exportar_base")
         )
-        self.client.force_login(self.supervisor)
+        self.client.force_login(self.marta)
 
         self.assertEqual(self.client.get(self.url_excel).status_code, 200)
 
@@ -8633,6 +8658,269 @@ class TarjetaBaseConsolidadaTest(BaseRevisionTest):
 
         self.assertContains(respuesta, "Base consolidada")
         self.assertContains(respuesta, reverse("fichas:base_consolidada_excel"))
+
+    def test_el_supervisor_ve_la_tarjeta_con_los_enlaces(self):
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(reverse("dashboards:supervisor"))
+
+        self.assertContains(respuesta, "Base consolidada")
+        self.assertContains(respuesta, reverse("fichas:base_consolidada_excel"))
+
+
+# ==========================================================================
+# HU-20 (ampliación) — 77.1 INDICADORES PARA CAMPAÑAS DE AYUDA
+#
+# No es una historia nueva: es la misma HU-20 vista desde el otro extremo. La
+# base consolidada exporta la PII completa para análisis externo; esto agrega
+# esa misma base a conteos —sin un solo nombre ni RUT— para decidir el TAMAÑO
+# de una campaña de ayuda (padrinazgo, quintal de harina) antes de salir a
+# buscar recursos. Por eso vive detrás de `reportes.ver`, no de
+# `reportes.exportar_base`.
+# ==========================================================================
+
+
+class BaseCampanasTest(BaseRevisionTest):
+    """Escenario común: helper para fijar la edad exacta de un integrante."""
+
+    def fecha_para_edad(self, edad):
+        """La fecha de nacimiento que hace que `Integrante.edad()` devuelva
+        exactamente `edad` hoy, sin depender de en qué mes se corra la prueba.
+        """
+        hoy = timezone.localdate()
+        return hoy.replace(year=hoy.year - edad)
+
+    def con_persona(self, hogar, edad, tiene_discapacidad=False, numero=0):
+        return Integrante.objects.create(
+            grupo_familiar=hogar,
+            parentesco=Parentesco.JEFE_HOGAR if numero == 0 else Parentesco.HIJO,
+            nombres=f"Persona {numero}",
+            apellidos="Millán",
+            sexo=Sexo.FEMENINO,
+            fecha_nacimiento=self.fecha_para_edad(edad),
+            tiene_discapacidad=tiene_discapacidad,
+        )
+
+
+class IndicadoresCampanasTest(BaseCampanasTest):
+    """`Integrante.indicadores_campanas()`: niños por tramo, adultos mayores,
+    discapacidad.
+    """
+
+    def test_clasifica_los_tramos_de_infancia(self):
+        encuesta = self.recibida()
+        hogar = self.con_hogar(encuesta, declarados=3)
+        self.con_persona(hogar, edad=3, numero=0)
+        self.con_persona(hogar, edad=8, numero=1)
+        self.con_persona(hogar, edad=15, numero=2)
+
+        indicadores = Integrante.indicadores_campanas()
+
+        self.assertEqual(indicadores["ninos"]["total"], 3)
+        tramos = {t["etiqueta"]: t["total"] for t in indicadores["ninos"]["tramos"]}
+        self.assertEqual(tramos["0 a 5 años"], 1)
+        self.assertEqual(tramos["6 a 12 años"], 1)
+        self.assertEqual(tramos["13 a 17 años"], 1)
+
+    def test_un_adulto_no_es_un_nino(self):
+        encuesta = self.recibida()
+        hogar = self.con_hogar(encuesta, declarados=1)
+        self.con_persona(hogar, edad=40)
+
+        indicadores = Integrante.indicadores_campanas()
+
+        self.assertEqual(indicadores["ninos"]["total"], 0)
+
+    def test_cuenta_adultos_mayores_desde_los_60(self):
+        encuesta = self.recibida()
+        hogar = self.con_hogar(encuesta, declarados=2)
+        self.con_persona(hogar, edad=59, numero=0)
+        self.con_persona(hogar, edad=60, numero=1)
+
+        indicadores = Integrante.indicadores_campanas()
+
+        self.assertEqual(indicadores["adultos_mayores"]["total"], 1)
+
+    def test_cuenta_personas_con_discapacidad_sin_importar_la_edad(self):
+        encuesta = self.recibida()
+        hogar = self.con_hogar(encuesta, declarados=2)
+        self.con_persona(hogar, edad=7, tiene_discapacidad=True, numero=0)
+        self.con_persona(hogar, edad=70, tiene_discapacidad=True, numero=1)
+        self.con_persona(hogar, edad=30, tiene_discapacidad=False, numero=2)
+
+        indicadores = Integrante.indicadores_campanas()
+
+        self.assertEqual(indicadores["discapacidad"]["total"], 2)
+
+    def test_excluye_las_encuestas_anuladas(self):
+        anulada = self.crear(direccion="Anulada", estado=EstadoEncuesta.ANULADA)
+        hogar = self.con_hogar(anulada, declarados=1)
+        self.con_persona(hogar, edad=5)
+
+        indicadores = Integrante.indicadores_campanas()
+
+        self.assertEqual(indicadores["ninos"]["total"], 0)
+
+
+class IndicadoresFamiliasTest(BaseCampanasTest):
+    """`GrupoFamiliar.indicadores_familias()`: hogares totales y por territorio."""
+
+    def test_cuenta_el_total_de_hogares(self):
+        self.con_hogar(self.recibida(direccion="Casa 1"), declarados=1)
+        self.con_hogar(self.recibida(direccion="Casa 2"), declarados=1)
+
+        self.assertEqual(GrupoFamiliar.indicadores_familias()["total"], 2)
+
+    def test_agrupa_por_sector(self):
+        vivienda_boldos = self.crear_vivienda(direccion="Casa Boldos", zona=self.zona1)
+        vivienda_norte = self.crear_vivienda(
+            direccion="Casa Norte", zona=self.zona_norte
+        )
+        self.con_hogar(
+            self.recibida(direccion="Casa Boldos", vivienda=vivienda_boldos),
+            declarados=1,
+        )
+        self.con_hogar(
+            self.recibida(direccion="Casa Norte", vivienda=vivienda_norte),
+            declarados=1,
+        )
+
+        por_sector = {
+            fila["sector"]: fila["total"]
+            for fila in GrupoFamiliar.indicadores_familias()["por_sector"]
+        }
+
+        self.assertEqual(por_sector["Los Boldos"], 1)
+        self.assertEqual(por_sector["Barrio Norte"], 1)
+
+    def test_agrupa_por_comuna_con_porcentaje(self):
+        self.con_hogar(self.recibida(direccion="Casa 1"), declarados=1)
+        self.con_hogar(self.recibida(direccion="Casa 2"), declarados=1)
+
+        por_comuna = GrupoFamiliar.indicadores_familias()["por_comuna"]
+
+        self.assertEqual(len(por_comuna), 1)
+        self.assertEqual(por_comuna[0]["comuna"], "Concepción")
+        self.assertEqual(por_comuna[0]["total"], 2)
+        self.assertEqual(por_comuna[0]["porcentaje"], 100.0)
+
+    def test_excluye_las_encuestas_anuladas(self):
+        anulada = self.crear(direccion="Anulada", estado=EstadoEncuesta.ANULADA)
+        self.con_hogar(anulada, declarados=1)
+
+        self.assertEqual(GrupoFamiliar.indicadores_familias()["total"], 0)
+
+
+class PanelCampanasViewTest(BaseCampanasTest):
+    def setUp(self):
+        super().setUp()
+        self.url = reverse("fichas:panel_campanas")
+
+    def test_el_administrador_puede_ver_el_panel(self):
+        self.client.force_login(self.admin)
+
+        self.assertEqual(self.client.get(self.url).status_code, 200)
+
+    def test_el_supervisor_puede_ver_el_panel(self):
+        """`reportes.ver` ya lo tiene el Supervisor por defecto desde la HU-04:
+        esta pantalla no necesita ninguna migración de permisos propia.
+        """
+        self.client.force_login(self.supervisor)
+
+        self.assertEqual(self.client.get(self.url).status_code, 200)
+
+    def test_el_censista_no_puede_ver_el_panel(self):
+        self.client.force_login(self.marta)
+
+        self.assertEqual(self.client.get(self.url).status_code, 302)
+
+    def test_un_visitante_anonimo_va_al_login(self):
+        respuesta = self.client.get(self.url)
+
+        self.assertEqual(respuesta.status_code, 302)
+        self.assertIn(reverse("usuarios:login"), respuesta.url)
+
+    def test_muestra_los_indicadores_calculados(self):
+        hogar = self.con_hogar(self.recibida(), declarados=1)
+        self.con_persona(hogar, edad=8)
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.get(self.url)
+
+        self.assertContains(respuesta, "6 a 12 años")
+        self.assertContains(respuesta, "Los Boldos")
+
+    def test_no_expone_ningun_dato_personal(self):
+        """Al contrario que la base consolidada: ni nombre ni RUT deben aparecer."""
+        hogar = self.con_hogar(self.recibida(), declarados=1)
+        self.con_persona(hogar, edad=8)
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(self.url)
+
+        self.assertNotContains(respuesta, "Persona 0")
+
+
+class BotonPanelCampanasTest(BaseCampanasTest):
+    def test_el_administrador_ve_el_boton_en_su_panel(self):
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.get(reverse("dashboards:administrador"))
+
+        self.assertContains(respuesta, "Indicadores para campañas")
+        self.assertContains(respuesta, reverse("fichas:panel_campanas"))
+
+    def test_el_supervisor_ve_el_boton_en_su_panel(self):
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(reverse("dashboards:supervisor"))
+
+        self.assertContains(respuesta, "Indicadores para campañas")
+        self.assertContains(respuesta, reverse("fichas:panel_campanas"))
+
+    def test_el_censista_no_tiene_panel_propio_que_comprobar(self):
+        """El Censista no tiene `reportes.ver`: no hay pantalla suya donde este
+        botón pudiera aparecer por error, así que no hay nada que probar aquí
+        salvo que `PanelCampanasViewTest` ya cubre que la vista se lo niega.
+        """
+        self.assertFalse(self.marta.tiene_permiso("reportes.ver"))
+
+
+class MenuIndicadoresTest(BaseCampanasTest):
+    """El enlace «Indicadores» del menú superior (`templates/base.html`), detrás
+    de `reportes.ver` —el mismo permiso que protege `PanelCampanasView`—.
+    """
+
+    def enlace_esperado(self):
+        return (
+            f'<a class="nav-link" href="{reverse("fichas:panel_campanas")}">'
+            "Indicadores</a>"
+        )
+
+    def test_el_administrador_ve_el_enlace(self):
+        self.client.force_login(self.admin)
+
+        respuesta = self.client.get(reverse("dashboards:administrador"))
+
+        self.assertContains(respuesta, self.enlace_esperado(), html=True)
+
+    def test_el_supervisor_ve_el_enlace(self):
+        self.client.force_login(self.supervisor)
+
+        respuesta = self.client.get(reverse("dashboards:supervisor"))
+
+        self.assertContains(respuesta, self.enlace_esperado(), html=True)
+
+    def test_el_censista_no_ve_el_enlace(self):
+        """El Censista no tiene `reportes.ver` por defecto: el enlace no debe
+        aparecer ni siquiera en una pantalla que sí puede ver, como «Mis
+        encuestas».
+        """
+        self.client.force_login(self.marta)
+
+        respuesta = self.client.get(reverse("fichas:mis_encuestas"))
+
+        self.assertNotContains(respuesta, ">Indicadores<")
 
 
 # ==========================================================================

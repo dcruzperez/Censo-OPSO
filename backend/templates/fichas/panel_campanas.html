@@ -1,0 +1,248 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% comment %} ==========================================================================
+   PANEL DE INDICADORES PARA CAMPAÑAS — /encuestas/base-consolidada/campanas/
+
+   Ampliación de la HU-20: la base consolidada exporta la PII completa para quien
+   necesita cruzar variables en un programa externo; esta pantalla es lo contrario
+   —ningún nombre, ningún RUT, solo conteos— para quien necesita una cifra rápida
+   antes de organizar una campaña de ayuda: "¿cuántos padrinazgos hacen falta?",
+   "¿cuántos quintales de harina hay que conseguir?". Por eso vive detrás de
+   `reportes.ver`, no de `reportes.exportar_base`.
+   ========================================================================= {% endcomment %}
+
+{% block titulo %}Indicadores para campañas{% endblock %}
+
+{% block contenido %}
+
+<div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-1">
+  <div>
+    <h1 class="h3 fw-bold mb-1" style="color: var(--opso-primary-dark);">
+      Indicadores para campañas
+    </h1>
+    <p class="text-secondary mb-0">
+      Conteos agregados del censo, sin datos personales, para dimensionar una campaña
+      de ayuda antes de salir a buscar recursos para ella.
+    </p>
+  </div>
+  <a href="{% url 'fichas:base_consolidada_excel' %}" class="btn btn-outline-primary btn-sm">
+    Volver a la base consolidada
+  </a>
+</div>
+<p class="text-secondary small mb-4">Generado el {{ generado_en|date:"d-m-Y H:i" }}.</p>
+
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card-opso p-4 h-100">
+      <div class="kpi-valor">{{ indicadores.ninos.total }}</div>
+      <div class="kpi-etiqueta">Niños, niñas y adolescentes</div>
+      <p class="text-secondary small mb-0">Campaña de padrinazgo</p>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-opso p-4 h-100">
+      <div class="kpi-valor">{{ indicadores.adultos_mayores.total }}</div>
+      <div class="kpi-etiqueta">Adultos mayores</div>
+      <p class="text-secondary small mb-0">60 años o más</p>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-opso p-4 h-100">
+      <div class="kpi-valor">{{ indicadores.discapacidad.total }}</div>
+      <div class="kpi-etiqueta">Personas con discapacidad</div>
+      <p class="text-secondary small mb-0">Declarada por la propia persona</p>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-opso p-4 h-100">
+      <div class="kpi-valor">{{ familias.total }}</div>
+      <div class="kpi-etiqueta">Hogares registrados</div>
+      <p class="text-secondary small mb-0">Ayuda material por hogar</p>
+    </div>
+  </div>
+</div>
+
+{{ indicadores.ninos.tramos|json_script:"datos-ninos" }}
+{{ familias.por_comuna|json_script:"datos-comunas" }}
+
+<div class="row g-3 mb-4">
+  <div class="col-12 col-lg-6">
+    <div class="card-opso p-4 h-100">
+      <h2 class="h5 fw-semibold mb-1">Niños, niñas y adolescentes por tramo de edad</h2>
+      <p class="text-secondary small mb-3">
+        Para una campaña de padrinazgo: cuántos apadrinamientos hacen falta en cada
+        tramo de edad.
+      </p>
+      {% if indicadores.ninos.total %}
+        <div style="height: 260px;">
+          <canvas id="grafico-ninos" role="img"
+                  aria-label="Niños, niñas y adolescentes por tramo de edad"></canvas>
+        </div>
+        <details class="mt-3">
+          <summary class="small text-secondary">Ver como tabla</summary>
+          <table class="table table-sm mb-0 mt-2">
+            <thead>
+              <tr class="small text-secondary">
+                <th scope="col" class="fw-normal ps-0">Tramo</th>
+                <th scope="col" class="fw-normal text-end pe-0">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for tramo in indicadores.ninos.tramos %}
+                <tr>
+                  <td class="ps-0">{{ tramo.etiqueta }}</td>
+                  <td class="text-end pe-0">{{ tramo.total }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </details>
+      {% else %}
+        <p class="text-secondary small mb-0">Sin personas menores de edad registradas todavía.</p>
+      {% endif %}
+    </div>
+  </div>
+  <div class="col-12 col-lg-6">
+    <div class="card-opso p-4 h-100">
+      <h2 class="h5 fw-semibold mb-1">Hogares por comuna</h2>
+      <p class="text-secondary small mb-3">
+        Para una campaña de ayuda material por hogar, como un quintal de harina:
+        cuántas familias hay que cubrir en cada comuna.
+      </p>
+      {% if familias.total %}
+        <div style="height: 260px;">
+          <canvas id="grafico-comunas" role="img" aria-label="Hogares por comuna"></canvas>
+        </div>
+        <details class="mt-3">
+          <summary class="small text-secondary">Ver como tabla</summary>
+          <table class="table table-sm mb-0 mt-2">
+            <thead>
+              <tr class="small text-secondary">
+                <th scope="col" class="fw-normal ps-0">Comuna</th>
+                <th scope="col" class="fw-normal text-end pe-0">Hogares</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for fila in familias.por_comuna %}
+                <tr>
+                  <td class="ps-0">{{ fila.comuna }}</td>
+                  <td class="text-end pe-0">{{ fila.total }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </details>
+      {% else %}
+        <p class="text-secondary small mb-0">Sin hogares registrados todavía.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{% comment %} Por sector va como tabla y no como gráfico: puede haber muchos más
+   sectores que comunas, y una tabla de veinte filas se lee mejor que un gráfico de
+   barras de veinte categorías. {% endcomment %}
+<div class="card-opso p-4">
+  <h2 class="h5 fw-semibold mb-3">Hogares por sector</h2>
+  {% if familias.por_sector %}
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr class="small text-secondary">
+            <th scope="col" class="fw-normal ps-0">Sector</th>
+            <th scope="col" class="fw-normal">Comuna</th>
+            <th scope="col" class="fw-normal text-end">Hogares</th>
+            <th scope="col" class="fw-normal text-end pe-0">%</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for fila in familias.por_sector %}
+            <tr>
+              <td class="ps-0">{{ fila.sector }}</td>
+              <td class="text-secondary">{{ fila.comuna }}</td>
+              <td class="text-end">{{ fila.total }}</td>
+              <td class="text-end pe-0">{{ fila.porcentaje }}%</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="text-secondary small mb-0">Sin hogares registrados todavía.</p>
+  {% endif %}
+</div>
+
+{% endblock %}
+
+{% block js_extra %}
+<script src="{% static 'vendor/chartjs/chart.umd.min.js' %}"></script>
+<script>
+(function () {
+  // Un solo color de serie: cada gráfico tiene una sola serie y el eje X ya
+  // distingue las categorías, así que el color no necesita cargar la identidad
+  // (ver skill de dataviz) y una leyenda sería ruido.
+  var COLOR_SERIE = "#2a78d6";
+  var COLOR_TEXTO = "#6b7a90";
+  var COLOR_GRILLA = "#dde3ee";
+
+  Chart.defaults.color = COLOR_TEXTO;
+  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+
+  function graficoDeBarras(idCanvas, idDatos, etiquetaDe, valorDe) {
+    var elementoCanvas = document.getElementById(idCanvas);
+    var elementoDatos = document.getElementById(idDatos);
+    if (!elementoCanvas || !elementoDatos) {
+      return;
+    }
+
+    var filas = JSON.parse(elementoDatos.textContent);
+
+    new Chart(elementoCanvas, {
+      type: "bar",
+      data: {
+        labels: filas.map(etiquetaDe),
+        datasets: [
+          {
+            data: filas.map(valorDe),
+            backgroundColor: COLOR_SERIE,
+            borderRadius: 4,
+            maxBarThickness: 56,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+        },
+        scales: {
+          x: {
+            grid: { display: false },
+          },
+          y: {
+            beginAtZero: true,
+            ticks: { precision: 0 },
+            grid: { color: COLOR_GRILLA },
+          },
+        },
+      },
+    });
+  }
+
+  graficoDeBarras(
+    "grafico-ninos",
+    "datos-ninos",
+    function (tramo) { return tramo.etiqueta; },
+    function (tramo) { return tramo.total; }
+  );
+  graficoDeBarras(
+    "grafico-comunas",
+    "datos-comunas",
+    function (fila) { return fila.comuna; },
+    function (fila) { return fila.total; }
+  );
+})();
+</script>
+{% endblock %}

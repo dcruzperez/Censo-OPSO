@@ -2219,6 +2219,57 @@ class GrupoFamiliar(models.Model):
             jefe.nombre_completo.lower().split()
         )
 
+    # ------------------------------------------------------------------
+    # INDICADORES PARA CAMPAÑAS DE AYUDA (HU-20)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def indicadores_familias(cls):
+        """Hogares activos, en total y por territorio, para dimensionar una
+        campaña de ayuda material por hogar (ej. "quintal de harina"): una
+        unidad por FAMILIA, no por persona, a diferencia de
+        `Integrante.indicadores_campanas()`.
+
+        Mismo universo que `Integrante.base_consolidada()`: se excluyen los
+        hogares de encuestas `ANULADA`. El desglose por comuna y por sector usa
+        `.values().annotate(Count(...))`, igual que `por_sector` en
+        `Encuesta.resumen_para_reporte()` (HU-19): es un COUNT agrupado, no una
+        condición que dependa de la fecha, así que no hay razón para no dejar
+        que PostgreSQL agrupe.
+        """
+        activos = cls.objects.exclude(encuesta__estado=EstadoEncuesta.ANULADA)
+        total = activos.count()
+
+        return {
+            "total": total,
+            "por_comuna": [
+                {
+                    "comuna": fila["encuesta__vivienda__zona__sector__comuna__nombre"],
+                    "total": fila["total"],
+                    "porcentaje": _porcentaje(fila["total"], total),
+                }
+                for fila in activos.values(
+                    "encuesta__vivienda__zona__sector__comuna__nombre"
+                )
+                .annotate(total=Count("id"))
+                .order_by("-total", "encuesta__vivienda__zona__sector__comuna__nombre")
+            ],
+            "por_sector": [
+                {
+                    "sector": fila["encuesta__vivienda__zona__sector__nombre"],
+                    "comuna": fila["encuesta__vivienda__zona__sector__comuna__nombre"],
+                    "total": fila["total"],
+                    "porcentaje": _porcentaje(fila["total"], total),
+                }
+                for fila in activos.values(
+                    "encuesta__vivienda__zona__sector__nombre",
+                    "encuesta__vivienda__zona__sector__comuna__nombre",
+                )
+                .annotate(total=Count("id"))
+                .order_by("-total", "encuesta__vivienda__zona__sector__nombre")
+            ],
+        }
+
 
 # ==========================================================================
 # 4. LOS INTEGRANTES DEL HOGAR (HU-09)
@@ -2374,6 +2425,12 @@ class Integrante(models.Model):
     #: Desde qué edad tiene sentido preguntar por ocupación (edad mínima legal
     #: para trabajar en Chile con autorización, Código del Trabajo art. 13).
     EDAD_OCUPACION = 15
+
+    #: Desde qué edad SENAMA (Ley N° 19.828) considera a alguien persona mayor.
+    #: Se usa en `indicadores_campanas()` (HU-20) y no en un formulario, pero
+    #: vive junto a las otras dos constantes de edad por la misma razón: es un
+    #: umbral legal, no un número inventado para esta pantalla.
+    EDAD_ADULTO_MAYOR = 60
 
     grupo_familiar = models.ForeignKey(
         GrupoFamiliar,
@@ -2532,6 +2589,11 @@ class Integrante(models.Model):
         return edad is not None and edad < 18
 
     @property
+    def es_adulto_mayor(self):
+        edad = self.edad()
+        return edad is not None and edad >= self.EDAD_ADULTO_MAYOR
+
+    @property
     def se_le_pregunta_escolaridad(self):
         edad = self.edad()
         return edad is not None and edad >= self.EDAD_ESCOLARIDAD
@@ -2622,6 +2684,74 @@ class Integrante(models.Model):
         )
 
         return [_fila_base_consolidada(integrante) for integrante in calificados]
+
+    # ------------------------------------------------------------------
+    # INDICADORES PARA CAMPAÑAS DE AYUDA (HU-20)
+    # ------------------------------------------------------------------
+
+    #: Tramos de edad para la campaña de "padrino/madrina": (etiqueta, desde, hasta).
+    TRAMOS_INFANCIA = (
+        ("0 a 5 años", 0, 5),
+        ("6 a 12 años", 6, 12),
+        ("13 a 17 años", 13, 17),
+    )
+
+    @classmethod
+    def indicadores_campanas(cls):
+        """Cuántos niños, adultos mayores y personas con discapacidad hay, para
+        dimensionar una campaña de ayuda (padrinazgo, abrigo, accesibilidad).
+
+        Mismo universo que `base_consolidada()`: se excluyen las personas de
+        encuestas `ANULADA`, porque una campaña no debe planificarse sobre datos
+        que el propio sistema ya descartó.
+
+        Los tramos de edad se calculan en Python, fila por fila, y no con un
+        COUNT filtrado en la base de datos. La razón es la misma que ya
+        documentó `resumen_alertas_calidad()`: la edad depende del día en que se
+        consulta, así que no hay una comparación de columnas fija que
+        PostgreSQL pueda agrupar; hay que leer `fecha_nacimiento` y decidir el
+        tramo caso a caso. El universo de un operativo censal es acotado
+        (cientos de personas, no millones), así que iterarlo en memoria no es
+        un problema de rendimiento.
+        """
+        personas = cls.objects.exclude(
+            grupo_familiar__encuesta__estado=EstadoEncuesta.ANULADA
+        ).only("fecha_nacimiento", "tiene_discapacidad")
+
+        conteo_tramos = {etiqueta: 0 for etiqueta, _, _ in cls.TRAMOS_INFANCIA}
+        total_ninos = 0
+        total_adultos_mayores = 0
+        total_discapacidad = 0
+
+        for persona in personas:
+            edad = persona.edad()
+
+            if persona.tiene_discapacidad:
+                total_discapacidad += 1
+
+            if edad is None:
+                continue
+
+            if edad < 18:
+                total_ninos += 1
+                for etiqueta, desde, hasta in cls.TRAMOS_INFANCIA:
+                    if desde <= edad <= hasta:
+                        conteo_tramos[etiqueta] += 1
+                        break
+            elif edad >= cls.EDAD_ADULTO_MAYOR:
+                total_adultos_mayores += 1
+
+        return {
+            "ninos": {
+                "total": total_ninos,
+                "tramos": [
+                    {"etiqueta": etiqueta, "total": conteo_tramos[etiqueta]}
+                    for etiqueta, _, _ in cls.TRAMOS_INFANCIA
+                ],
+            },
+            "adultos_mayores": {"total": total_adultos_mayores},
+            "discapacidad": {"total": total_discapacidad},
+        }
 
 
 def _si_no(valor):

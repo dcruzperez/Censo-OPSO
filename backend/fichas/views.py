@@ -84,7 +84,7 @@ from django.urls import reverse
 from django.utils import timezone
 from django.utils.functional import cached_property
 from django.views import View
-from django.views.generic import DetailView, ListView
+from django.views.generic import DetailView, ListView, TemplateView
 
 from usuarios.mixins import PermisoRequeridoMixin
 
@@ -2497,10 +2497,12 @@ class BaseConsolidadaMixin(PermisoRequeridoMixin):
     (HU-19) y a propósito: aquel descarga agregados —conteos, sin un solo dato
     de una familia—, y este descarga nombre, RUT, teléfono e ingreso del hogar
     de cada persona. Que compartieran permiso le habría dado a cualquiera con
-    `reportes.exportar` —hoy, el rol Supervisor completo— acceso a datos
-    personales que esta historia solo le pide al administrador. La migración
-    `0008_permiso_exportar_base` se lo concede explícitamente solo al rol
-    ADMINISTRADOR —a nadie más—, igual que 0005 hizo con el reparto inicial.
+    `reportes.exportar` —cualquier Censista con acceso a reportes, por
+    ejemplo— acceso a datos personales sin que nadie lo decidiera a propósito.
+    Las migraciones `0008_permiso_exportar_base` y
+    `0009_exportar_base_supervisor` lo conceden explícitamente al
+    ADMINISTRADOR y al SUPERVISOR —a nadie más—, igual que 0005 hizo con el
+    reparto inicial.
     """
 
     permisos_requeridos = ("reportes.exportar_base",)
@@ -2543,6 +2545,37 @@ class ExportarBaseCSVView(BaseConsolidadaMixin, View):
         respuesta["Content-Disposition"] = f'attachment; filename="{nombre}"'
         construir_base_csv(respuesta, Integrante.base_consolidada())
         return respuesta
+
+
+class PanelCampanasView(PermisoRequeridoMixin, TemplateView):
+    """Indicadores agregados para campañas de ayuda social (ampliación de HU-20).
+
+    URL: /encuestas/base-consolidada/campanas/
+
+    A diferencia de `ExportarBaseExcelView`/`ExportarBaseCSVView`, esta pantalla
+    no descarga nada ni muestra un solo dato identificable de una familia: solo
+    conteos —cuántos niños, cuántos adultos mayores, cuántos hogares por
+    comuna—, pensados para decidir el TAMAÑO de una campaña ("¿cuántos
+    padrinazgos necesitamos?", "¿cuántos quintales de harina hay que
+    conseguir?"), no para identificar a quién dárselos.
+
+    Por eso vive detrás de `reportes.ver` —"consultar el estado del
+    operativo"— y no de `reportes.exportar_base`: ese permiso protege datos
+    personales completos, y aquí no hay ninguno. `reportes.ver` ya lo tienen
+    Administrador y Supervisor por defecto desde la migración 0005 de la HU-04,
+    así que esta pantalla no necesita una migración de permisos propia.
+    """
+
+    permisos_requeridos = ("reportes.ver",)
+    mensaje_sin_permiso = "No tienes permiso para ver los indicadores de campañas."
+    template_name = "fichas/panel_campanas.html"
+
+    def get_context_data(self, **kwargs):
+        contexto = super().get_context_data(**kwargs)
+        contexto["generado_en"] = timezone.localtime(timezone.now())
+        contexto["indicadores"] = Integrante.indicadores_campanas()
+        contexto["familias"] = GrupoFamiliar.indicadores_familias()
+        return contexto
 
 
 class RevisarEncuestaView(RevisionMixin, DetailView):

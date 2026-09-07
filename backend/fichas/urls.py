@@ -74,6 +74,15 @@ urlpatterns = [
         views.ExportarBaseCSVView.as_view(),
         name="base_consolidada_csv",
     ),
+    # HU-20 (ampliación): el mismo universo de la base consolidada, resumido en
+    # indicadores para campañas de ayuda, sin PII. Detrás de `reportes.ver` y no
+    # de `reportes.exportar_base`: es para MIRAR, no para descargar datos
+    # personales.
+    path(
+        "base-consolidada/campanas/",
+        views.PanelCampanasView.as_view(),
+        name="panel_campanas",
+    ),
     # ------------------------------------------------------------------
     # CREAR UNA ENCUESTA Y SINCRONIZARLA (HU-08, reemplazada por la HU-24) —
     # rutas fijas antes de las que llevan <int:pk>

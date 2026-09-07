@@ -102,6 +102,16 @@
           </li>
         {% endif %}
 
+        {% comment %} «Indicadores» (ampliación de la HU-20) va por `reportes.ver`: es el
+           mismo permiso que protege PanelCampanasView, así que el enlace del menú y la
+           puerta de la vista no pueden desalinearse —si la matriz le quita el permiso a
+           alguien, el enlace desaparece solo—. {% endcomment %}
+        {% if user|tiene_permiso:"reportes.ver" %}
+          <li class="nav-item">
+            <a class="nav-link" href="{% url 'fichas:panel_campanas' %}">Indicadores</a>
+          </li>
+        {% endif %}
+
         {% comment %} «Mis sectores» (HU-06) no se decide por permiso ni por rol, sino por
            un HECHO: si la persona tiene territorio a cargo, el enlace le sirve; si no,
            solo la llevaría a una pantalla vacía.

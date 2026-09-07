@@ -10,8 +10,6 @@
   </p>
 </div>
 
-{# Contadores de encuestas (HU-07). Eran marcadores de posición ("—") desde la
-   HU-01; ahora los calcula DashboardCensistaView con una sola consulta. #}
 <div class="row g-3 mb-4">
   <div class="col-12 col-md-6">
     <div class="card-opso p-4 h-100">
@@ -29,7 +27,6 @@
   </div>
 </div>
 
-{# Encuestas (HU-07) — lo segundo que necesita ver: qué puerta toca primero #}
 <div class="card-opso p-4 mb-4">
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
     <h2 class="h5 fw-semibold mb-0">Tus próximas encuestas</h2>
@@ -88,7 +85,6 @@
   {% endif %}
 </div>
 
-{# Mis sectores (HU-06) — lo primero que necesita ver: dónde le toca trabajar #}
 <div class="card-opso p-4 mb-4">
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
     <h2 class="h5 fw-semibold mb-0">Mi territorio a cargo</h2>
@@ -131,14 +127,4 @@
   {% endif %}
 </div>
 
-<div class="card-opso p-4">
-  <h2 class="h6 fw-semibold">Alcance de este rol</h2>
-  <ul class="text-secondary small mb-0 ps-3">
-    <li>Registrar nuevas fichas de familias durante el operativo.</li>
-    <li>Consultar los sectores y zonas que tiene asignados.</li>
-    <li>Ver sus encuestas asignadas y el estado de cada una.</li>
-    <li>Editar únicamente las fichas que él mismo levantó.</li>
-    <li>Sin acceso a la gestión de usuarios ni a los reportes globales.</li>
-  </ul>
-</div>
 {% endblock %}

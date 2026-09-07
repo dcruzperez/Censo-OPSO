@@ -14,7 +14,7 @@ Proyecto de título · Ingeniería en Computación e Informática.
 | HU-01 · Inicio de sesión seguro con control de acceso por rol | ✅ Implementada | [`docs/HU-01_inicio_de_sesion.md`](docs/HU-01_inicio_de_sesion.md) |
 | HU-02 · Recuperación de contraseña por correo electrónico | ✅ Implementada | [`docs/HU-02_recuperacion_contrasena.md`](docs/HU-02_recuperacion_contrasena.md) |
 | HU-03 · Administración de usuarios (crear, editar, deshabilitar) | ✅ Implementada | [`docs/HU-03_administracion_usuarios.md`](docs/HU-03_administracion_usuarios.md) |
-| HU-04 · Asignar roles y permisos (matriz configurable) | ✅ Implementada | — |
+| HU-04 · Asignar roles y permisos (matriz configurable) | ✅ Implementada | [`docs/HU-04_matriz_de_permisos.md`](docs/HU-04_matriz_de_permisos.md) |
 | HU-05 · Comunas, sectores y zonas (organización territorial) | ✅ Implementada | [`docs/HU-05_organizacion_territorial.md`](docs/HU-05_organizacion_territorial.md) |
 | HU-06 · Asignación de sectores a los encuestadores | ✅ Implementada | [`docs/HU-06_asignacion_de_sectores.md`](docs/HU-06_asignacion_de_sectores.md) |
 | HU-07 · Encuestas asignadas y su estado (encuestador) | ✅ Implementada | [`docs/HU-07_encuestas_asignadas.md`](docs/HU-07_encuestas_asignadas.md) |

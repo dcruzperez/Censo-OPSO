@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load static %}
+{% load permisos %}
 
 {% block titulo %}Panel del Supervisor{% endblock %}
 
@@ -40,7 +41,6 @@
   </div>
 </div>
 
-{# Reparto del trabajo (HU-06) #}
 <div class="card-opso p-4 mb-4">
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
     <div>
@@ -73,7 +73,6 @@
   </div>
 </div>
 
-{# La cola de revisión (HU-13): lo primero que el supervisor necesita al entrar. #}
 <div class="card-opso p-4 mb-4">
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
     <h2 class="h5 fw-semibold mb-0">Encuestas por revisar</h2>
@@ -143,7 +142,6 @@
   {% endif %}
 </div>
 
-{# Alertas de calidad de datos (HU-16): registros incompletos o estancados. #}
 <div class="card-opso p-4 mb-4">
   <div class="d-flex justify-content-between align-items-center flex-wrap gap-3 mb-3">
     <h2 class="h5 fw-semibold mb-0">Alertas de calidad de datos</h2>
@@ -197,14 +195,48 @@
   {% endif %}
 </div>
 
-<div class="card-opso p-4">
-  <h2 class="h6 fw-semibold">Alcance de este rol</h2>
-  <ul class="text-secondary small mb-0 ps-3">
-    <li>Revisar y validar las fichas familiares registradas por los censistas.</li>
-    <li>Asignar sectores y hacer seguimiento del avance del operativo.</li>
-    <li>Consultar reportes de su equipo (sin acceso a la configuración del sistema).</li>
-  </ul>
-</div>
+{% if user|tiene_permiso:"reportes.exportar_base" %}
+  <div class="card-opso p-4 mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+      <div>
+        <h2 class="h5 fw-semibold mb-1">Base consolidada</h2>
+        <p class="text-secondary small mb-0">
+          Una fila por persona, con su vivienda, su hogar y su encuesta —lista
+          para un análisis externo. Incluye nombre, RUT, teléfono e ingreso
+          del hogar de cada familia: es información personal, trátala en
+          consecuencia.
+        </p>
+      </div>
+      <div class="d-flex gap-2 flex-wrap">
+        <a href="{% url 'fichas:base_consolidada_excel' %}" class="btn btn-success btn-sm">
+          Exportar Excel
+        </a>
+        <a href="{% url 'fichas:base_consolidada_csv' %}" class="btn btn-outline-primary btn-sm">
+          Exportar CSV
+        </a>
+      </div>
+    </div>
+  </div>
+{% endif %}
+
+{% if user|tiene_permiso:"reportes.ver" %}
+  <div class="card-opso p-4 mb-4">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-3">
+      <div>
+        <h2 class="h5 fw-semibold mb-1">Indicadores para campañas</h2>
+        <p class="text-secondary small mb-0">
+          Cuántos niños, adultos mayores y hogares hay, con gráficos, para
+          dimensionar una campaña de ayuda —padrinazgo, quintal de harina— sin
+          exponer un solo dato personal.
+        </p>
+      </div>
+      <a href="{% url 'fichas:panel_campanas' %}" class="btn btn-opso btn-sm">
+        Ver indicadores
+      </a>
+    </div>
+  </div>
+{% endif %}
+
 {% endblock %}
 
 {% block js_extra %}
