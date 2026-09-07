@@ -52,9 +52,9 @@
           <li class="nav-item">
             <a class="nav-link" href="{% url 'usuarios:auditoria' %}">Auditoría</a>
           </li>
-          <li class="nav-item">
-            <a class="nav-link" href="{% url 'admin:index' %}">Administración</a>
-          </li>
+          {% comment %} Botón "Administración" (/admin/) oculto a pedido: el
+             panel de Django sigue disponible por URL directa, solo se retira
+             del menú superior para no invitar a la gestión diaria desde ahí. {% endcomment %}
         {% elif user.es_supervisor %}
           <li class="nav-item">
             <a class="nav-link" href="{% url 'dashboards:supervisor' %}">Panel</a>

@@ -223,31 +223,6 @@
   </div>
 </div>
 
-<div class="row g-3 mt-3">
-  <div class="col-12 col-lg-6">
-    <div class="card-opso p-4 h-100">
-      <h2 class="h6 fw-semibold">Próximas historias de usuario</h2>
-      <ul class="text-secondary small mb-0 ps-3">
-        <li>Asignar censistas a los sectores y zonas ya definidos.</li>
-        <li>Registrar la ficha de levantamiento de información familiar.</li>
-      </ul>
-    </div>
-  </div>
-  <div class="col-12 col-lg-6">
-    <div class="card-opso p-4 h-100">
-      <h2 class="h6 fw-semibold">Administración técnica (Django)</h2>
-      <p class="text-secondary small">
-        El panel <code>/admin/</code> se reserva para tareas técnicas: catálogo de
-        roles, permisos de Django y consulta de bitácoras. La gestión diaria de
-        cuentas se hace en el módulo propio de OPSO, que valida las reglas del
-        negocio y registra auditoría.
-      </p>
-      <a href="{% url 'admin:index' %}" class="btn btn-outline-secondary btn-sm">
-        Ir a la administración de Django
-      </a>
-    </div>
-  </div>
-</div>
 {% endblock %}
 
 {% block js_extra %}
